@@ -22,9 +22,6 @@
 应该从 `review_config.json` 读取。
 已影响：`LLMBridge.review_batch`、`TerminologyBuilder.build_glossary`。
 
-### 6. `check_consistency` 中文匹配用 `in` 而非词边界
-简体中文无空格，`,` 的 `in` 匹配可跨词。如 `"糖" in "红糖"` 会判定为新 `" 糖"` 缺失。
-应考虑用更准确的中文子串/词边界匹配。
 
 ## 中优先级
 

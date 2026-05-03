@@ -285,6 +285,80 @@ def _apply_llm_merge(
 
 
 # ═══════════════════════════════════════════════════════════
+# 中文互斥 — 短术语救回逻辑
+# ═══════════════════════════════════════════════════════════
+
+def _try_rescue_short_term(
+    short_item: dict[str, str],
+    long_item: dict[str, str],
+    merged: dict[str, dict[str, Any]],
+    matched_entries: list[dict[str, str]],
+) -> dict[str, str] | None:
+    """
+    短 en 是长 en 的子串且中文冲突时，剔除长术语所在的 key 后重新统计。
+    若短术语在剩余 key 中指向不同中文且满足共识阈值，返回新术语条目；否则返回 None。
+    """
+    en_short = short_item["en"].lower()
+    en_long = long_item["en"].lower()
+    zh_long = long_item["zh"]
+
+    # 找到短术语的 merged 信息（内层 key 为归一化形式）
+    short_info = merged.get(en_short) or merged.get(en_short.replace(" ", "_"))
+    long_info = merged.get(en_long) or merged.get(en_long.replace(" ", "_"))
+    if not short_info:
+        return None
+
+    # 收集长术语命中的所有 key
+    long_keys: set[str] = set()
+    if long_info:
+        long_keys.update(long_info.get("keys", []))
+    # 同时收集长术语变体命中的 key
+    for variant in long_info.get("variants", []) if long_info else []:
+        pass  # 变体的 key 已在 long_info["keys"] 中
+
+    # 收集短术语独有的 key（剔除长术语命中的 key）
+    short_only_keys = [k for k in short_info.get("keys", []) if k not in long_keys]
+    if not short_only_keys:
+        return None
+
+    max_zh_len = cfg.get("term_max_zh_len", 40)
+    max_en_len = cfg.get("term_max_en_len", 60)
+    min_total = cfg.get("term_consensus_min_total", 3)
+    min_consensus = cfg.get("term_min_consensus", 0.6)
+
+    zh_counter: Counter = Counter()
+    for k in short_only_keys:
+        entry = next((e for e in matched_entries if e["key"] == k), None)
+        if not entry:
+            continue
+        if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
+            continue
+        zh_val = entry.get("zh", "").strip()
+        en_val = entry.get("en", "")
+        if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
+            continue
+        # 确认短术语的变体确实在 en_val 中出现
+        variants = short_info.get("variants", {en_short})
+        if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
+            continue
+        zh_counter[zh_val[:120]] += 1
+
+    if not zh_counter:
+        return None
+
+    best_zh, best_count = zh_counter.most_common(1)[0]
+    total = sum(zh_counter.values())
+    if total < min_total or best_count / total < min_consensus:
+        return None
+
+    # 重新统计后的中文与长术语中文不同 → 救回
+    if best_zh != zh_long:
+        return {"en": short_item["en"], "zh": best_zh}
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════
 # 术语表构建器
 # ═══════════════════════════════════════════════════════════
 
@@ -433,6 +507,46 @@ class TerminologyBuilder:
                 variants = sorted(info["variants"], key=len)
                 en_term = variants[0] if variants else norm
                 glossary.append({"en": en_term, "zh": best_zh})
+
+        # 中文互斥：同一中文对应多个英文术语时，若短 en 是长 en 的子串，
+        # 需要给短术语一次「剔除长术语所在 key 后重新统计」的机会。
+        # 若重新统计后短术语指向不同中文，则两者保留；否则删除短的。
+        before_dedup = len(glossary)
+        zh_to_entries: dict[str, list[dict[str, str]]] = {}
+        for item in glossary:
+            zh_to_entries.setdefault(item["zh"], []).append(item)
+        glossary = []
+        removed_count = 0
+        rescued_count = 0
+        for zh_val, items in zh_to_entries.items():
+            if len(items) == 1:
+                glossary.append(items[0])
+                continue
+            sorted_items = sorted(items, key=lambda x: len(x["en"]), reverse=True)
+            to_remove: list[dict[str, str]] = []
+            for i, item_a in enumerate(sorted_items):
+                en_a_l = item_a["en"].lower()
+                for j in range(i + 1, len(sorted_items)):
+                    item_b = sorted_items[j]
+                    en_b_l = item_b["en"].lower()
+                    if en_b_l in en_a_l and item_b not in to_remove:
+                        # 短 en 是长 en 的子串 → 给短术语第二次机会
+                        rescued = _try_rescue_short_term(item_b, item_a, self.merged, self.matched_entries)
+                        if rescued:
+                            glossary.append(rescued)
+                            rescued_count += 1
+                        else:
+                            to_remove.append(item_b)
+                            removed_count += 1
+            for item in sorted_items:
+                if item not in to_remove:
+                    glossary.append(item)
+        if removed_count or rescued_count:
+            msg = f"  [术语表] 中文互斥: {before_dedup} → {len(glossary)} 条（移除 {removed_count} 条子串冲突"
+            if rescued_count:
+                msg += f", 救回 {rescued_count} 条（剔除长术语key后指向不同中文）"
+            msg += "）"
+            print(msg)
 
         self.glossary = glossary
         print(f"  [术语表] {len(glossary)} 条术语（纯程序提取, freq≥{min_freq}, 共识≥{int(min_consensus*100)}%）")
