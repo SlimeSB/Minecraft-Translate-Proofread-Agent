@@ -3,11 +3,7 @@
 > 记录需要改进但未实施的工程问题。无优先级顺序。
 
 ## 高优先级
-
-### 1. 术语归并仍需 LLM 做词形归并
-当前 `merge_lemmas` 有完整流程（分桶→缓存查表→模糊聚类→LLM裁决→写回缓存），
-但 `build_glossary` 改成纯程序后，LLM 归并仍在 `merge_lemmas` 中运行。
-需要确认：是否保留 LLM 归并？还是也改成纯程序？
+1. 多词术语不要归并映射到到单词
 
 ### 2. `terminology_builder.py` 太长（500+ 行）
 建议拆分：`LemmaCache` 独立文件；`_fuzzy_cluster` / `_build_merge_prompt` / `_parse_merge_response` / `_apply_llm_merge` 移到独立模块。

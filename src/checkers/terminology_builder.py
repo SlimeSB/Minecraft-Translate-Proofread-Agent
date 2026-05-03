@@ -18,344 +18,22 @@ import argparse
 import json
 import re
 import sys
-from collections import defaultdict, Counter
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
-from src.tools.terminology_extract import extract_terms, tokenize
-from src.tools.fuzzy_search import calc_similarity
+from src.tools.terminology_extract import extract_terms
 from src import config as cfg
-
-# ═══════════════════════════════════════════════════════════
-# 持久化词形缓存（持续学习）
-# ═══════════════════════════════════════════════════════════
-
-DEFAULT_CACHE_PATH = "lemma_cache.json"
-
-
-class LemmaCache:
-    """持久化词形映射缓存。每次 LLM 裁决后写入，下次直接复用。"""
-
-    def __init__(self, path: str = DEFAULT_CACHE_PATH):
-        self.path = Path(path)
-        self.map: dict[str, dict[str, Any]] = {}   # {variant: {canonical, freq, source}}
-        self._loaded = False
-
-    def load(self) -> dict[str, dict[str, Any]]:
-        if self._loaded:
-            return self.map
-        if self.path.exists():
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    self.map = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                self.map = {}
-        self._loaded = True
-        return self.map
-
-    def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.map, f, ensure_ascii=False, indent=2)
-
-    def lookup(self, term: str) -> str | None:
-        """查缓存：已知 variant 返回 canonical，否则 None。"""
-        key = term.lower().strip()
-        entry = self.map.get(key)
-        if entry:
-            entry["freq"] = entry.get("freq", 0) + 1
-            return entry.get("canonical", key)
-        return None
-
-    def record(self, canonical: str, members: list[str], source: str = "llm") -> None:
-        """写入一批映射并保存。"""
-        canon_key = canonical.lower().strip()
-        # 确保 canonical 自身在缓存中
-        if canon_key not in self.map:
-            self.map[canon_key] = {"canonical": canonical, "freq": 0, "source": source}
-        self.map[canon_key]["freq"] = self.map[canon_key].get("freq", 0) + 1
-
-        for m in members:
-            mk = m.lower().strip()
-            if mk == canon_key:
-                continue
-            if mk in self.map:
-                self.map[mk]["freq"] = self.map[mk].get("freq", 0) + 1
-            else:
-                self.map[mk] = {"canonical": canon_key, "freq": 1, "source": source}
-        self.save()
-
-    def stats(self) -> dict[str, int]:
-        return {"entries": len(self.map), "path": str(self.path)}
-
-
-# ═══════════════════════════════════════════════════════════
-# 第一遍：按原始形式分桶（不做词形归并——归并交给缓存+LLM）
-# ═══════════════════════════════════════════════════════════
-
-def _raw_merge(extracted: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """将 n-gram 提取结果按原始词面分桶。"""
-    merged: dict[str, dict[str, Any]] = {}
-    for ngram_type in ("unigrams", "bigrams", "trigrams"):
-        for item in extracted.get(ngram_type, []):
-            term = item["term"]
-            norm = term.lower().strip()
-            if norm not in merged:
-                merged[norm] = {
-                    "normalized": term,  # 保留原始形式
-                    "variants": set(),
-                    "freq": 0,
-                    "keys": [],
-                    "ngram_type": ngram_type,
-                }
-            merged[norm]["variants"].add(term)
-            merged[norm]["freq"] += item["freq"]
-            for k in item["keys"]:
-                if k not in merged[norm]["keys"]:
-                    merged[norm]["keys"].append(k)
-            merged[norm]["keys"] = merged[norm]["keys"][:20]
-    return merged
-
-
-def _apply_cache_merge(
-    merged: dict[str, dict[str, Any]],
-    cache: LemmaCache,
-) -> tuple[dict[str, dict[str, Any]], int]:
-    """
-    用缓存中的已知映射归并 merged 桶。
-    返回 (归并后的 merged, 命中次数)。
-    """
-    hits = 0
-    # 收集缓存映射: {raw_key → canonical_key}
-    redirect: dict[str, str] = {}
-    for raw_key in merged:
-        canon = cache.lookup(raw_key)
-        if canon and canon != raw_key:
-            redirect[raw_key] = canon
-            hits += 1
-            # bump canonical freq so it stays "hot"
-            cache.lookup(canon)
-
-    if not redirect:
-        return merged, 0
-
-    new_merged: dict[str, dict[str, Any]] = {}
-    for raw_key, info in merged.items():
-        target = redirect.get(raw_key, raw_key)
-        if target not in new_merged:
-            if target in merged:
-                new_merged[target] = {
-                    "normalized": merged[target]["normalized"],
-                    "variants": set(merged[target]["variants"]),
-                    "freq": merged[target]["freq"],
-                    "keys": list(merged[target]["keys"]),
-                    "ngram_type": merged[target]["ngram_type"],
-                }
-            else:
-                new_merged[target] = {
-                    "normalized": target,
-                    "variants": set(),
-                    "freq": 0,
-                    "keys": [],
-                    "ngram_type": info["ngram_type"],
-                }
-        new_merged[target]["variants"] |= info["variants"]
-        new_merged[target]["freq"] += info["freq"]
-        for k in info["keys"]:
-            if k not in new_merged[target]["keys"]:
-                new_merged[target]["keys"].append(k)
-        new_merged[target]["keys"] = new_merged[target]["keys"][:20]
-
-    return new_merged, hits
-
-
-# ═══════════════════════════════════════════════════════════
-# 模糊聚类 + LLM 裁决
-# ═══════════════════════════════════════════════════════════
-
-def _fuzzy_cluster(
-    merged: dict[str, dict[str, Any]],
-    threshold: float = 65.0,
-) -> list[list[str]]:
-    """
-    在已规则归并的桶之间做模糊聚类。
-    返回: [[norm_a, norm_b, ...], ...] 候选合并组
-    """
-    norms = sorted(merged.keys(), key=lambda n: -merged[n]["freq"])
-    parents = {n: n for n in norms}
-
-    def find(n: str) -> str:
-        while parents[n] != n:
-            parents[n] = parents[parents[n]]
-            n = parents[n]
-        return n
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parents[ra] = rb
-
-    # 两两比对（限制高频词范围以避免 O(n²) 爆炸）
-    top_n = min(len(norms), cfg.get("fuzzy_cluster_top_n", 200))
-    for i in range(top_n):
-        for j in range(i + 1, top_n):
-            ni, nj = norms[i], norms[j]
-            sim = calc_similarity(ni, nj)
-            if sim >= threshold:
-                # 额外条件：至少共享一个 token 或长度比例为 0.5~2
-                ti, tj = set(ni.split()), set(nj.split())
-                len_ratio = min(len(ni), len(nj)) / max(len(ni), len(nj), 1)
-                if ti & tj or len_ratio > 0.4:
-                    union(ni, nj)
-
-    # 收集 >=2 成员的组
-    groups: dict[str, list[str]] = defaultdict(list)
-    for n in norms:
-        groups[find(n)].append(n)
-
-    return [sorted(g, key=lambda n: -merged[n]["freq"]) for g in groups.values() if len(g) >= 2]
-
-
-def _build_merge_prompt(clusters: list[list[str]]) -> str:
-    """构建 LLM 归并 prompt。"""
-    blocks: list[str] = [cfg.MERGE_SYSTEM_PROMPT]
-    for i, group in enumerate(clusters):
-        lines = [f"## 候选组 {i+1}"]
-        for term in group:
-            lines.append(f"  - {term}")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
-
-
-def _parse_merge_response(response: str) -> dict[str, str]:
-    """解析 LLM 归并响应: {member: canonical, ...}"""
-    mapping: dict[str, str] = {}
-    try:
-        data = json.loads(response)
-        if isinstance(data, list):
-            for item in data:
-                canon = item.get("canonical", "")
-                members = item.get("members", [])
-                if canon and members:
-                    for m in members:
-                        mapping[m] = canon
-                    if canon not in mapping:
-                        mapping[canon] = canon
-    except json.JSONDecodeError:
-        m = re.search(r"\[.*\]", response, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group())
-                for item in data:
-                    canon = item.get("canonical", "")
-                    members = item.get("members", [])
-                    if canon and members:
-                        for mb in members:
-                            mapping[mb] = canon
-                        if canon not in mapping:
-                            mapping[canon] = canon
-            except json.JSONDecodeError:
-                pass
-    return mapping
-
-
-def _apply_llm_merge(
-    merged: dict[str, dict[str, Any]],
-    llm_mapping: dict[str, str],
-) -> dict[str, dict[str, Any]]:
-    """根据 LLM 裁决将 merged 桶合并。"""
-    new_merged: dict[str, dict[str, Any]] = {}
-    for norm, info in merged.items():
-        target = llm_mapping.get(norm, norm)
-        if target not in new_merged:
-            new_merged[target] = {
-                "normalized": target,
-                "variants": set(),
-                "freq": 0,
-                "keys": [],
-                "ngram_type": info["ngram_type"],
-            }
-        new_merged[target]["variants"] |= info["variants"]
-        new_merged[target]["freq"] += info["freq"]
-        for k in info["keys"]:
-            if k not in new_merged[target]["keys"]:
-                new_merged[target]["keys"].append(k)
-        new_merged[target]["keys"] = new_merged[target]["keys"][:20]
-    return new_merged
-
-
-# ═══════════════════════════════════════════════════════════
-# 中文互斥 — 短术语救回逻辑
-# ═══════════════════════════════════════════════════════════
-
-def _try_rescue_short_term(
-    short_item: dict[str, str],
-    long_item: dict[str, str],
-    merged: dict[str, dict[str, Any]],
-    matched_entries: list[dict[str, str]],
-) -> dict[str, str] | None:
-    """
-    短 en 是长 en 的子串且中文冲突时，剔除长术语所在的 key 后重新统计。
-    若短术语在剩余 key 中指向不同中文且满足共识阈值，返回新术语条目；否则返回 None。
-    """
-    en_short = short_item["en"].lower()
-    en_long = long_item["en"].lower()
-    zh_long = long_item["zh"]
-
-    # 找到短术语的 merged 信息（内层 key 为归一化形式）
-    short_info = merged.get(en_short) or merged.get(en_short.replace(" ", "_"))
-    long_info = merged.get(en_long) or merged.get(en_long.replace(" ", "_"))
-    if not short_info:
-        return None
-
-    # 收集长术语命中的所有 key
-    long_keys: set[str] = set()
-    if long_info:
-        long_keys.update(long_info.get("keys", []))
-    # 同时收集长术语变体命中的 key
-    for variant in long_info.get("variants", []) if long_info else []:
-        pass  # 变体的 key 已在 long_info["keys"] 中
-
-    # 收集短术语独有的 key（剔除长术语命中的 key）
-    short_only_keys = [k for k in short_info.get("keys", []) if k not in long_keys]
-    if not short_only_keys:
-        return None
-
-    max_zh_len = cfg.get("term_max_zh_len", 40)
-    max_en_len = cfg.get("term_max_en_len", 60)
-    min_total = cfg.get("term_consensus_min_total", 3)
-    min_consensus = cfg.get("term_min_consensus", 0.6)
-
-    zh_counter: Counter = Counter()
-    for k in short_only_keys:
-        entry = next((e for e in matched_entries if e["key"] == k), None)
-        if not entry:
-            continue
-        if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
-            continue
-        zh_val = entry.get("zh", "").strip()
-        en_val = entry.get("en", "")
-        if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
-            continue
-        # 确认短术语的变体确实在 en_val 中出现
-        variants = short_info.get("variants", {en_short})
-        if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
-            continue
-        zh_counter[zh_val[:120]] += 1
-
-    if not zh_counter:
-        return None
-
-    best_zh, best_count = zh_counter.most_common(1)[0]
-    total = sum(zh_counter.values())
-    if total < min_total or best_count / total < min_consensus:
-        return None
-
-    # 重新统计后的中文与长术语中文不同 → 救回
-    if best_zh != zh_long:
-        return {"en": short_item["en"], "zh": best_zh}
-
-    return None
+from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
+from .lemma_merge import (
+    raw_merge,
+    apply_cache_merge,
+    fuzzy_cluster,
+    build_merge_prompt,
+    parse_merge_response,
+    apply_llm_merge,
+    try_rescue_short_term,
+)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -406,29 +84,29 @@ class TerminologyBuilder:
         self.cache.load()
 
         # Step 1: 原始分桶
-        self.merged = _raw_merge(self.extracted)
+        self.merged = raw_merge(self.extracted)
         print(f"  [术语归并] 原始分桶: {len(self.merged)} 个")
 
         # Step 2: 缓存查表
         if self.cache.map:
-            self.merged, self._cache_hits = _apply_cache_merge(self.merged, self.cache)
+            self.merged, self._cache_hits = apply_cache_merge(self.merged, self.cache)
             print(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
 
         if llm_call is None or not self.merged:
             return self.merged
 
         # Step 3: 模糊聚类（在缓存归并后的桶之间）
-        clusters = _fuzzy_cluster(self.merged, threshold=fuzzy_threshold)
+        clusters = fuzzy_cluster(self.merged, threshold=fuzzy_threshold)
         if not clusters:
             return self.merged
 
         print(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
 
         # Step 4: LLM 裁决 + 写回缓存
-        prompt = _build_merge_prompt(clusters)
+        prompt = build_merge_prompt(clusters)
         try:
             response = llm_call(prompt)
-            mapping = _parse_merge_response(response)
+            mapping = parse_merge_response(response)
             if mapping:
                 # 记录到缓存（canonical → members 方向）
                 canon_map: dict[str, list[str]] = {}
@@ -437,7 +115,7 @@ class TerminologyBuilder:
                 for canon, members in canon_map.items():
                     self.cache.record(canon, members, source="llm")
 
-                self.merged = _apply_llm_merge(self.merged, mapping)
+                self.merged = apply_llm_merge(self.merged, mapping)
                 print(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
         except Exception:
             pass
@@ -531,7 +209,7 @@ class TerminologyBuilder:
                     en_b_l = item_b["en"].lower()
                     if en_b_l in en_a_l and item_b not in to_remove:
                         # 短 en 是长 en 的子串 → 给短术语第二次机会
-                        rescued = _try_rescue_short_term(item_b, item_a, self.merged, self.matched_entries)
+                        rescued = try_rescue_short_term(item_b, item_a, self.merged, self.matched_entries)
                         if rescued:
                             glossary.append(rescued)
                             rescued_count += 1
