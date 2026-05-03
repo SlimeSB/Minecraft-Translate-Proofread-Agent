@@ -95,8 +95,8 @@ class ReviewPipeline:
         stats = self.alignment["stats"]
         print(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | ⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
 
-        # 保存 alignment.json
-        alignment_path = self.output_dir / "alignment.json"
+        # 保存 01_alignment.json
+        alignment_path = self.output_dir / "01_alignment.json"
         with open(alignment_path, "w", encoding="utf-8") as f:
             json.dump(self.alignment, f, ensure_ascii=False, indent=2)
         print(f"  已保存: {alignment_path}")
@@ -123,7 +123,7 @@ class ReviewPipeline:
         print(f"  术语不一致 verdicts: {len(self.term_verdicts)} 条")
 
         # 保存术语表
-        glossary_path = self.output_dir / "terminology_glossary.json"
+        glossary_path = self.output_dir / "02_terminology_glossary.json"
         with open(glossary_path, "w", encoding="utf-8") as f:
             json.dump(self.glossary, f, ensure_ascii=False, indent=2)
         print(f"  已保存: {glossary_path}")
@@ -147,7 +147,7 @@ class ReviewPipeline:
         print(f"  格式问题: {len(all_v)} 条")
 
         # 保存
-        fmt_path = self.output_dir / "format_verdicts.json"
+        fmt_path = self.output_dir / "03_format_verdicts.json"
         with open(fmt_path, "w", encoding="utf-8") as f:
             json.dump({
                 "total_checked": len(matched),
@@ -200,7 +200,7 @@ class ReviewPipeline:
 
         # 保存
         if self.fuzzy_results_map:
-            fuzzy_path = self.output_dir / "fuzzy_results.json"
+            fuzzy_path = self.output_dir / "04_fuzzy_results.json"
             with open(fuzzy_path, "w", encoding="utf-8") as f:
                 json.dump(self.fuzzy_results_map, f, ensure_ascii=False, indent=2)
 
@@ -274,7 +274,7 @@ class ReviewPipeline:
 
         # 保存 LLM verdicts
         if self.llm_verdicts:
-            llm_path = self.output_dir / "llm_verdicts.json"
+            llm_path = self.output_dir / "05_llm_verdicts.json"
             with open(llm_path, "w", encoding="utf-8") as f:
                 json.dump(self.llm_verdicts, f, ensure_ascii=False, indent=2)
 
@@ -294,8 +294,8 @@ class ReviewPipeline:
             self.llm_verdicts,
         )
 
-        review_path = self.output_dir / "review_report.json"
-        annotated_path = self.output_dir / "zh_cn_annotated.json"
+        review_path = self.output_dir / "06_review_report.json"
+        annotated_path = self.output_dir / "07_zh_cn_annotated.json"
 
         rg.generate_review_report(str(review_path))
         rg.generate_annotated_json(str(annotated_path))

@@ -129,14 +129,13 @@ Phase 4: 报告生成 ──→ review_report.json + zh_cn_annotated.json
 
 | 文件 | 说明 |
 |------|------|
-| `alignment.json` | 键对齐报告（Phase 1） |
-| `terminology_glossary.json` | 术语表（Phase 2） |
-| `lemma_cache.json` | 词形映射缓存，持续学习，可提交共享 |
-| `format_verdicts.json` | 自动格式检查结果（Phase 3a） |
-| `fuzzy_results.json` | 模糊搜索结果（Phase 3b） |
-| `llm_verdicts.json` | LLM 审校结果（Phase 3c） |
-| `review_report.json` | **最终审校报告**（合并所有来源） |
-| `zh_cn_annotated.json` | 带注释的可读副本（仅 FAIL/REVIEW 条目含 `_comments` 段） |
+| `01_alignment.json` | 键对齐报告（Phase 1） |
+| `02_terminology_glossary.json` | 术语表（Phase 2） |
+| `03_format_verdicts.json` | 自动格式检查结果（Phase 3a） |
+| `04_fuzzy_results.json` | 模糊搜索结果（Phase 3b） |
+| `05_llm_verdicts.json` | LLM 审校结果（Phase 3c） |
+| `06_review_report.json` | **最终审校报告**（合并所有来源） |
+| `07_zh_cn_annotated.json` | 带注释的可读副本（仅 FAIL/REVIEW 条目含 `_comments` 段） |
 
 ## 开发
 

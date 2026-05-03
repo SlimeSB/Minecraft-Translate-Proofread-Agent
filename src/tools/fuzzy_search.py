@@ -1,5 +1,5 @@
 """
-轻量模糊搜索工具：在翻译记忆库中查找与查询字符串最相似的行。
+轻量模糊搜索工具：SQLite FTS5 全文索引 + 编辑距离精排。
 用于 translation-reviewer agent 的翻译记忆匹配。
 
 用法:
@@ -10,12 +10,18 @@
 """
 import argparse
 import json
+import os
+import sqlite3
 import sys
+import tempfile
 from typing import Any
 
 
+# ═══════════════════════════════════════════════════════════
+# 编辑距离（仅对 FTS 候选做精排）
+# ═══════════════════════════════════════════════════════════
+
 def levenshtein_distance(s1: str, s2: str) -> int:
-    """计算编辑距离（纯Python，无依赖）"""
     if len(s1) < len(s2):
         return levenshtein_distance(s2, s1)
     if len(s2) == 0:
@@ -33,12 +39,110 @@ def levenshtein_distance(s1: str, s2: str) -> int:
 
 
 def calc_similarity(query: str, line: str) -> float:
-    """计算相似度 0~100"""
     if not query or not line:
         return 0.0
     dist = levenshtein_distance(query, line)
     max_len = max(len(query), len(line))
     return round(100 * (1 - dist / max_len), 2)
+
+
+# ═══════════════════════════════════════════════════════════
+# SQLite FTS5 引擎
+# ═══════════════════════════════════════════════════════════
+
+class TranslationDB:
+    """在内存 SQLite FTS5 中索引 en_us/zh_cn 对，提供快速模糊搜索。"""
+
+    def __init__(self, db_path: str = ":memory:"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute("PRAGMA journal_mode=OFF")
+        self.conn.execute("PRAGMA synchronous=OFF")
+        self._initialized = False
+
+    def build(self, en_entries: dict[str, str], zh_entries: dict[str, str]) -> None:
+        """构建 FTS5 索引。"""
+        self.conn.execute("DROP TABLE IF EXISTS entries")
+        self.conn.execute("DROP TABLE IF EXISTS entries_fts")
+        self.conn.execute(
+            "CREATE TABLE entries (key TEXT PRIMARY KEY, en TEXT, zh TEXT)"
+        )
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE entries_fts USING fts5(key, en, zh, content='entries', content_rowid='rowid')"
+        )
+        cur = self.conn.cursor()
+        cur.execute("BEGIN")
+        for key, en_val in en_entries.items():
+            zh_val = zh_entries.get(key, "")
+            cur.execute(
+                "INSERT INTO entries (key, en, zh) VALUES (?, ?, ?)",
+                (key, en_val or "", zh_val or ""),
+            )
+        cur.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+        self.conn.commit()
+        self._initialized = True
+
+    def search(
+        self,
+        query: str,
+        zh_entries: dict[str, str] | None = None,
+        top_n: int = 5,
+        threshold: float = 50.0,
+    ) -> list[dict[str, Any]]:
+        """
+        模糊搜索。先用 FTS5 token 前缀匹配召回候选，再用编辑距离精排。
+        """
+        if not self._initialized or not query.strip():
+            return []
+
+        # FTS5 前缀查询：每个 token 后加 *
+        tokens = []
+        for t in query.split():
+            t_clean = "".join(c for c in t if c.isalnum())
+            if len(t_clean) >= 2:
+                tokens.append(t_clean + "*")
+        if not tokens:
+            return []
+
+        fts_query = " OR ".join(tokens)
+        fts_col = "en"
+
+        try:
+            cur = self.conn.execute(
+                f"SELECT key, en, zh FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?",
+                (fts_query, max(top_n * 10, 50)),
+            )
+            candidates = [(row[0], row[1], row[2]) for row in cur.fetchall()]
+        except sqlite3.OperationalError:
+            return []
+
+        # 编辑距离精排
+        results: list[dict[str, Any]] = []
+        for key, en_text, zh_text in candidates:
+            sim = calc_similarity(query, en_text or "")
+            if sim >= threshold:
+                results.append({
+                    "similarity": sim,
+                    "key": key,
+                    "en": en_text or "",
+                    "zh": zh_text or (zh_entries.get(key, "(无翻译)") if zh_entries else ""),
+                })
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_n]
+
+
+# ═══════════════════════════════════════════════════════════
+# 单例（复用 FTS 索引，避免每次查询重建）
+# ═══════════════════════════════════════════════════════════
+
+_db_instance: TranslationDB | None = None
+
+
+def _get_db(en_entries: dict[str, str], zh_entries: dict[str, str]) -> TranslationDB:
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = TranslationDB()
+        _db_instance.build(en_entries, zh_entries)
+    return _db_instance
 
 
 def fuzzy_search_lines(
@@ -48,60 +152,35 @@ def fuzzy_search_lines(
     top_n: int = 5,
     threshold: float = 50.0,
 ) -> list[dict[str, Any]]:
-    """
-    在翻译记忆库中模糊搜索
-
-    :param query: 待查找的英文原文
-    :param en_entries: 翻译记忆库英文条目 {key: english_text}
-    :param zh_entries: 对应中文翻译 {key: chinese_text}
-    :param top_n: 返回最相似的N条
-    :param threshold: 相似度阈值（低于则过滤）
-    :return: [{"similarity": 分值, "key": 键名, "en": 英文, "zh": 中文}, ...]
-    """
-    results: list[dict[str, Any]] = []
-    for key, en_text in en_entries.items():
-        sim = calc_similarity(query, en_text)
-        if sim >= threshold:
-            results.append({
-                "similarity": sim,
-                "key": key,
-                "en": en_text,
-                "zh": zh_entries.get(key, "(无翻译)"),
-            })
-    results.sort(key=lambda x: x["similarity"], reverse=True)
-    return results[:top_n]
+    """在翻译记忆库中模糊搜索（保持旧 API 兼容）。"""
+    db = _get_db(en_entries, zh_entries)
+    return db.search(query, zh_entries, top_n, threshold)
 
 
 def load_json(path: str) -> dict:
-    """加载JSON文件"""
     with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 
+# ═══════════════════════════════════════════════════════════
+# CLI 入口
+# ═══════════════════════════════════════════════════════════
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="在翻译记忆库中模糊搜索相似翻译"
-    )
+    parser = argparse.ArgumentParser(description="在翻译记忆库中模糊搜索相似翻译")
     parser.add_argument("--query", required=True, help="待查找的英文原文")
     parser.add_argument("--en", required=True, help="en_us.json 路径")
     parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument(
-        "--threshold", type=float, default=50.0, help="相似度阈值 (0-100)，默认50"
-    )
-    parser.add_argument(
-        "--top", type=int, default=5, help="返回最相似的前N条，默认5"
-    )
+    parser.add_argument("--threshold", type=float, default=50.0, help="相似度阈值 (0-100)，默认50")
+    parser.add_argument("--top", type=int, default=5, help="返回最相似的前N条，默认5")
 
     args = parser.parse_args()
 
     try:
         en_entries = load_json(args.en)
         zh_entries = load_json(args.zh)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
         sys.exit(1)
 
     matches = fuzzy_search_lines(
@@ -111,10 +190,9 @@ def main() -> None:
         top_n=args.top,
         threshold=args.threshold,
     )
-
-    output = {"similar_lines": matches}
-    print(json.dumps(output, ensure_ascii=False, indent=2))
+    print(json.dumps({"similar_lines": matches}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
     main()
+

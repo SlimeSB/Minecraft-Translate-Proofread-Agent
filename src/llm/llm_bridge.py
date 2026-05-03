@@ -301,10 +301,13 @@ class LLMBridge:
         )
         all_verdicts: list[dict[str, Any]] = []
 
-        for prompt in prompts:
+        for i, prompt in enumerate(prompts):
             try:
+                import sys
+                print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens)...", end=" ", flush=True, file=sys.stderr)
                 response = self.llm_call(prompt)
                 parsed = parse_review_response(response)
+                print(f"→ {len(parsed)} verdicts", file=sys.stderr)
                 for v in parsed:
                     v["source"] = "llm_review"
                     # 确保必有字段
