@@ -355,6 +355,7 @@ class FormatChecker:
             )
         return None
 
+    # TODO: 这里keyboard写的不好，可以删了。可以检查一下左键右键。
     def _check_keyboard_keys(
         self, key: str, en: str, zh: str
     ) -> dict[str, Any] | None:
