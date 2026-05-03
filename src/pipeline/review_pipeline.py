@@ -113,10 +113,9 @@ class ReviewPipeline:
         tb = TerminologyBuilder(cache_path=cache_path)
         tb.load(self.en_data, self.zh_data, self.alignment)
         tb.extract(min_freq=2, max_ngram=3)
-        # 缓存查表 → 模糊聚类 → LLM 裁决（有 llm_call 时）→ 写回缓存
+        # 缓存查表 → 模糊聚类 → 纯程序提取术语表
         tb.merge_lemmas(llm_call=self.llm_call)
-        # LLM 翻译术语表（每组试一条）→ 一致性检查
-        self.glossary = tb.build_glossary(llm_call=self.llm_call, min_freq=self.min_term_freq)
+        self.glossary = tb.build_glossary()
         self.term_verdicts = tb.check_consistency()
 
         print(f"  术语表: {len(self.glossary)} 条")
