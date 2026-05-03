@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from src.tools.terminology_extract import extract_terms, tokenize
 from src.tools.fuzzy_search import calc_similarity
+from src import config as cfg
 
 # ═══════════════════════════════════════════════════════════
 # 持久化词形缓存（持续学习）
@@ -195,7 +196,7 @@ def _fuzzy_cluster(
             parents[ra] = rb
 
     # 两两比对（限制高频词范围以避免 O(n²) 爆炸）
-    top_n = min(len(norms), 200)
+    top_n = min(len(norms), cfg.get("fuzzy_cluster_top_n", 200))
     for i in range(top_n):
         for j in range(i + 1, top_n):
             ni, nj = norms[i], norms[j]
@@ -327,10 +328,11 @@ class TerminologyBuilder:
     def merge_lemmas(
         self,
         llm_call: Callable[[str], str] | None = None,
-        fuzzy_threshold: float = 65.0,
+        fuzzy_threshold: float | None = None,
     ) -> dict[str, dict[str, Any]]:
         if not self.extracted:
             self.extract()
+        fuzzy_threshold = fuzzy_threshold if fuzzy_threshold is not None else cfg.get("fuzzy_cluster_threshold", 65.0)
 
         self.cache.load()
 
@@ -377,15 +379,21 @@ class TerminologyBuilder:
 
     # ── 术语翻译 + 一致性检查 ─────────────────────────────
 
-    def build_glossary(self, min_freq: int = 5, min_consensus: float = 0.6) -> list[dict[str, str]]:
+    def build_glossary(self, min_freq: int | None = None, min_consensus: float | None = None) -> list[dict[str, str]]:
         """
         纯程序化构建术语表：从 matched_entries 中统计每组术语的已有中文译文。
 
-        :param min_freq: 最少出现次数（归并后），默认 5
-        :param min_consensus: 最常用译文占比阈值，默认 0.6（60%以上才采信）
+        :param min_freq: 最少出现次数（归并后），默认从配置取 term_min_freq
+        :param min_consensus: 最常用译文占比阈值，默认从配置取 term_min_consensus
         """
         if not self.merged:
             self.merge_lemmas()
+
+        min_freq = min_freq if min_freq is not None else cfg.get("term_min_freq", 5)
+        min_consensus = min_consensus if min_consensus is not None else cfg.get("term_min_consensus", 0.6)
+        max_zh_len = cfg.get("term_max_zh_len", 40)
+        max_en_len = cfg.get("term_max_en_len", 60)
+        min_total = cfg.get("term_consensus_min_total", 3)
 
         from src.tools.terminology_extract import STOP_WORDS
 
@@ -410,12 +418,11 @@ class TerminologyBuilder:
                 if not entry:
                     continue
                 # 描述性条目不参与术语表（desc/lore/flavor/text/message 等）
-                if any(p in k for p in (".desc", ".description", ".lore", ".tooltip",
-                                         ".flavor", ".info", ".message", ".text")):
+                if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
                     continue
                 zh_val = entry.get("zh", "").strip()
                 en_val = entry.get("en", "")
-                if not zh_val or zh_val == en_val or len(zh_val) > 40 or len(en_val) > 60:
+                if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
                     continue
                 variants = info["variants"]
                 if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
@@ -427,7 +434,7 @@ class TerminologyBuilder:
 
             best_zh, best_count = zh_counter.most_common(1)[0]
             total = sum(zh_counter.values())
-            if total >= 3 and best_count / total >= min_consensus:
+            if total >= min_total and best_count / total >= min_consensus:
                 variants = sorted(info["variants"], key=len)
                 en_term = variants[0] if variants else norm
                 glossary.append({"en": en_term, "zh": best_zh})
@@ -492,22 +499,6 @@ class TerminologyBuilder:
         return self.build_glossary()
 
 
-def _parse_term_translations(response: str) -> list[dict[str, str]]:
-    """解析 LLM 术语翻译响应: [{en, zh}, ...]"""
-    try:
-        data = json.loads(response)
-        if isinstance(data, list):
-            return data
-    except json.JSONDecodeError:
-        m = re.search(r"\[.*\]", response, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group())
-            except json.JSONDecodeError:
-                pass
-    return []
-
-
 # ═══════════════════════════════════════════════════════════
 # CLI 入口
 # ═══════════════════════════════════════════════════════════
@@ -554,11 +545,8 @@ def main() -> None:
         with open(p, "w", encoding="utf-8") as f:
             json.dump(verdicts, f, ensure_ascii=False, indent=2)
 
-    inconsistent = tb.get_inconsistent_terms()
     result = {
         "glossary_size": len(glossary),
-        "consistent_terms": sum(1 for g in glossary if g["is_consistent"]),
-        "inconsistent_terms": inconsistent,
         "terminology_verdicts": verdicts,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

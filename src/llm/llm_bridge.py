@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from src import config as cfg
+
 # ═══════════════════════════════════════════════════════════
 # 键名前缀分组 + 类型专属 Prompt 库
 # ═══════════════════════════════════════════════════════════
@@ -141,10 +143,7 @@ LLM_REQUIRED_PREFIXES: set[str] = {
     "subtitles.", "sound.", "book.", "entity.", "effect.", "potion.",
 }
 
-LLM_REQUIRED_PATTERNS: list[str] = [
-    ".desc", ".description", ".lore", ".tooltip", ".flavor",
-    ".info", ".message", ".text", ".title",
-]
+LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 
 
 def needs_llm_review(entry: dict[str, str]) -> bool:

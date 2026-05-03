@@ -1,0 +1,14 @@
+{
+  "_note": "翻译审校配置文件。修改后无需改代码。",
+  "desc_key_suffixes": [
+    ".desc", ".description", ".lore", ".tooltip",
+    ".flavor", ".info", ".message", ".text"
+  ],
+  "term_min_freq": 5,
+  "term_min_consensus": 0.6,
+  "term_max_zh_len": 40,
+  "term_max_en_len": 60,
+  "term_consensus_min_total": 3,
+  "fuzzy_cluster_threshold": 65.0,
+  "fuzzy_cluster_top_n": 200
+}
