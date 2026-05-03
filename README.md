@@ -44,8 +44,8 @@ src/
 │   ├── fuzzy_search.py          # 编辑距离模糊搜索，查翻译记忆
 │   └── terminology_extract.py   # n-gram 高频词提取
 ├── checkers/                    # 全自动检查器
-│   ├── format_checker.py        # 11 项格式验证（占位符/标签/标点/错字...）
-│   └── terminology_builder.py   # 词形归并 + 术语表构建 + 一致性检查
+│   ├── format_checker.py        # 10 项格式验证（占位符/标签/标点...）
+│   └── terminology_builder.py   # 术语分桶 + 缓存查表 + 模糊聚类 + LLM归并 + 一致性检查
 ├── llm/
 │   └── llm_bridge.py            # LLM prompt 构建 + 响应解析 + 交互模式
 └── reporting/
@@ -62,8 +62,9 @@ tests/
 Phase 1: 键对齐 ──→ alignment.json
     │                 {matched_entries, missing_zh, extra_zh, suspicious_untranslated}
     ▼
-Phase 2: 术语提取 ──→ terminology_glossary.json
+Phase 2: 术语提取 ──→ terminology_glossary.json + lemma_cache.json
     │                 {术语表 + 翻译不一致列表}
+    │                 归并策略: 原始分桶 → 缓存查表 → 模糊聚类 → LLM裁决 → 写回缓存
     ▼
 Phase 3a: 格式检查 ──→ format_verdicts.json
     │                 {占位符/标签/标点/错字/省略号/声音字幕/能量单位/按键...}
@@ -110,9 +111,12 @@ Phase 4: 报告生成 ──→ review_report.json + zh_cn_annotated.json
 ### 术语表如何工作？
 
 1. `terminology_extract.py` 从 EN 提取 unigrams/bigrams/trigrams 及频次
-2. `terminology_builder.py` 做词形归并（复数→单数、过去式→原形），按合并后频次 ≥3 构建术语表
-3. 对只有一个翻译的"一致"术语，强制检查所有条目必须使用该译文
-4. 对有多个翻译的"不一致"术语，列出供 LLM / 人工裁决
+2. `terminology_builder.py` 按原始词面分桶（不做事先词形归一）
+3. **缓存查表**：查 `lemma_cache.json` 中的已知词形映射（如 `placed`→`place`），直接命中归并
+4. **模糊聚类**：编辑距离 ≥65% 且共享 token 的桶标记为候选组
+5. **LLM 裁决**：判断候选组是否应合并为同一术语，输出 `{canonical, members}` 决议
+6. **写回缓存**：LLM 裁决结果写入 `lemma_cache.json`，下次自动命中（持续学习）
+7. 按归并后频次 ≥3 构建术语表；对"一致"术语强制检查翻译统一性
 
 ### Verdict 合并去重
 
@@ -127,6 +131,7 @@ Phase 4: 报告生成 ──→ review_report.json + zh_cn_annotated.json
 |------|------|
 | `alignment.json` | 键对齐报告（Phase 1） |
 | `terminology_glossary.json` | 术语表（Phase 2） |
+| `lemma_cache.json` | 词形映射缓存，持续学习，可提交共享 |
 | `format_verdicts.json` | 自动格式检查结果（Phase 3a） |
 | `fuzzy_results.json` | 模糊搜索结果（Phase 3b） |
 | `llm_verdicts.json` | LLM 审校结果（Phase 3c） |
@@ -141,11 +146,10 @@ Phase 4: 报告生成 ──→ review_report.json + zh_cn_annotated.json
 # 在 FormatChecker.__init__ 中向 checks 列表追加新方法
 # 方法签名: def _check_xxx(self, key, en, zh) -> dict | None
 
-# 添加新术语归并规则
-# 编辑 src/checkers/terminology_builder.py
-# 在 IRREGULAR_PLURALS / IRREGULAR_VERBS 中追加映射
-
 # 添加新键名分类
 # 编辑 src/llm/llm_bridge.py
 # 在 KEY_CATEGORY_RULES 或 LLM_REQUIRED_CATEGORIES 中追加
+
+# 查看缓存统计
+python -c "from src.checkers.terminology_builder import LemmaCache; c=LemmaCache(); c.load(); print(f'{len(c.map)} entries')"
 ```
