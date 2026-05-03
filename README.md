@@ -1,154 +1,125 @@
 # Minecraft 模组翻译审校工具
 
-将 Minecraft 模组 JSON 语言文件（`en_us.json` ↔ `zh_cn.json`）的审校流程从纯 LLM Agent 改造为**程序化自动检查 + LLM 启发式审校**的混合架构。90%+ 的检查由确定性规则完成，LLM 只处理需要语义判断的条目。
+程序化自动检查 + LLM 启发式审校的混合架构。90%+ 检查由确定性规则完成，LLM 只处理需要语义判断的条目。
 
 ## 快速开始
 
 ```bash
-# 1. 配置 .env
-cp .env.example .env
-# 编辑 .env，填入 API key
-
-# 2. 干运行（预览统计，不调 LLM）
+cp .env.example .env          # 填入 API key
 python run.py --en tests/fixtures/en_us.json --zh tests/fixtures/zh_cn.json -o output --dry-run
-
-# 3. 仅自动检查（零 token 消耗）
-python run.py --en en_us.json --zh zh_cn.json -o output --no-llm
-
-# 4. 完整流水线
-python run.py --en en_us.json --zh zh_cn.json -o output
-
-# 5. 交互模式（逐条手动判定）
-python run.py --en en_us.json --zh zh_cn.json -o output --interactive
+python run.py --en en_us.json --zh zh_cn.json -o output --no-llm    # 零 token
+python run.py --en en_us.json --zh zh_cn.json -o output              # 完整流水线
 ```
 
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `REVIEW_OPENAI_API_KEY` | API key（OpenAI 兼容） | 无（必填） |
+| `REVIEW_OPENAI_API_KEY` | API key | 无 |
 | `REVIEW_OPENAI_BASE_URL` | API 地址 | `https://api.deepseek.com` |
-| `REVIEW_OPENAI_MODEL` | 模型名 | `deepseek-v4-flash` |
+| `REVIEW_OPENAI_MODEL` | 模型 | `deepseek-v4-flash` |
 
 ## 项目结构
 
 ```
-run.py                           # CLI 入口
-.env.example                     # 环境变量模板
-.gitignore
+run.py                              # CLI 入口
+review_config.json                  # 所有可调参数 + prompt 模板
+term_blacklist.json                 # 术语停用词
+.env.example
 src/
-├── pipeline/
-│   └── review_pipeline.py       # 主编排器，串联全部 Phase
-├── tools/                       # 无状态工具脚本
-│   ├── key_alignment.py         # 键对齐 en↔zh，输出 matched/missing/extra
-│   ├── fuzzy_search.py          # 编辑距离模糊搜索，查翻译记忆
-│   └── terminology_extract.py   # n-gram 高频词提取
-├── checkers/                    # 全自动检查器
-│   ├── format_checker.py        # 10 项格式验证（占位符/标签/标点...）
-│   └── terminology_builder.py   # 术语分桶 + 缓存查表 + 模糊聚类 + LLM归并 + 一致性检查
-├── llm/
-│   └── llm_bridge.py            # LLM prompt 构建 + 响应解析 + 交互模式
-└── reporting/
-    └── report_generator.py      # 多来源 verdict 合并去重 + 报告生成
-tests/
-└── fixtures/
-    ├── en_us.json               # 测试用英文语言文件
-    └── zh_cn.json               # 测试用中文语言文件
+├── config.py                       # 配置加载模块（全仓唯一配置来源）
+├── pipeline/review_pipeline.py     # 主编排器 Phase 1→4
+├── tools/                           # 无状态工具
+│   ├── key_alignment.py            # 键对齐 en↔zh
+│   ├── fuzzy_search.py             # SQLite FTS5 模糊搜索
+│   └── terminology_extract.py      # n-gram 高频词提取
+├── checkers/                       # 全自动检查器
+│   ├── format_checker.py           # 10 项格式验证
+│   └── terminology_builder.py      # 词形分桶 + 缓存归并 + 术语表 + 一致性检查
+├── llm/llm_bridge.py               # LLM prompt 构建 + 并行调用 + 429 重试
+└── reporting/report_generator.py   # 多来源 verdict 合并 + 报告生成
+tests/fixtures/                     # 测试数据
 ```
 
-## 流水线架构
+## 流水线
 
 ```
-Phase 1: 键对齐 ──→ alignment.json
-    │                 {matched_entries, missing_zh, extra_zh, suspicious_untranslated}
-    ▼
-Phase 2: 术语提取 ──→ terminology_glossary.json + lemma_cache.json
-    │                 {术语表 + 翻译不一致列表}
-    │                 归并策略: 原始分桶 → 缓存查表 → 模糊聚类 → LLM裁决 → 写回缓存
-    ▼
-Phase 3a: 格式检查 ──→ format_verdicts.json
-    │                 {占位符/标签/标点/错字/省略号/声音字幕/能量单位/按键...}
-    ▼
-Phase 3b: 模糊搜索 ──→ fuzzy_results.json (仅对 .desc / death.attack. / advancements.*)
-    │
-    ▼
-Phase 3c: LLM 审校 ──→ llm_verdicts.json
-    │                 筛选 ~39% 高价值条目（进度/死亡信息/魔咒/声音字幕/书籍/实体/长文本）
-    │                 每批 20 条，带术语表 + 自动检查结果作为上下文
-    ▼
-Phase 4: 报告生成 ──→ review_report.json + zh_cn_annotated.json
+Phase 1: 键对齐          → 01_alignment.json
+Phase 2: 术语提取+归并     → 02_terminology_glossary.json + lemma_cache.json
+Phase 3a: 格式检查        → 03_format_verdicts.json         (10 项规则，全是程序)
+Phase 3b: 模糊搜索        → 04_fuzzy_results.json           (SQLite FTS5)
+Phase 3c: LLM 审校        → 05_llm_verdicts.json            (并行 4 workers, 429退避)
+Phase 4: 报告生成         → 06_review_report.json + 07_zh_cn_annotated.json
 ```
 
-## 判定体系
+## 自动检查规则（10 项，全部程序化）
 
-| 标记 | 含义 | 来源 |
-|------|------|------|
-| ❌ FAIL | 误译/漏译/格式错误/未翻译 | 自动检查 + LLM |
-| ⚠️ SUGGEST | 风格/措辞改进建议 | 自动检查 + LLM |
-| 🔶 REVIEW | 需人工判断的疑难 | LLM |
-| PASS | 通过（不写入报告） | — |
-
-**自动检查覆盖的规则（10 项，错别字/语气/文化引用等语义问题交 LLM）：**
-1. 占位符完整性（`%d/%s/%f/%n$s/%msg%/{0}` 等）
-2. 特殊标签完整性（`§` 颜色码、`&` 格式码、`$(action)`、HTML 标签、`<br>`、`\n`）
+1. 占位符完整性（`%d/%s/%f/%n$s/%msg%/{0}` 等，`%1$s`↔`%s` 归一化比对）
+2. 特殊标签完整性（`§`/`&`/`$(action)`/HTML/`<br>`/`\n`）
 3. tellraw JSON（仅翻译 `text` 键）
 4. 中文标点规范（全角标点、半角 `[]`、中英文间距）
 5. 省略号格式（禁用 `...`）
 6. 能量/体积单位保留（FE、RF、MB）
 7. 键盘按键保留（Shift、Ctrl 等）
-8. 空翻译检测（`zh == en` 且非代码/专有名词）
+8. 空翻译检测（`zh==en` 且非代码/专有名词）
 9. 声音字幕格式（`主体：声音`）
 10. 尾部空格功能冲突
 
-## 关键决策
+**不再做**：错别字检测、语气/文化引用判断 → 全部交 LLM。
 
-### 为什么只有 ~39% 条目发给 LLM？
+## P3 LLM 审校策略
 
-- **纯界面/功能性条目**（容器名、按键名、配置项等）格式正确即可 PASS，无需 LLM 审校
-- **自动检查无问题 + 短文本 + 非关键类别**的条目直接 PASS
-- 仅以下类别强制送 LLM：进度、死亡信息、魔咒、声音字幕、书籍、实体、状态效果、药水、`.desc/.lore/.tooltip` 等描述性文本、>80 字符长文本
+- **按 key 前缀分组**（`advancements.`、`death.attack.`、`enchantment.` …），每组专属审查重点
+- 每批只含一种前缀类型，按 batch_size 切分
+- 未匹配前缀归入 `__default__`，用默认 prompt
+- 术语表作为强制参考注入到 prompt
+- 并行 4 workers，429 自动指数退避
 
-### 术语表如何工作？
+自动通过条件（同时满足全部）：
+1. 不属于强制 LLM 类别（进度/死亡信息/魔咒/声音字幕/声音/书籍/实体/状态效果/药水）
+2. 键名不含 `.desc/.title/.lore/.tooltip/.flavor/.info/.message/.text`
+3. EN ≤80 字符
+4. 无自动检查 verdict
 
-1. `terminology_extract.py` 从 EN 提取 unigrams/bigrams/trigrams 及频次
-2. `terminology_builder.py` 按原始词面分桶（不做事先词形归一）
-3. **缓存查表**：查 `lemma_cache.json` 中的已知词形映射（如 `placed`→`place`），直接命中归并
-4. **模糊聚类**：编辑距离 ≥65% 且共享 token 的桶标记为候选组
-5. **LLM 裁决**：判断候选组是否应合并为同一术语，输出 `{canonical, members}` 决议
-6. **写回缓存**：LLM 裁决结果写入 `lemma_cache.json`，下次自动命中（持续学习）
-7. 按归并后频次 ≥3 构建术语表；对"一致"术语强制检查翻译统一性
+## P2 术语表
 
-### Verdict 合并去重
+纯程序化，不调 LLM 做翻译：
+1. 从 EN 提取 unigrams/bigrams/trigrams，停用词过滤
+2. 原始词面分桶 → LemmaCache 查表归并（持续学习）→ 模糊聚类 → LLM 裁决同形异体
+3. 按归并后频次 ≥5 + 共识 ≥60% 构建术语表（仅从事物名称条目取中文，描述性条目排除）
+4. `\b` 词边界匹配检查一致性，标记不一致条目
 
-同一 key 可能有多个 verdict（格式检查发现 + 术语检查发现 + LLM 发现），合并时取最高优先级：
-- 优先级：FAIL > REVIEW > SUGGEST
-- 同级别时 LLM 判断优先于自动判断
-- 所有 reason 合并去重展示
+缓存 `lemma_cache.json` 每次 LLM 裁决后写入，跨次运行复用。
+
+## 配置
+
+所有硬编码 prompt 已移至 `review_config.json`。修改此文件即可调整：
+- 审查重点 / 风格参考 / 普适原则
+- 术语阈值 / 聚类参数
+- key 前缀分组规则
+- LLM 必选前缀列表
+
+`src/config.py` 是代码侧加载入口，`terminology_builder.py`、`llm_bridge.py` 统一从此读取。
 
 ## 输出文件
 
 | 文件 | 说明 |
 |------|------|
-| `01_alignment.json` | 键对齐报告（Phase 1） |
-| `02_terminology_glossary.json` | 术语表（Phase 2） |
-| `03_format_verdicts.json` | 自动格式检查结果（Phase 3a） |
-| `04_fuzzy_results.json` | 模糊搜索结果（Phase 3b） |
-| `05_llm_verdicts.json` | LLM 审校结果（Phase 3c） |
-| `06_review_report.json` | **最终审校报告**（合并所有来源） |
-| `07_zh_cn_annotated.json` | 带注释的可读副本（仅 FAIL/REVIEW 条目含 `_comments` 段） |
+| `01_alignment.json` | 键对齐 |
+| `02_terminology_glossary.json` | 纯程序术语表 `[{en, zh}]` |
+| `03_format_verdicts.json` | 自动格式检查 |
+| `04_fuzzy_results.json` | FTS5 模糊搜索结果 |
+| `05_llm_verdicts.json` | LLM 审校结果 |
+| `06_review_report.json` | 最终审校报告（合并去重） |
+| `07_zh_cn_annotated.json` | 带 `_comments` 的可读副本 |
+| `08_llm_call_log.txt` | LLM prompt/response 完整日志 |
+| `lemma_cache.json` | 词形映射缓存（跨次复用） |
 
-## 开发
+## 配置与数据文件
 
-```bash
-# 添加新格式检查
-# 编辑 src/checkers/format_checker.py
-# 在 FormatChecker.__init__ 中向 checks 列表追加新方法
-# 方法签名: def _check_xxx(self, key, en, zh) -> dict | None
-
-# 添加新键名分类
-# 编辑 src/llm/llm_bridge.py
-# 在 KEY_CATEGORY_RULES 或 LLM_REQUIRED_CATEGORIES 中追加
-
-# 查看缓存统计
-python -c "from src.checkers.terminology_builder import LemmaCache; c=LemmaCache(); c.load(); print(f'{len(c.map)} entries')"
-```
+| 文件 | 说明 |
+|------|------|
+| `review_config.json` | 所有可调参数 + 全部 prompt 模板 |
+| `term_blacklist.json` | 术语停用词列表 |
+| `.env` | API key（不提交） |
+| `.env.example` | 环境变量模板 |
