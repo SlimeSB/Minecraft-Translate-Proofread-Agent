@@ -218,12 +218,7 @@ def _fuzzy_cluster(
 
 def _build_merge_prompt(clusters: list[list[str]]) -> str:
     """构建 LLM 归并 prompt。"""
-    blocks: list[str] = [
-        "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。",
-        "判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。",
-        "输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }",
-        "不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。\n",
-    ]
+    blocks: list[str] = [cfg.MERGE_SYSTEM_PROMPT]
     for i, group in enumerate(clusters):
         lines = [f"## 候选组 {i+1}"]
         for term in group:

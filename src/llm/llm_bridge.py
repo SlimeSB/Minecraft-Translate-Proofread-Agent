@@ -153,7 +153,7 @@ def build_review_prompt(
         for i in range(0, len(group_entries), batch_size):
             batch = group_entries[i:i + batch_size]
 
-            header = f"""你是Minecraft模组简中翻译审校专家。当前类型: {cat_label}（{prefix}*）。
+            header = f"""{cfg.REVIEW_HEADER_PREFIX}。当前类型: {cat_label}（{prefix}*）。
 
 ## 审查重点
 {focus_notes}
