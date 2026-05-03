@@ -23,8 +23,7 @@ python run.py --en en_us.json --zh zh_cn.json -o output              # 完整流
 
 ```
 run.py                              # CLI 入口
-review_config.json                  # 所有可调参数 + prompt 模板
-term_blacklist.json                 # 术语停用词
+review_config.json                  # 所有可调参数 + prompt 模板 + 术语停用词
 .env.example
 src/
 ├── config.py                       # 配置加载模块（全仓唯一配置来源）
@@ -119,7 +118,6 @@ Phase 4: 报告生成         → 06_review_report.json + 07_zh_cn_annotated.jso
 
 | 文件 | 说明 |
 |------|------|
-| `review_config.json` | 所有可调参数 + 全部 prompt 模板 |
-| `term_blacklist.json` | 术语停用词列表 |
+| `review_config.json` | 所有可调参数 + 全部 prompt 模板 + 术语停用词 |
 | `.env` | API key（不提交） |
 | `.env.example` | 环境变量模板 |

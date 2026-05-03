@@ -21,16 +21,12 @@ from collections import defaultdict
 
 
 # ── stop words ────────────────────────────────────────────
-_BLACKLIST_PATH = "term_blacklist.json"
+from ..config import get as _cfg_get
 
 def _load_blacklist() -> set[str]:
-    """从 term_blacklist.json 加载黑名单词。"""
-    try:
-        with open(_BLACKLIST_PATH, "r", encoding="utf-8") as f:
-            words = json.load(f)
-            return set(w.lower().strip() for w in words if isinstance(w, str))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
+    """从 review_config.json 的 term_blacklist 加载黑名单词。"""
+    words = _cfg_get("term_blacklist", [])
+    return set(w.lower().strip() for w in words if isinstance(w, str))
 
 STOP_WORDS: set[str] = _load_blacklist()
 
