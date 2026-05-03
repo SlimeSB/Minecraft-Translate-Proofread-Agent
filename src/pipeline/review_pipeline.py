@@ -115,11 +115,11 @@ class ReviewPipeline:
         tb.extract(min_freq=2, max_ngram=3)
         # 缓存查表 → 模糊聚类 → LLM 裁决（有 llm_call 时）→ 写回缓存
         tb.merge_lemmas(llm_call=self.llm_call)
-        self.glossary = tb.build_glossary(min_freq=self.min_term_freq)
+        # LLM 翻译术语表（每组试一条）→ 一致性检查
+        self.glossary = tb.build_glossary(llm_call=self.llm_call, min_freq=self.min_term_freq)
         self.term_verdicts = tb.check_consistency()
 
-        inconsistent = tb.get_inconsistent_terms()
-        print(f"  术语表: {len(self.glossary)} 条 (一致: {sum(1 for g in self.glossary if g['is_consistent'])}, 不一致: {len(inconsistent)})")
+        print(f"  术语表: {len(self.glossary)} 条")
         print(f"  术语不一致 verdicts: {len(self.term_verdicts)} 条")
 
         # 保存术语表

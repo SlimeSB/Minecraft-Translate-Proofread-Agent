@@ -375,98 +375,126 @@ class TerminologyBuilder:
 
     # ── 构建术语表 ────────────────────────────────────────
 
-    def build_glossary(self, min_freq: int = 3) -> list[dict[str, Any]]:
-        """对归并后的术语统计翻译，构建术语表。"""
+    # ── 术语翻译 + 一致性检查 ─────────────────────────────
+
+    def build_glossary(
+        self,
+        llm_call: Callable[[str], str],
+        min_freq: int = 3,
+    ) -> list[dict[str, str]]:
+        """
+        对归并后频次 ≥ min_freq 的每组术语，各取一条代表喂给 LLM，
+        生成纯 EN→ZH 术语对照表。
+
+        返回: [{en: "英文术语", zh: "标准简中译文"}, ...]
+        :param llm_call: LLM 调用函数，为 None 时跳过翻译（干运行/无 LLM）
+        """
         if not self.merged:
             self.merge_lemmas()
 
-        glossary: list[dict[str, Any]] = []
-        for norm, info in sorted(self.merged.items(), key=lambda x: -x[1]["freq"]):
-            if info["freq"] < min_freq:
-                continue
-            variants = sorted(info["variants"], key=len)
-            translations: Counter = Counter()
-            translation_samples: dict[str, list[str]] = defaultdict(list)
-            for k in info["keys"]:
-                zh_val = self.zh_data.get(k, "")
-                if zh_val:
-                    translations[zh_val] += 1
-                    translation_samples[zh_val].append(k)
-            if not translations:
-                continue
+        # 收集候选组（频次 ≥ min_freq）
+        candidates = [
+            (norm, info)
+            for norm, info in self.merged.items()
+            if info["freq"] >= min_freq
+        ]
+        candidates.sort(key=lambda x: -x[1]["freq"])
 
-            most_common_zh, _ = translations.most_common(1)[0]
-            all_translations = [
-                {"translation": zh, "count": c, "sample_keys": translation_samples[zh][:3]}
-                for zh, c in translations.most_common(5)
-            ]
+        if not candidates or llm_call is None:
+            self.glossary = []
+            return []
 
-            glossary.append({
-                "en_term": variants[0],
-                "en_variants": variants,
-                "normalized": norm,
-                "freq": info["freq"],
-                "most_common_translation": most_common_zh,
-                "all_translations": all_translations,
-                "is_consistent": len(all_translations) == 1,
-            })
+        # 批量送 LLM 翻译术语（每批 30 条）
+        glossary: list[dict[str, str]] = []
+        batch_size = 30
+        for i in range(0, len(candidates), batch_size):
+            batch = candidates[i:i + batch_size]
+            # 取每组的代表形式（最短非空变体，或直接用 normalized）
+            terms_to_translate = []
+            for norm, info in batch:
+                variants = sorted(info["variants"], key=len)
+                en_term = variants[0] if variants else norm
+                terms_to_translate.append(en_term)
+
+            prompt = (
+                "将以下Minecraft模组英文术语逐一译为简中。"
+                "每个术语输出 {{\"en\": \"英文原文\", \"zh\": \"简体中文译文\"}}。"
+                "只输出JSON数组，不要其他文字。\n\n"
+                + "\n".join(f"- {t}" for t in terms_to_translate)
+            )
+
+            try:
+                response = llm_call(prompt)
+                parsed = _parse_term_translations(response)
+                # 按顺序映射回（LLM 可能漏条，用 en 匹配）
+                for en_term in terms_to_translate:
+                    match = next((p for p in parsed if p.get("en", "").strip().lower() == en_term.strip().lower()), None)
+                    if match and match.get("zh", "").strip():
+                        glossary.append({"en": en_term, "zh": match["zh"].strip()})
+            except Exception:
+                pass
+
+            import sys
+            print(f"  [术语翻译] {i+1}-{min(i+batch_size, len(candidates))}/{len(candidates)} → {len(glossary)} 条术语", file=sys.stderr)
 
         self.glossary = glossary
         return glossary
 
-    # ── 一致性检查 ────────────────────────────────────────
-
     def check_consistency(self) -> list[dict[str, Any]]:
-        """检查 matched_entries 中术语翻译是否与术语表一致。"""
+        """
+        用术语表检查 matched_entries 中的翻译一致性。
+        对术语表中每条术语，查找包含该 EN 术语的所有条目，
+        如果对应 ZH 中不包含标准译文，则标记 FAIL。
+        """
         if not self.glossary:
-            self.build_glossary()
+            return []
 
-        term_map: dict[str, str] = {}
+        # 构建术语→标准译文的映射，同时收集术语的 variant 形式
+        term_variants: dict[str, list[str]] = {}  # canonical → [variants]
+        term_zh: dict[str, str] = {}               # canonical → zh
         for g in self.glossary:
-            if g["is_consistent"]:
-                for variant in g["en_variants"]:
-                    term_map[variant.lower()] = g["most_common_translation"]
+            en_lower = g["en"].lower()
+            term_zh[en_lower] = g["zh"]
+            # 从 merged 中找回所有变体
+            if en_lower in self.merged:
+                term_variants[en_lower] = sorted(self.merged[en_lower]["variants"], key=len)
+            else:
+                term_variants[en_lower] = [g["en"]]
 
         verdicts: list[dict[str, Any]] = []
         for entry in self.matched_entries:
             key = entry["key"]
-            en = entry["en"]
-            zh = entry["zh"]
-            if not isinstance(en, str) or not isinstance(zh, str):
+            en = entry.get("en", "")
+            zh = entry.get("zh", "")
+            if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
                 continue
 
             en_lower = en.lower()
-            checked: set[str] = set()
-            for term, standard_zh in term_map.items():
-                if term in checked:
+            for canonical, variants in term_variants.items():
+                # 检查该条目的 EN 是否包含术语（匹配任意变体）
+                matched_variant = None
+                for v in variants:
+                    if v.lower() in en_lower:
+                        matched_variant = v
+                        break
+                if not matched_variant:
                     continue
-                if term.lower() in en_lower:
-                    checked.add(term)
-                    if standard_zh not in zh:
-                        verdicts.append({
-                            "key": key,
-                            "en_current": en,
-                            "zh_current": zh,
-                            "verdict": "❌ FAIL",
-                            "suggestion": standard_zh,
-                            "reason": f'术语不一致，"\\"{term}\\"应译为"\\"{standard_zh}\\""',
-                            "source": "terminology_check",
-                        })
-        return verdicts
 
-    def get_inconsistent_terms(self) -> list[dict[str, Any]]:
-        if not self.glossary:
-            self.build_glossary()
-        return [
-            {
-                "en_term": g["en_term"],
-                "normalized": g["normalized"],
-                "freq": g["freq"],
-                "translations": [f'{t["translation"]}({t["count"]})' for t in g["all_translations"]],
-            }
-            for g in self.glossary
-            if not g["is_consistent"]
-        ]
+                std_zh = term_zh.get(canonical, "")
+                if not std_zh or std_zh in zh:
+                    continue  # 中文包含标准译文，通过
+
+                verdicts.append({
+                    "key": key,
+                    "en_current": en,
+                    "zh_current": zh,
+                    "verdict": "❌ FAIL",
+                    "suggestion": std_zh,
+                    "reason": f'术语不一致——"{matched_variant}"在术语表中译为"{std_zh}"，此处未使用',
+                    "source": "terminology_check",
+                })
+
+        return verdicts
 
     # ── 便捷入口 ──────────────────────────────────────────
 
@@ -475,10 +503,28 @@ class TerminologyBuilder:
         llm_call: Callable[[str], str] | None = None,
         min_freq: int = 3,
         fuzzy_threshold: float = 65.0,
-    ) -> list[dict[str, Any]]:
-        """归并 + 构建术语表（一步完成）。"""
+    ) -> list[dict[str, str]]:
+        """归并 + LLM 术语翻译（一步完成）。"""
         self.merge_lemmas(llm_call=llm_call, fuzzy_threshold=fuzzy_threshold)
-        return self.build_glossary(min_freq=min_freq)
+        if llm_call:
+            return self.build_glossary(llm_call=llm_call, min_freq=min_freq)
+        return []
+
+
+def _parse_term_translations(response: str) -> list[dict[str, str]]:
+    """解析 LLM 术语翻译响应: [{en, zh}, ...]"""
+    try:
+        data = json.loads(response)
+        if isinstance(data, list):
+            return data
+    except json.JSONDecodeError:
+        m = re.search(r"\[.*\]", response, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except json.JSONDecodeError:
+                pass
+    return []
 
 
 # ═══════════════════════════════════════════════════════════
