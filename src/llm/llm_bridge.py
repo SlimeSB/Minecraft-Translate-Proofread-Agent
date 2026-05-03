@@ -13,72 +13,134 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 # ═══════════════════════════════════════════════════════════
-# 键名分类器（纯规则，不需要 LLM）
+# 键名前缀分组 + 类型专属 Prompt 库
 # ═══════════════════════════════════════════════════════════
 
-KEY_CATEGORY_RULES: list[tuple[str, str]] = [
-    # (前缀模式, 类别名)
-    ("advancements.", "进度"),
-    ("death.attack.", "死亡信息"),
-    ("death.", "死亡信息"),
-    ("enchantment.", "魔咒"),
-    ("subtitles.", "声音字幕"),
-    ("sound.", "声音"),
-    ("container.", "容器界面"),
-    ("key.", "按键绑定"),
-    ("book.", "书籍内容"),
-    ("trim_pattern.", "盔甲纹饰"),
-    ("trim_material.", "盔甲材料"),
-    ("biome.", "生物群系"),
-    ("fluid.", "流体"),
-    ("fluid_type.", "流体类型"),
-    ("effect.", "状态效果"),
-    ("entity.", "实体"),
-    ("item.", "物品"),
-    ("block.", "方块"),
-    ("chat.", "聊天消息"),
-    ("commands.", "命令"),
-    ("selectWorld.", "世界选择"),
-    ("menu.", "菜单"),
-    ("options.", "选项"),
-    ("gui.", "GUI界面"),
-    ("jei.", "JEI界面"),
-    ("config.", "配置"),
-    ("tooltip.", "工具提示"),
-    ("category.", "分类"),
-    ("attribute.", "属性"),
-    ("potion.", "药水"),
-]
+# 前缀 → (类别标签, 审查重点)
+# 匹配时取最长前缀。未匹配的用默认 prompt。
+KEY_PREFIX_PROMPTS: dict[str, tuple[str, str]] = {
+    "advancements.": (
+        "进度",
+        "- 进度标题允许创意发挥但须忠实原文核心含义; 进度描述须准确传达完成条件"
+    ),
+    "death.attack.": (
+        "死亡信息",
+        "- 检查语气是否匹配原文(黑色幽默/文学引用); 占位符顺序需对照原文"
+    ),
+    "death.": (
+        "死亡信息",
+        "- 检查语气匹配; 死亡屏幕文本需准确"
+    ),
+    "enchantment.": (
+        "魔咒",
+        "- 魔咒名需文学感, 4-6字; 术语需与MC原版及模组内统一"
+    ),
+    "subtitles.": (
+        "声音字幕",
+        "- 格式须为'主体：声音'(全角冒号); 无主语时可省略主体"
+    ),
+    "sound.": (
+        "声音",
+        "- 声音描述需简洁准确"
+    ),
+    "container.": (
+        "容器界面",
+        "- 界面文本须直白功能性; 按钮/标签需简洁"
+    ),
+    "key.": (
+        "按键绑定",
+        "- 按键名保留原文首字母大写(Shift/Ctrl); 动作描述须准确"
+    ),
+    "book.": (
+        "书籍内容",
+        "- 叙事文本需流畅; 保持原文语气和世界观; 文化引用保留风味"
+    ),
+    "trim_pattern.": (
+        "盔甲纹饰",
+        "- 纹饰名需与MC原版统一; 命名风格一致"
+    ),
+    "trim_material.": (
+        "盔甲材料",
+        "- 材料名需物品名风格一致"
+    ),
+    "biome.": (
+        "生物群系",
+        "- 群系名允许文学发挥; 需符合MC群系命名惯例"
+    ),
+    "fluid.": (
+        "流体",
+        "- 流体名需简洁准确"
+    ),
+    "fluid_type.": (
+        "流体类型",
+        "- 流体类型名需简洁准确"
+    ),
+    "effect.": (
+        "状态效果",
+        "- 效果名需简洁; 负面效果名可带负面色彩; 术语统一"
+    ),
+    "entity.": (
+        "实体",
+        "- 实体名允许小发挥; 保持模组内命名一致"
+    ),
+    "item.": (
+        "物品",
+        "- 物品名: 材质+核心名词; 风味文本/彩蛋需匹配语气"
+    ),
+    "block.": (
+        "方块",
+        "- 方块名: 材质+核心名词; 描述文本需匹配语气"
+    ),
+    "chat.": (
+        "聊天消息",
+        "- 消息需简洁自然; 占位符顺序需对照原文"
+    ),
+    "commands.": (
+        "命令",
+        "- 命令描述/反馈需准确; 语法参数保留原文"
+    ),
+    "potion.": (
+        "药水",
+        "- 药水名需与状态效果对应; 命名风格一致"
+    ),
+}
 
 
-def classify_key(key: str) -> str:
-    """根据键名前缀判断类别。"""
-    for prefix, category in KEY_CATEGORY_RULES:
-        if key.startswith(prefix):
-            return category
-    return "其他"
+def _group_prefix(key: str) -> str:
+    """提取 key 的分组前缀。最长匹配胜出。未匹配返回 '__default__'。"""
+    best = ""
+    for prefix in KEY_PREFIX_PROMPTS:
+        if key.startswith(prefix) and len(prefix) > len(best):
+            best = prefix
+    return best if best else "__default__"
 
 
 def classify_entries(entries: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
-    """将条目按类别分组。"""
+    """按 key 前缀分组，每组只含一种前缀类型。未匹配的归入 '__default__'。"""
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
-        cat = classify_key(entry["key"])
-        groups.setdefault(cat, []).append(entry)
+        prefix = _group_prefix(entry["key"])
+        groups.setdefault(prefix, []).append(entry)
     return groups
+
+
+def classify_key(key: str) -> str:
+    """兼容旧接口：返回类别标签。"""
+    prefix = _group_prefix(key)
+    if prefix == "__default__":
+        return "其他"
+    return KEY_PREFIX_PROMPTS.get(prefix, ("其他", ""))[0]
 
 
 # ═══════════════════════════════════════════════════════════
 # LLM 是否需要审校某条目的判定
 # ═══════════════════════════════════════════════════════════
 
-# 必须 LLM 审校的键名类别
-LLM_REQUIRED_CATEGORIES: set[str] = {
-    "进度", "死亡信息", "魔咒", "声音字幕", "声音",
-    "书籍内容", "实体", "状态效果", "药水",
+LLM_REQUIRED_PREFIXES: set[str] = {
+    "advancements.", "death.attack.", "death.", "enchantment.",
+    "subtitles.", "sound.", "book.", "entity.", "effect.", "potion.",
 }
 
-# LLM 审校的键名模式（用于描述/风味文本类）
 LLM_REQUIRED_PATTERNS: list[str] = [
     ".desc", ".description", ".lore", ".tooltip", ".flavor",
     ".info", ".message", ".text", ".title",
@@ -88,13 +150,12 @@ LLM_REQUIRED_PATTERNS: list[str] = [
 def needs_llm_review(entry: dict[str, str]) -> bool:
     """判断某条目是否需要 LLM 审校。"""
     key = entry["key"]
-    cat = classify_key(key)
-    if cat in LLM_REQUIRED_CATEGORIES:
+    prefix = _group_prefix(key)
+    if prefix in LLM_REQUIRED_PREFIXES:
         return True
     for pattern in LLM_REQUIRED_PATTERNS:
         if pattern in key:
             return True
-    # 长文本（>80字符）通常需要 LLM 审校
     if len(entry.get("en", "")) > 80:
         return True
     return False
@@ -165,28 +226,30 @@ def build_entry_block(
 
 def build_review_prompt(
     entries: list[dict[str, str]],
-    glossary_entries: list[dict[str, Any]] | None = None,
+    glossary_entries: list[dict[str, str]] | None = None,
     auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
     fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
     batch_size: int = 20,
 ) -> list[str]:
     """
-    构建审校 prompt，分批返回以避免单次过长。
-
-    返回: prompt 字符串列表，每批一个 prompt
+    构建审校 prompt，按 key 前缀分组，每组用专属审查重点。
+    每批最多 batch_size 条。未匹配前缀用默认 prompt。
     """
     prompts: list[str] = []
 
-    # 分组
     groups = classify_entries(entries)
 
-    for cat, cat_entries in groups.items():
-        for i in range(0, len(cat_entries), batch_size):
-            batch = cat_entries[i:i + batch_size]
-            blocks: list[str] = []
+    for prefix, group_entries in groups.items():
+        cat_label, focus_notes = KEY_PREFIX_PROMPTS.get(
+            prefix, ("其他", "- 翻译需准确自然; 术语一致; 匹配语境")
+        )
+        for i in range(0, len(group_entries), batch_size):
+            batch = group_entries[i:i + batch_size]
 
-            # 系统指令（每批头部）
-            header = f"""你是Minecraft模组简中翻译审校专家。审校以下条目，给出 verdict（PASS/⚠️ SUGGEST/❌ FAIL/🔶 REVIEW）。
+            header = f"""你是Minecraft模组简中翻译审校专家。当前类型: {cat_label}（{prefix}*）。
+
+## 审查重点
+{focus_notes}
 
 ## 风格参考
 {STYLE_REFERENCE}
@@ -195,21 +258,20 @@ def build_review_prompt(
 - 以原文为准,逐词理解后评价译文
 - 禁止过度发挥,风格差异过大标记🔶 REVIEW或❌ FAIL
 - 禁止不适烂梗,直接❌ FAIL
-- 专有名词(Patreon/Discord等)保留原文不翻译
-- 注意检查语气(黑色幽默/调侃/致敬等)是否被翻译成中性/书面语
+- 专有名词保留原文不翻译
+- 检查语气是否匹配原文
 """
-            if glossary_entries:
-                header += "\n## 术语表\n| 英文术语 | 强制译文 |\n|----------|----------|\n"
-                for g in glossary_entries[:30]:
-                    if g.get("is_consistent"):
-                        header += f"| {g['en_term']} | {g['most_common_translation']} |\n"
 
-            header += f"\n## 待审条目 ({cat}, {len(batch)}条)\n"
-            header += "对每条输出: {\"key\": \"...\", \"verdict\": \"...\", \"suggestion\": \"...\", \"reason\": \"...\"}\n"
+            if glossary_entries:
+                header += "\n## 术语表\n| EN术语 | 强制译文 |\n|--------|----------|\n"
+                for g in glossary_entries[:30]:
+                    header += f"| {g['en']} | {g['zh']} |\n"
+
+            header += f"\n## 待审条目 ({len(batch)}条)\n"
+            header += '对每条输出: {"key": "...", "verdict": "...", "suggestion": "...", "reason": "..."}\n'
             header += "PASS条目可不输出。仅输出JSON数组。\n"
 
-            blocks.append(header)
-
+            blocks = [header]
             for j, entry in enumerate(batch):
                 key = entry["key"]
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
