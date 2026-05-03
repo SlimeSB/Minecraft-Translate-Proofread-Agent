@@ -69,28 +69,6 @@ RE_ELLIPSIS_CENTER = re.compile(r"⋯⋯")    # 居中省略号（正确）
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
 
-# 错别字对 (易错字 → 正确字提示)
-COMMON_TYPOS: list[tuple[str, str, str]] = [
-    ("未", "末", "未/末混淆"),
-    ("在", "再", "在/再混淆"),
-    ("的", "地", "的/地混淆"),
-    ("的", "得", "的/得混淆"),
-    ("届", "界", "届/界混淆"),
-    ("已", "己", "已/己混淆"),
-    ("侯", "候", "侯/候混淆"),
-    ("坐", "座", "坐/座混淆"),
-    ("那", "哪", "那/哪混淆"),
-    ("即", "既", "即/既混淆"),
-    ("连", "联", "连/联混淆"),
-    ("长", "常", "长/常混淆"),
-    ("须", "需", "须/需混淆"),
-    ("计", "记", "计/记混淆"),
-    ("至", "致", "至/致混淆"),
-    ("到", "倒", "到/倒混淆"),
-    ("决", "绝", "决/绝混淆"),
-    ("查", "察", "查/察混淆"),
-]
-
 # 非代码/非专有名词的英文标记（用于判断 en==zh 是否合理）
 NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"^[A-Z_]+$"),           # 全大写下划线常量
@@ -157,7 +135,6 @@ class FormatChecker:
             self._check_energy_units,
             self._check_keyboard_keys,
             self._check_ellipsis,
-            self._check_typos,
             self._check_sound_subtitle_format,
             self._check_tree_terms,
         ]
@@ -415,22 +392,6 @@ class FormatChecker:
         if RE_ELLIPSIS_WRONG.search(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
                 reason="使用了三个英文句号'...'作为省略号，应使用'⋯⋯'（居中省略号）",
-            )
-        return None
-
-    def _check_typos(
-        self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查常见错别字。"""
-        if not is_chinese_text(zh):
-            return None
-        found: list[str] = []
-        for wrong_char, correct_char, desc in COMMON_TYPOS:
-            if wrong_char in zh:
-                found.append(desc)
-        if found:
-            return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason="疑似错别字: " + ", ".join(found),
             )
         return None
 

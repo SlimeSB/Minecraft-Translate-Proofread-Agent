@@ -15,8 +15,9 @@ import argparse
 import os
 import sys
 
-# 强制 UTF-8 输出（兼容 Windows GBK 终端）
-if sys.stdout.encoding != "utf-8":
+# 强制 UTF-8 输出（兼容 Windows GBK 终端）。
+# 仅在 stdout 是终端时 reconfigure（管道场景会破坏 PowerShell 的 OutputEncoding）。
+if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.pipeline.review_pipeline import ReviewPipeline
