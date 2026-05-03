@@ -404,38 +404,45 @@ class TerminologyBuilder:
             self.glossary = []
             return []
 
-        # 批量送 LLM 翻译术语（每批 30 条）
-        glossary: list[dict[str, str]] = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # 准备所有批次
         batch_size = 30
+        tasks: list[tuple[int, list[str]]] = []  # (batch_start_idx, terms_list)
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i:i + batch_size]
-            # 取每组的代表形式（最短非空变体，或直接用 normalized）
-            terms_to_translate = []
+            terms = []
             for norm, info in batch:
                 variants = sorted(info["variants"], key=len)
-                en_term = variants[0] if variants else norm
-                terms_to_translate.append(en_term)
+                terms.append(variants[0] if variants else norm)
+            tasks.append((i, terms))
 
+        def _translate(start_idx: int, terms: list[str]) -> list[dict[str, str]]:
             prompt = (
                 "将以下Minecraft模组英文术语逐一译为简中。"
-                "每个术语输出 {{\"en\": \"英文原文\", \"zh\": \"简体中文译文\"}}。"
+                "每个术语输出 {\"en\": \"英文原文\", \"zh\": \"简体中文译文\"}。"
                 "只输出JSON数组，不要其他文字。\n\n"
-                + "\n".join(f"- {t}" for t in terms_to_translate)
+                + "\n".join(f"- {t}" for t in terms)
             )
-
             try:
                 response = llm_call(prompt)
                 parsed = _parse_term_translations(response)
-                # 按顺序映射回（LLM 可能漏条，用 en 匹配）
-                for en_term in terms_to_translate:
+                results = []
+                for en_term in terms:
                     match = next((p for p in parsed if p.get("en", "").strip().lower() == en_term.strip().lower()), None)
                     if match and match.get("zh", "").strip():
-                        glossary.append({"en": en_term, "zh": match["zh"].strip()})
+                        results.append({"en": en_term, "zh": match["zh"].strip()})
+                return results
             except Exception:
-                pass
+                return []
 
-            import sys
-            print(f"  [术语翻译] {i+1}-{min(i+batch_size, len(candidates))}/{len(candidates)} → {len(glossary)} 条术语", file=sys.stderr)
+        import sys
+        glossary: list[dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_translate, i, t): i for i, t in tasks}
+            for future in as_completed(futures):
+                glossary.extend(future.result())
+                print(f"  [术语翻译] {len(glossary)}/{len(candidates)} 条术语", file=sys.stderr)
 
         self.glossary = glossary
         return glossary

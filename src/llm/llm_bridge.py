@@ -349,46 +349,49 @@ class LLMBridge:
         auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
         fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
         batch_size: int = 20,
+        max_workers: int = 4,
     ) -> list[dict[str, Any]]:
         """
-        分批审校条目，汇总所有 LLM verdict。
-
-        返回: [{key, verdict, suggestion, reason, source: "llm_review"}, ...]
+        并行分批审校条目，汇总所有 LLM verdict。
         """
         if not self.llm_call:
             raise RuntimeError("LLMBridge 未配置 llm_call 函数")
+
+        import sys
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         prompts = build_review_prompt(
             entries, glossary_entries, auto_verdicts_map,
             fuzzy_results_map, batch_size,
         )
-        all_verdicts: list[dict[str, Any]] = []
 
-        for i, prompt in enumerate(prompts):
+        def _process(i: int, prompt: str) -> list[dict[str, Any]]:
             try:
-                import sys
-                print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens)...", end=" ", flush=True, file=sys.stderr)
+                print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens)...",
+                      end=" ", flush=True, file=sys.stderr)
                 response = self.llm_call(prompt)
                 parsed = parse_review_response(response)
                 print(f"→ {len(parsed)} verdicts", file=sys.stderr)
                 for v in parsed:
                     v["source"] = "llm_review"
-                    # 确保必有字段
                     v.setdefault("en_current", "")
                     v.setdefault("zh_current", "")
                     v.setdefault("suggestion", "")
                     v.setdefault("reason", "")
-                all_verdicts.extend(parsed)
+                return parsed
             except Exception as e:
-                all_verdicts.append({
-                    "key": "",
-                    "en_current": "",
-                    "zh_current": "",
-                    "verdict": "🔶 REVIEW",
-                    "suggestion": "",
-                    "reason": f"LLM调用失败: {e}",
-                    "source": "llm_error",
-                })
+                print(f"✗ {e}", file=sys.stderr)
+                return [{
+                    "key": "", "en_current": "", "zh_current": "",
+                    "verdict": "🔶 REVIEW", "suggestion": "",
+                    "reason": f"LLM调用失败: {e}", "source": "llm_error",
+                }]
+
+        all_verdicts: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_process, i, p): i for i, p in enumerate(prompts)}
+            for future in as_completed(futures):
+                all_verdicts.extend(future.result())
 
         return all_verdicts
 
@@ -413,6 +416,7 @@ def create_openai_llm_call(
         raise ImportError("请安装 openai: pip install openai")
 
     import datetime
+    import time
 
     client = OpenAI(api_key=api_key, base_url=base_url)
     call_count = [0]  # mutable counter
@@ -432,18 +436,31 @@ def create_openai_llm_call(
         _log(f"=== Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")
         _log(f"--- Prompt ---\n{prompt}\n--- End Prompt ---")
 
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。"},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            max_tokens=4096,
-        )
-        content = resp.choices[0].message.content or ""
-        _log(f"--- Response ---\n{content}\n--- End Response ---")
-        return content
+        retries = 0
+        while True:
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=4096,
+                )
+                content = resp.choices[0].message.content or ""
+                _log(f"--- Response ---\n{content}\n--- End Response ---")
+                return content
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "rate" in err_str:
+                    delay = min(2 ** retries, 60)
+                    retries += 1
+                    import sys
+                    print(f"  [429] 速率限制, {delay}s 后重试 (第{retries}次)...", file=sys.stderr)
+                    time.sleep(delay)
+                else:
+                    raise
 
     return call
 
