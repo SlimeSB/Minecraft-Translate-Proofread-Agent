@@ -68,7 +68,7 @@ def main() -> None:
         else:
             base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
             model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-            llm_call = create_openai_llm_call(api_key, model, base_url, log_dir=args.output_dir)
+            llm_call = create_openai_llm_call(api_key, model, base_url)
 
     pipeline = ReviewPipeline(
         en_path=args.en,

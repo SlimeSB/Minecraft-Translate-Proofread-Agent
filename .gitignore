@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 output/
+logs/
 .venv/
 venv/
 .env

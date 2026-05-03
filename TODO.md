@@ -27,8 +27,9 @@
 ### 8. `review_pipeline.py` 模糊搜索候选过滤
 当前仅对前 100 条做模糊搜索。若条目超过 100 条可能遗漏。
 
-### 9. LLM 日志 `08_llm_call_log.txt` 无滚动
+### 9. LLM 日志 `08_llm_call_log.txt` 无滚动 ✅
 长期运行会无限增长。建议按日期分文件或限制行数。
+→ 已改为 `logs/latest.log`，每次运行前自动存档旧日志为 `latest.{时间戳}.log`。
 
 ### 10. 无单元测试
 目前靠干运行验证。需对 `format_checker`、`_check_placeholder_integrity` 等关键函数加测试。

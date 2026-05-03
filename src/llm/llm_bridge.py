@@ -305,11 +305,11 @@ def create_openai_llm_call(
     api_key: str,
     model: str = "gpt-4o",
     base_url: str = "https://api.openai.com/v1",
-    log_dir: str | None = None,
+    log_dir: str = "logs",
 ) -> LLMCallable:
-    """创建 OpenAI 兼容的 LLM 调用函数，可选记录 prompt/response 日志。
+    """创建 OpenAI 兼容的 LLM 调用函数，记录 prompt/response 日志（自动滚动）。
 
-    :param log_dir: 日志输出目录，为 None 则不记录
+    :param log_dir: 日志目录，默认 logs/
     """
     try:
         from openai import OpenAI
@@ -322,20 +322,28 @@ def create_openai_llm_call(
     client = OpenAI(api_key=api_key, base_url=base_url)
     call_count = [0]  # mutable counter
 
-    def _log(msg: str) -> None:
-        if not log_dir:
-            return
-        log_path = Path(log_dir) / "08_llm_call_log.txt"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
+    latest_path = log_dir_path / "latest.log"
+
+    # 滚动旧日志
+    if latest_path.exists():
+        mtime = latest_path.stat().st_mtime
+        archive_name = time.strftime("%Y%m%d-%H%M%S", time.localtime(mtime))
+        archive_path = log_dir_path / f"latest.{archive_name}.log"
+        latest_path.rename(archive_path)
+
+    def _log(level: str, msg: str) -> None:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {msg}\n")
+        line = f"[{timestamp}] [{level}] {msg}\n"
+        with open(latest_path, "a", encoding="utf-8") as f:
+            f.write(line)
 
     def call(prompt: str) -> str:
         call_count[0] += 1
         n = call_count[0]
-        _log(f"=== Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")
-        _log(f"--- Prompt ---\n{prompt}\n--- End Prompt ---")
+        _log("INFO", f"=== Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")
+        _log("INFO", f"Prompt:\n{prompt}")
 
         retries = 0
         while True:
@@ -350,7 +358,7 @@ def create_openai_llm_call(
                     max_tokens=4096,
                 )
                 content = resp.choices[0].message.content or ""
-                _log(f"--- Response ---\n{content}\n--- End Response ---")
+                _log("INFO", f"Response:\n{content}")
                 return content
             except Exception as e:
                 err_str = str(e).lower()

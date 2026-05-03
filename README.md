@@ -111,7 +111,7 @@ Phase 4: 报告生成         → 06_review_report.json + 07_zh_cn_annotated.jso
 | `05_llm_verdicts.json` | LLM 审校结果 |
 | `06_review_report.json` | 最终审校报告（合并去重） |
 | `07_zh_cn_annotated.json` | 带 `_comments` 的可读副本 |
-| `08_llm_call_log.txt` | LLM prompt/response 完整日志 |
+| `logs/latest.log` | LLM prompt/response 日志（自动滚动存档） |
 | `lemma_cache.json` | 词形映射缓存（跨次复用） |
 
 ## 配置与数据文件
