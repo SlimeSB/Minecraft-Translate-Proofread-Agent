@@ -21,15 +21,18 @@ from collections import defaultdict
 
 
 # ── stop words ────────────────────────────────────────────
-STOP_WORDS: set[str] = {
-    "the", "a", "an", "of", "to", "in", "and", "is", "it", "you",
-    "this", "that", "will", "be", "can", "with", "for", "on", "are",
-    "as", "at", "or", "not", "but", "from", "by", "has", "have",
-    "had", "do", "does", "did", "your", "its", "their", "each",
-    "all", "some", "when", "if", "then", "also", "just", "now",
-    "only", "out", "been", "was", "were", "into", "than", "no",
-    "so", "up", "down", "here", "there", "over", "under",
-}
+_BLACKLIST_PATH = "term_blacklist.json"
+
+def _load_blacklist() -> set[str]:
+    """从 term_blacklist.json 加载黑名单词。"""
+    try:
+        with open(_BLACKLIST_PATH, "r", encoding="utf-8") as f:
+            words = json.load(f)
+            return set(w.lower().strip() for w in words if isinstance(w, str))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+STOP_WORDS: set[str] = _load_blacklist()
 
 
 def tokenize(text: str) -> list[str]:
