@@ -294,6 +294,10 @@ class TerminologyBuilder:
             if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
                 continue
 
+            # 唱片名(.desc)不翻译，跳过术语检查
+            if "music_disc" in key and key.endswith(".desc"):
+                continue
+
             for en_term, std_zh, pattern in term_info:
                 if not pattern.search(en):
                     continue

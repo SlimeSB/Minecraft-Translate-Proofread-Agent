@@ -124,6 +124,7 @@ class FormatChecker:
 
         checks = [
             self._check_empty_translation,
+            self._check_music_disc_no_translation,
             self._check_placeholder_integrity,
             self._check_special_tags,
             self._check_tellraw_json,
@@ -149,10 +150,22 @@ class FormatChecker:
     ) -> dict[str, Any] | None:
         """检查空翻译：zh == en 且原文非代码/专有名词。"""
         if en == zh and en != "":
+            if "music_disc" in key and key.endswith(".desc"):
+                return None  # 唱片名(.desc)不翻译
             if not is_likely_code_or_proper_noun(en):
                 return self._verdict(key, en, zh, "❌ FAIL",
                     reason=f"值相同（'{en[:60]}'），疑似未翻译",
                 )
+        return None
+
+    def _check_music_disc_no_translation(
+        self, key: str, en: str, zh: str
+    ) -> dict[str, Any] | None:
+        """唱片名(.desc)不应翻译，已翻译则回报。"""
+        if "music_disc" in key and key.endswith(".desc") and en != zh and en != "" and zh != "":
+            return self._verdict(key, en, zh, "⚠️ SUGGEST",
+                reason=f"唱片名不应翻译，建议保留原文（'{en[:60]}'）",
+            )
         return None
 
     def _check_placeholder_integrity(
