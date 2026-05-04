@@ -132,10 +132,6 @@ tests/
     └── zh_cn.json                  # 测试中文译文
 ```
 
-## 许可证
-
-MIT
-
 `src/config.py` 是代码侧加载入口，`terminology_builder.py`、`llm_bridge.py` 统一从此读取。
 
 ## 输出文件
