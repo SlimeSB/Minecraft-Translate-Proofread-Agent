@@ -37,6 +37,32 @@ from .lemma_merge import (
 
 
 # ═══════════════════════════════════════════════════════════
+# 公共中文提取
+# ═══════════════════════════════════════════════════════════
+
+def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
+    """从多个中文译文中提取公共子串，忽略离群值。
+
+    遍历每种译文，若它作为子串出现在 ≥ min_ratio 比例的其它译文中，则为公共项。
+    返回最长的公共项，无则返回 None。
+
+    例如 {"方铅岩":1, "方铅岩砖":2, "方铅岩台阶":1, "方前言":1}
+    → "方铅岩" 出现在 "方铅岩砖" 和 "方铅岩台阶" 中，覆盖 4/5≥60% → 返回 "方铅岩"。
+    """
+    if len(zh_counter) < 2:
+        return None
+    total = sum(zh_counter.values())
+    best = ""
+    for zh in zh_counter:
+        if len(zh) < 2:
+            continue
+        support = sum(count for other, count in zh_counter.items() if zh in other)
+        if support / total >= min_ratio and len(zh) > len(best):
+            best = zh
+    return best if best else None
+
+
+# ═══════════════════════════════════════════════════════════
 # 术语表构建器
 # ═══════════════════════════════════════════════════════════
 
@@ -185,6 +211,13 @@ class TerminologyBuilder:
                 variants = sorted(info["variants"], key=len)
                 en_term = variants[0] if variants else norm
                 glossary.append({"en": en_term, "zh": best_zh})
+            elif total >= min_total:
+                # 共识未达标 → 尝试从多个中文译文中提取公共部分
+                common = _extract_common_zh(zh_counter, min_consensus)
+                if common:
+                    variants = sorted(info["variants"], key=len)
+                    en_term = variants[0] if variants else norm
+                    glossary.append({"en": en_term, "zh": common})
 
         # 中文互斥：同一中文对应多个英文术语时，若短 en 是长 en 的子串，
         # 需要给短术语一次「剔除长术语所在 key 后重新统计」的机会。
