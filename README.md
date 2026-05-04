@@ -1,3 +1,6 @@
+![DEEPSEEK](img/image-1.png)
+> 本仓库完全由 **GitHub Copilot (DeepSeek-V4-Pro)** 辅助开发。
+
 # Minecraft 模组翻译审校工具
 
 > 程序化自动检查 + LLM 启发式审校的混合架构。90%+ 检查由确定性规则完成，LLM 仅处理需要语义判断的条目。
