@@ -31,6 +31,9 @@ _KNOWN_KEYS: set[str] = {
     "fuzzy_cluster_top_n",
     "term_blacklist",
     "max_workers",
+    "filter_system_prompt",
+    "filter_instruction",
+    "filter_batch_size",
 }
 
 
@@ -112,3 +115,9 @@ REVIEW_HEADER_PREFIX: str = get("review_header_prefix")
 KEYBOARD_GUIDANCE: str = get("keyboard_guidance")
 # 检测到鼠标操作时的补充指南
 MOUSE_GUIDANCE: str = get("mouse_guidance")
+
+# ── Phase 5: 最终 LLM 过滤 ──
+
+FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
+FILTER_INSTRUCTION: str = get("filter_instruction")
+FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)

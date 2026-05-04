@@ -304,15 +304,61 @@ class ReviewPipeline:
         )
 
         review_path = self.output_dir / "06_review_report.json"
-        annotated_path = self.output_dir / "07_zh_cn_annotated.json"
 
         rg.generate_review_report(str(review_path))
-        rg.generate_annotated_json(str(annotated_path))
 
         print(f"  审校报告: {review_path}")
-        print(f"  注释版: {annotated_path}")
         rg.print_summary()
         rg.print_verdict_table()
+
+    # ── Phase 5: 最终 LLM 过滤 ────────────────────────────
+
+    def run_phase5(self) -> None:
+        """最终 LLM 审视：筛除汇总报告中的误报，重新生成报告。"""
+        if not self.llm_call or self.no_llm or self.dry_run:
+            return
+
+        print("[Phase 5] 最终 LLM 过滤...")
+
+        # 读取 Phase 4 生成的报告
+        review_path = self.output_dir / "06_review_report.json"
+        with open(review_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+
+        verdicts = report.get("verdicts", [])
+        if not verdicts:
+            print("  无 verdict 需要过滤")
+            return
+
+        bridge = LLMBridge(self.llm_call)
+        filtered, discard_records = bridge.filter_verdicts(verdicts)
+        removed = len(discard_records)
+        print(f"  驳回 {removed} 条, 保留 {len(filtered)} 条")
+
+        # 保存驳回记录
+        discard_path = self.output_dir / "07_filter_discards.json"
+        with open(discard_path, "w", encoding="utf-8") as f:
+            json.dump(discard_records, f, ensure_ascii=False, indent=2)
+        print(f"  驳回记录: {discard_path}")
+
+        if removed == 0:
+            return
+
+        # 重新统计数据
+        stats = {
+            "total": self.alignment["stats"]["matched"],
+            "PASS": self.alignment["stats"]["matched"] - len(filtered),
+            "⚠️ SUGGEST": sum(1 for v in filtered if v.get("verdict") == "⚠️ SUGGEST"),
+            "❌ FAIL": sum(1 for v in filtered if v.get("verdict") == "❌ FAIL"),
+            "🔶 REVIEW": sum(1 for v in filtered if v.get("verdict") == "🔶 REVIEW"),
+        }
+
+        # 覆盖报告
+        report["stats"] = stats
+        report["verdicts"] = filtered
+        with open(review_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"  已更新: {review_path}")
 
     # ── 完整流水线 ────────────────────────────────────────
 
@@ -337,6 +383,7 @@ class ReviewPipeline:
             self.run_phase3a()
             self.run_phase3c()
             self.run_phase4()
+            self.run_phase5()
         except Exception as e:
             print(f"\n错误: {e}", file=sys.stderr)
             raise

@@ -356,6 +356,52 @@ def parse_review_response(response: str) -> list[dict[str, Any]]:
 
 
 # ═══════════════════════════════════════════════════════════
+# Phase 5: 最终 LLM 过滤 —— 审视已汇总的 verdict 并筛除误报
+# ═══════════════════════════════════════════════════════════
+
+def build_filter_prompt(
+    verdicts: list[dict[str, Any]],
+    batch_size: int = 50,
+) -> list[str]:
+    """为最终过滤构建 prompt，展示 EN/ZH/verdict/reason/suggestion。"""
+    prompts: list[str] = []
+
+    for i in range(0, len(verdicts), batch_size):
+        batch = verdicts[i:i + batch_size]
+
+        header = f"""{cfg.REVIEW_HEADER_PREFIX}。
+
+## 任务
+以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断是否需要驳回（不提出）。
+
+## 问题列表 ({len(batch)}条)
+"""
+        lines: list[str] = []
+        for j, v in enumerate(batch):
+            key = v.get("key", "")
+            en = v.get("en_current", "")
+            zh = v.get("zh_current", "")
+            verdict = v.get("verdict", "")
+            reason = v.get("reason", "")
+            suggestion = v.get("suggestion", "")
+
+            block = f"### 条目 {j+1}\n"
+            block += f"key: `{key}`\n"
+            block += f'EN: "{en[:200]}"\n'
+            block += f'ZH: "{zh[:200]}"\n'
+            block += f"判定: {verdict}\n"
+            block += f"问题: {reason}\n"
+            if suggestion:
+                block += f"建议: {suggestion}\n"
+            lines.append(block)
+
+        prompt = header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines)
+        prompts.append(prompt)
+
+    return prompts
+
+
+# ═══════════════════════════════════════════════════════════
 # LLM 调用接口
 # ═══════════════════════════════════════════════════════════
 
@@ -431,6 +477,68 @@ class LLMBridge:
             return results
 
         return asyncio.run(_run_all())
+
+    def filter_verdicts(
+        self,
+        verdicts: list[dict[str, Any]],
+        batch_size: int | None = None,
+        max_workers: int | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        """
+        最终过滤：将已汇总的 verdict 交给 LLM 审视，筛除误报。
+        返回 (保留的 verdict 列表, 驳回记录列表 [{key, reason}]).
+        """
+        if not self.llm_call:
+            return verdicts, []
+
+        if batch_size is None:
+            batch_size = cfg.FILTER_BATCH_SIZE
+        if max_workers is None:
+            max_workers = cfg.MAX_WORKERS
+
+        prompts = build_filter_prompt(verdicts, batch_size)
+        print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批", file=sys.stderr)
+
+        async def _run_all() -> tuple[set[str], list[dict[str, str]]]:
+            sem = asyncio.Semaphore(max_workers)
+            discarded_keys: set[str] = set()
+            discard_records: list[dict[str, str]] = []
+
+            async def _process(i: int, prompt: str) -> tuple[set[str], list[dict[str, str]]]:
+                async with sem:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        response = await loop.run_in_executor(None, self.llm_call, prompt)
+                        parsed = parse_review_response(response)
+                        local_keys: set[str] = set()
+                        local_records: list[dict[str, str]] = []
+                        for item in parsed:
+                            if item.get("action") == "discard":
+                                k = item.get("key", "")
+                                r = item.get("reason", "")
+                                if k:
+                                    local_keys.add(k)
+                                    local_records.append({"key": k, "reason": r})
+                                    print(f"  [Filter] 驳回: {k} — {r}", file=sys.stderr)
+                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条",
+                              file=sys.stderr)
+                        return local_keys, local_records
+                    except Exception as e:
+                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                        return set(), []
+
+            tasks = [_process(i, p) for i, p in enumerate(prompts)]
+            for coro in asyncio.as_completed(tasks):
+                keys, records = await coro
+                discarded_keys.update(keys)
+                discard_records.extend(records)
+            return discarded_keys, discard_records
+
+        discarded, discard_records = asyncio.run(_run_all())
+        print(f"  最终驳回: {len(discarded)} 条", file=sys.stderr)
+
+        filtered = [v for v in verdicts if v.get("key") not in discarded]
+        return filtered, discard_records
 
 
 # ═══════════════════════════════════════════════════════════
