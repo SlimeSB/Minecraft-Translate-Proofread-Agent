@@ -225,7 +225,7 @@ class ReviewPipeline:
                 untranslated_keys.add(v.get("key", ""))
 
         # 筛选需要 LLM 的条目
-        llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys)
+        llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys, self.glossary)
 
         # 剔除疑似未翻译条目（格式检查已给出 ❌ FAIL，无需 LLM 重复判断）
         if untranslated_keys:

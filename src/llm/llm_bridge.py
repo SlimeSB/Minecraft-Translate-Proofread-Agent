@@ -101,6 +101,65 @@ LLM_REQUIRED_PREFIXES: set[str] = cfg.LLM_REQUIRED_PREFIXES
 
 LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 
+# 术语覆盖率检查：EN 中能匹配到的非术语残渣（忽略标点/空白）
+_RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
+
+
+def _is_glossary_covered(en: str, zh: str, glossary: list[dict[str, str]]) -> bool:
+    """检查 EN 是否被术语表完整覆盖，且 ZH 拼接结果与当前译文一致。
+
+    规则：
+    1. 找到 EN 中所有术语表命中的词（最长匹配优先，按位置排序）
+    2. 去除这些词后，剩余部分只能是标点/空白
+    3. 被覆盖时，按顺序拼接术语的 ZH 值，比对当前译文
+    """
+    if not glossary:
+        return False
+
+    en_lower = en.lower()
+    # 收集所有命中：(start, end, zh_val)
+    hits: list[tuple[int, int, str]] = []
+    # 按 EN 文本长度降序排列术语，确保 "emitter terminal" 优先于 "emitter"
+    sorted_glossary = sorted(glossary, key=lambda g: -len(g["en"]))
+    for g in sorted_glossary:
+        gen = g["en"].lower()
+        start = 0
+        while True:
+            idx = en_lower.find(gen, start)
+            if idx == -1:
+                break
+            hits.append((idx, idx + len(gen), g["zh"]))
+            start = idx + 1
+
+    if not hits:
+        return False
+
+    # 按位置排序
+    hits.sort(key=lambda h: h[0])
+
+    # 检查覆盖：术语之间的间隙只能有空白/标点
+    pos = 0
+    for start, end, _zh_val in hits:
+        if start < pos:
+            continue  # 跳过重叠（已覆盖）
+        gap = en[pos:start]
+        if _RE_GLOSSARY_GAP.sub("", gap):
+            return False  # 存在非术语内容
+        pos = end
+
+    # 检查尾部
+    if _RE_GLOSSARY_GAP.sub("", en[pos:]):
+        return False
+
+    # 拼接 ZH 并与实际译文比对（按位置顺序，跳过重叠段）
+    expected_parts: list[str] = []
+    last_end = 0
+    for start, end, zh_val in hits:
+        if start >= last_end:
+            expected_parts.append(zh_val)
+            last_end = end
+    return "".join(expected_parts) == zh
+
 
 def needs_llm_review(entry: dict[str, str]) -> bool:
     """判断某条目是否需要 LLM 审校。"""
@@ -119,9 +178,16 @@ def needs_llm_review(entry: dict[str, str]) -> bool:
 def filter_for_llm(
     matched_entries: list[dict[str, str]],
     auto_flagged_keys: set[str],
+    glossary: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """
     从 matched_entries 中筛选需要 LLM 审校的条目。
+
+    自动通过条件（全部满足）：
+    1. key 未被格式/术语检查命中
+    2. 不属于强制 LLM 类别 + EN ≤ 80 字符 + 非描述性 key
+    3. 术语表完整覆盖 EN 且 ZH 拼接一致（若有术语表）
+
     返回: (需要LLM审校的条目, 自动通过的条目)
     """
     llm_entries: list[dict[str, str]] = []
@@ -129,10 +195,19 @@ def filter_for_llm(
 
     for entry in matched_entries:
         key = entry["key"]
-        if key in auto_flagged_keys or needs_llm_review(entry):
+        if key in auto_flagged_keys:
             llm_entries.append(entry)
-        else:
-            auto_pass.append(entry)
+            continue
+        if needs_llm_review(entry):
+            llm_entries.append(entry)
+            continue
+        # 术语覆盖率检查：非术语表覆盖的短条目仍需 LLM 审校
+        if glossary and not _is_glossary_covered(
+            entry.get("en", ""), entry.get("zh", ""), glossary,
+        ):
+            llm_entries.append(entry)
+            continue
+        auto_pass.append(entry)
 
     return llm_entries, auto_pass
 

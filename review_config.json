@@ -54,7 +54,7 @@
     "all", "some", "when", "if", "then", "also", "just", "now",
     "only", "out", "been", "was", "were", "into", "than", "no",
     "so", "up", "down", "here", "there", "over", "under", "block",
-    "spawn", "egg", "spawn egg", "potion", "one"
+    "spawn", "egg", "spawn egg", "potion", "one", "enable"
   ],
   "max_workers": 4
 }
