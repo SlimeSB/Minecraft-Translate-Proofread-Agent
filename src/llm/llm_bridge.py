@@ -485,8 +485,9 @@ class LLMBridge:
         max_workers: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
         """
-        最终过滤：将已汇总的 verdict 交给 LLM 审视，筛除误报。
+        最终过滤：将已汇总的 verdict 交给 LLM 审视，筛除误报并清洗保留条目的 reason。
         返回 (保留的 verdict 列表, 驳回记录列表 [{key, reason}]).
+        保留的 verdict 的 reason 已被 LLM 清洗优化。
         """
         if not self.llm_call:
             return verdicts, []
@@ -499,12 +500,13 @@ class LLMBridge:
         prompts = build_filter_prompt(verdicts, batch_size)
         print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批", file=sys.stderr)
 
-        async def _run_all() -> tuple[set[str], list[dict[str, str]]]:
+        async def _run_all() -> tuple[set[str], list[dict[str, str]], dict[str, str]]:
             sem = asyncio.Semaphore(max_workers)
             discarded_keys: set[str] = set()
             discard_records: list[dict[str, str]] = []
+            cleaned_reasons: dict[str, str] = {}  # key → cleaned reason
 
-            async def _process(i: int, prompt: str) -> tuple[set[str], list[dict[str, str]]]:
+            async def _process(i: int, prompt: str) -> tuple[set[str], list[dict[str, str]], dict[str, str]]:
                 async with sem:
                     try:
                         loop = asyncio.get_running_loop()
@@ -512,32 +514,42 @@ class LLMBridge:
                         parsed = parse_review_response(response)
                         local_keys: set[str] = set()
                         local_records: list[dict[str, str]] = []
+                        local_reasons: dict[str, str] = {}
                         for item in parsed:
+                            k = item.get("key", "")
+                            if not k:
+                                continue
                             if item.get("action") == "discard":
-                                k = item.get("key", "")
+                                local_keys.add(k)
+                                local_records.append({"key": k, "reason": item.get("reason", "")})
+                                print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
+                            elif item.get("action") == "keep":
                                 r = item.get("reason", "")
-                                if k:
-                                    local_keys.add(k)
-                                    local_records.append({"key": k, "reason": r})
-                                    print(f"  [Filter] 驳回: {k} — {r}", file=sys.stderr)
-                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条",
+                                if r:
+                                    local_reasons[k] = r
+                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条",
                               file=sys.stderr)
-                        return local_keys, local_records
+                        return local_keys, local_records, local_reasons
                     except Exception as e:
                         print(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                        return set(), []
+                        return set(), [], {}
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             for coro in asyncio.as_completed(tasks):
-                keys, records = await coro
+                keys, records, reasons = await coro
                 discarded_keys.update(keys)
                 discard_records.extend(records)
-            return discarded_keys, discard_records
+                cleaned_reasons.update(reasons)
+            return discarded_keys, discard_records, cleaned_reasons
 
-        discarded, discard_records = asyncio.run(_run_all())
-        print(f"  最终驳回: {len(discarded)} 条", file=sys.stderr)
+        discarded, discard_records, cleaned_reasons = asyncio.run(_run_all())
+        print(f"  最终驳回: {len(discarded)} 条, 清洗 reason: {len(cleaned_reasons)} 条", file=sys.stderr)
 
         filtered = [v for v in verdicts if v.get("key") not in discarded]
+        for v in filtered:
+            k = v.get("key", "")
+            if k in cleaned_reasons:
+                v["reason"] = cleaned_reasons[k]
         return filtered, discard_records
 
 

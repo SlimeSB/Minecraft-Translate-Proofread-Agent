@@ -50,6 +50,8 @@ def main() -> None:
                         help="模糊搜索相似度阈值")
     parser.add_argument("--batch-size", type=int, default=20,
                         help="LLM 每批条目数")
+    parser.add_argument("--filter-only", action="store_true",
+                        help="仅重跑 Phase 5 最终过滤（需已有 06_review_report.json）")
 
     args = parser.parse_args()
 
@@ -59,6 +61,58 @@ def main() -> None:
     if not os.path.exists(args.zh):
         print(f"错误: ZH 文件不存在: {args.zh}", file=sys.stderr)
         sys.exit(1)
+
+    # ── filter-only 模式：仅重跑 Phase 5 ──
+    if args.filter_only:
+        from pathlib import Path
+        output_dir = Path(args.output_dir)
+        review_path = output_dir / "06_review_report.json"
+        if not review_path.exists():
+            print(f"错误: 未找到 {review_path}，请先运行完整流水线", file=sys.stderr)
+            sys.exit(1)
+        import json as _json
+        api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
+        if not api_key:
+            print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
+            sys.exit(1)
+        base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
+        model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+        llm_call = create_openai_llm_call(api_key, model, base_url)
+
+        from src.llm.llm_bridge import LLMBridge
+        bridge = LLMBridge(llm_call)
+
+        with open(review_path, "r", encoding="utf-8") as f:
+            report = _json.load(f)
+
+        verdicts = report.get("verdicts", [])
+        total = report.get("stats", {}).get("total", len(verdicts))
+        print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict")
+
+        filtered, discard_records = bridge.filter_verdicts(verdicts)
+        removed = len(discard_records)
+        print(f"  驳回 {removed} 条, 保留 {len(filtered)} 条")
+
+        # 保存驳回记录
+        discard_path = output_dir / "07_filter_discards.json"
+        with open(discard_path, "w", encoding="utf-8") as f:
+            _json.dump(discard_records, f, ensure_ascii=False, indent=2)
+        print(f"  驳回记录: {discard_path}")
+
+        if removed > 0:
+            stats = {
+                "total": total,
+                "PASS": total - len(filtered),
+                "⚠️ SUGGEST": sum(1 for v in filtered if v.get("verdict") == "⚠️ SUGGEST"),
+                "❌ FAIL": sum(1 for v in filtered if v.get("verdict") == "❌ FAIL"),
+                "🔶 REVIEW": sum(1 for v in filtered if v.get("verdict") == "🔶 REVIEW"),
+            }
+            report["stats"] = stats
+            report["verdicts"] = filtered
+            with open(review_path, "w", encoding="utf-8") as f:
+                _json.dump(report, f, ensure_ascii=False, indent=2)
+            print(f"  已更新: {review_path}")
+        sys.exit(0)
 
     llm_call = None
     if not args.no_llm and not args.interactive and not args.dry_run:
