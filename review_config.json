@@ -56,5 +56,5 @@
     "so", "up", "down", "here", "there", "over", "under", "block",
     "spawn", "egg", "spawn egg", "potion", "one", "enable"
   ],
-  "max_workers": 4
+  "max_workers": 8
 }

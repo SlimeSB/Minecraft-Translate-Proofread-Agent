@@ -398,32 +398,32 @@ class LLMBridge:
             fuzzy_results_map, batch_size,
         )
 
-        sem = asyncio.Semaphore(max_workers)
-
-        async def _process(i: int, prompt: str) -> list[dict[str, Any]]:
-            async with sem:
-                try:
-                    loop = asyncio.get_running_loop()
-                    response = await loop.run_in_executor(None, self.llm_call, prompt)
-                    parsed = parse_review_response(response)
-                    print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
-                          file=sys.stderr)
-                    for v in parsed:
-                        v.setdefault("source", "llm_review")
-                        v.setdefault("en_current", "")
-                        v.setdefault("zh_current", "")
-                        v.setdefault("suggestion", "")
-                        v.setdefault("reason", "")
-                    return parsed
-                except Exception as e:
-                    print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                    return [{
-                        "key": "", "en_current": "", "zh_current": "",
-                        "verdict": "🔶 REVIEW", "suggestion": "",
-                        "reason": f"LLM调用失败: {e}", "source": "llm_error",
-                    }]
-
         async def _run_all() -> list[dict[str, Any]]:
+            sem = asyncio.Semaphore(max_workers)
+
+            async def _process(i: int, prompt: str) -> list[dict[str, Any]]:
+                async with sem:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        response = await loop.run_in_executor(None, self.llm_call, prompt)
+                        parsed = parse_review_response(response)
+                        print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
+                              file=sys.stderr)
+                        for v in parsed:
+                            v.setdefault("source", "llm_review")
+                            v.setdefault("en_current", "")
+                            v.setdefault("zh_current", "")
+                            v.setdefault("suggestion", "")
+                            v.setdefault("reason", "")
+                        return parsed
+                    except Exception as e:
+                        print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                        return [{
+                            "key": "", "en_current": "", "zh_current": "",
+                            "verdict": "🔶 REVIEW", "suggestion": "",
+                            "reason": f"LLM调用失败: {e}", "source": "llm_error",
+                        }]
+
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             results: list[dict[str, Any]] = []
             for coro in asyncio.as_completed(tasks):
