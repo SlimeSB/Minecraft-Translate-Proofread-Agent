@@ -37,6 +37,8 @@
   "review_instruction": "对每条输出: {\"key\": \"...\", \"verdict\": \"...\", \"suggestion\": \"...\", \"reason\": \"...\"}\nPASS条目可不输出。仅输出JSON数组。",
   "review_principles": "- 以原文为准,逐词理解后评价译文\n- 禁止过度发挥,风格差异过大标记🔶 REVIEW或❌ FAIL\n- 禁止不适烂梗,直接❌ FAIL\n- 专有名词保留原文不翻译\n- 检查语气是否匹配原文",
   "merge_system_prompt": "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。\n判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。\n输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }\n不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。",
+  "keyboard_guidance": "检测到预设的键盘按键，建议保留原文。",
+  "mouse_guidance": "检测到鼠标操作，注意使用"左键点击"、"右击"、"按住右键"等，而非"左键"、"右键"",
   "term_min_freq": 5,
   "term_min_consensus": 0.6,
   "term_max_zh_len": 40,

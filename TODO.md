@@ -11,10 +11,7 @@
 ### 3. `format_checker.py` `_check_punctuation` 过于敏感
 中英文间距检查在 Patchouli 手册文本中正常但被误报。需要可配置白名单（如 book.* 键忽略间距检查）。
 
-### 4. `_check_keyboard_keys` 对 Enter/End 等词误报
-"Enter the cave" 中的 Enter 被当作键盘按键。需要检查键名上下文或限制到 `key.` 前缀条目。
-
-### 5. 并行数 `max_workers=4` 硬编码
+### 4. 并行数 `max_workers=4` 硬编码
 应该从 `review_config.json` 读取。
 已影响：`LLMBridge.review_batch`、`TerminologyBuilder.build_glossary`。
 

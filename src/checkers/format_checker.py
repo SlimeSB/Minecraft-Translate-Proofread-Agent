@@ -52,9 +52,6 @@ RE_NEWLINE = re.compile(r"\\n|\n")
 # 能量/体积单位
 RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b")
 
-# 键盘按键
-RE_KEYBOARD_KEY = re.compile(r"\b(Shift|Ctrl|Alt|Enter|Tab|Esc|Backspace|Delete|Home|End|PgUp|PgDn|F\d{1,2})\b")
-
 # 中文全角标点
 RE_CHINESE_PUNCT = re.compile(r"[，。；：？！、‘’“”【】《》（）—…]")
 
@@ -133,7 +130,6 @@ class FormatChecker:
             self._check_punctuation,
             self._check_trailing_whitespace,
             self._check_energy_units,
-            self._check_keyboard_keys,
             self._check_ellipsis,
             self._check_sound_subtitle_format,
             self._check_tree_terms,
@@ -353,37 +349,6 @@ class FormatChecker:
             return self._verdict(key, en, zh, "❌ FAIL",
                 reason=f"能量/体积单位不应翻译，缺少: {', '.join(missing)}",
             )
-        return None
-
-    # TODO: 这里keyboard写的不好，可以删了。可以检查一下左键右键。
-    def _check_keyboard_keys(
-        self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查键盘按键是否被翻译。Shift、Ctrl 等应保留原文并首字母大写。"""
-        en_keys = RE_KEYBOARD_KEY.findall(en)
-        zh_keys = RE_KEYBOARD_KEY.findall(zh)
-        if en_keys and sorted(en_keys) != sorted(zh_keys):
-            missing = [k for k in en_keys if k not in zh_keys]
-            # 检查是否被翻译成中文（如 Shift→切换）
-            # 用简单启发式：如果 en 中键名在 zh 中消失且 zh 变短，可能被翻译
-            if missing:
-                # 检查中文中是否有常见的键名翻译
-                KEY_TRANSLATIONS = {
-                    "Shift": "切换", "Ctrl": "控制", "Alt": "交替",
-                    "Enter": "回车", "Tab": "制表", "Esc": "退出",
-                    "Backspace": "退格", "Delete": "删除",
-                }
-                translated = []
-                for mk in missing:
-                    if mk in KEY_TRANSLATIONS and KEY_TRANSLATIONS[mk] in zh:
-                        translated.append(f"{mk}→{KEY_TRANSLATIONS[mk]}")
-                if translated:
-                    return self._verdict(key, en, zh, "❌ FAIL",
-                        reason=f"键盘按键不应翻译: {', '.join(translated)}",
-                    )
-                return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                    reason=f"键盘按键可能丢失: {', '.join(missing)}",
-                )
         return None
 
     def _check_ellipsis(

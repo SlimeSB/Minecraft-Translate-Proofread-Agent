@@ -61,3 +61,7 @@ MERGE_SYSTEM_PROMPT = get("merge_system_prompt", "你是英文术语规范化专
 
 # 审校 header 前缀
 REVIEW_HEADER_PREFIX = get("review_header_prefix", "你是Minecraft模组简中翻译审校专家")
+
+# 输入设备翻译专项指南（键盘/鼠标，用于 LLM prompt 动态补充）
+KEYBOARD_GUIDANCE = get("keyboard_guidance", "检测到预设的键盘按键，建议保留原文。")
+MOUSE_GUIDANCE = get("mouse_guidance", "检测到鼠标操作，注意使用"左键点击"、"右击"、"按住右键"等，而非"左键"、"右键"")

@@ -23,6 +23,49 @@ KEY_PREFIX_PROMPTS: dict[str, tuple[str, str]] = {
     k: tuple(v) for k, v in cfg.KEY_PREFIX_PROMPTS.items()
 }
 
+# ═══════════════════════════════════════════════════════════
+# 键盘按键 / 鼠标操作检测（用于 LLM prompt 动态补充指南）
+# 注意：正则模式在此定义；指南文本从 review_config.json 加载。
+#       需要修改指南文案、调整阈值等请去 review_config.json，不要硬编码在此。
+# ═══════════════════════════════════════════════════════════
+
+_RE_KEYBOARD_KEY = re.compile(
+    r"\b(Shift|Ctrl|Alt|Tab)\b",
+    re.IGNORECASE,
+)
+
+_RE_MOUSE_OP = re.compile(
+    r"(?i)\b(?:left\s*click|right\s*click|left[- ]?mouse|right[- ]?mouse|"
+    r"mouse\s*button|scroll\s*wheel|drag|double[-\s]?click|"
+    r"middle\s*click|mouse\s*over|hover)\b|"
+    r"(?:左键|右键|鼠标|单击|双击|点击|拖拽|滚轮)"
+)
+
+_KEYBOARD_GUIDANCE = cfg.KEYBOARD_GUIDANCE
+_MOUSE_GUIDANCE = cfg.MOUSE_GUIDANCE
+
+
+def _detect_input_guidance(entries: list[dict[str, str]]) -> str:
+    """扫描一批条目，若检测到键盘按键或鼠标操作则返回补充指南文本。"""
+    has_keyboard = False
+    has_mouse = False
+    for entry in entries:
+        en = entry.get("en", "")
+        zh = entry.get("zh", "")
+        if not has_keyboard and _RE_KEYBOARD_KEY.search(en):
+            has_keyboard = True
+        if not has_mouse and _RE_MOUSE_OP.search(en + zh):
+            has_mouse = True
+        if has_keyboard and has_mouse:
+            break
+
+    parts: list[str] = []
+    if has_keyboard:
+        parts.append(_KEYBOARD_GUIDANCE)
+    if has_mouse:
+        parts.append(_MOUSE_GUIDANCE)
+    return "\n".join(parts)
+
 
 def _group_prefix(key: str) -> str:
     """提取 key 的分组前缀。最长匹配胜出。未匹配返回 '__default__'。"""
@@ -172,6 +215,11 @@ def build_review_prompt(
 
             header += f"\n## 待审条目 ({len(batch)}条)\n"
             header += cfg.REVIEW_INSTRUCTION + "\n"
+
+            # 动态补充：检测到键盘/鼠标相关内容时追加专项指南
+            input_guidance = _detect_input_guidance(batch)
+            if input_guidance:
+                header += f"\n## 输入设备翻译专项指南\n{input_guidance}\n"
 
             blocks = [header]
             for j, entry in enumerate(batch):
