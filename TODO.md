@@ -3,7 +3,6 @@
 > 记录需要改进但未实施的工程问题。无优先级顺序。
 
 ## 高优先级
-1. 多词术语不要归并映射到到单词
 
 ### 2. `terminology_builder.py` 太长（500+ 行）
 建议拆分：`LemmaCache` 独立文件；`_fuzzy_cluster` / `_build_merge_prompt` / `_parse_merge_response` / `_apply_llm_merge` 移到独立模块。

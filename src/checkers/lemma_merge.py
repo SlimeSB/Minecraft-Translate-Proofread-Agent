@@ -130,6 +130,9 @@ def fuzzy_cluster(
                 ti, tj = set(ni.split()), set(nj.split())
                 len_ratio = min(len(ni), len(nj)) / max(len(ni), len(nj), 1)
                 if ti & tj or len_ratio > 0.4:
+                    # 阻止单词语吞噬多词术语
+                    if ti < tj or tj < ti:
+                        continue
                     union(ni, nj)
 
     # 收集 >=2 成员的组
