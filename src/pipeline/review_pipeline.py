@@ -173,10 +173,6 @@ class ReviewPipeline:
             if any(p in key for p in fuzzy_trigger_patterns):
                 to_search.append(entry)
 
-        # 限制模糊搜索数量（避免对全部条目做 O(n*m) 搜索）
-        max_fuzzy = min(len(to_search), 100)
-        to_search = to_search[:max_fuzzy]
-
         self.fuzzy_results_map = {}
         for entry in to_search:
             key = entry["key"]
