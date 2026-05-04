@@ -43,11 +43,12 @@ from .lemma_merge import (
 def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
     """从多个中文译文中提取公共子串，忽略离群值。
 
-    遍历每种译文，若它作为子串出现在 ≥ min_ratio 比例的其它译文中，则为公共项。
+    遍历每种译文，若它作为**真子串**出现在 ≥ min_ratio 比例的**其他**译文中，
+    则为公共项。自身匹配不计入。
     返回最长的公共项，无则返回 None。
 
     例如 {"方铅岩":1, "方铅岩砖":2, "方铅岩台阶":1, "方前言":1}
-    → "方铅岩" 出现在 "方铅岩砖" 和 "方铅岩台阶" 中，覆盖 4/5≥60% → 返回 "方铅岩"。
+    → "方铅岩" 出现在 "方铅岩砖" 和 "方铅岩台阶" 中（不含自身），覆盖 3/5=60% → 返回 "方铅岩"。
     """
     if len(zh_counter) < 2:
         return None
@@ -56,7 +57,11 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
     for zh in zh_counter:
         if len(zh) < 2:
             continue
-        support = sum(count for other, count in zh_counter.items() if zh in other)
+        # 只统计其他 zh（不含自身）中包含此 zh 作为子串的频次
+        support = sum(
+            count for other, count in zh_counter.items()
+            if other != zh and zh in other
+        )
         if support / total >= min_ratio and len(zh) > len(best):
             best = zh
     return best if best else None
@@ -118,33 +123,33 @@ class TerminologyBuilder:
             self.merged, self._cache_hits = apply_cache_merge(self.merged, self.cache)
             print(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
 
-        if llm_call is None or not self.merged:
+        # Step 3: 模糊聚类（纯算法，不需要 LLM）
+        if not self.merged:
             return self.merged
 
-        # Step 3: 模糊聚类（在缓存归并后的桶之间）
         clusters = fuzzy_cluster(self.merged, threshold=fuzzy_threshold)
         if not clusters:
             return self.merged
 
         print(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
 
-        # Step 4: LLM 裁决 + 写回缓存
-        prompt = build_merge_prompt(clusters)
-        try:
-            response = llm_call(prompt)
-            mapping = parse_merge_response(response)
-            if mapping:
-                # 记录到缓存（canonical → members 方向）
-                canon_map: dict[str, list[str]] = {}
-                for member, canon in mapping.items():
-                    canon_map.setdefault(canon, []).append(member)
-                for canon, members in canon_map.items():
-                    self.cache.record(canon, members, source="llm")
+        # Step 4: LLM 裁决 + 写回缓存（仅在有 llm_call 时）
+        if llm_call is not None:
+            prompt = build_merge_prompt(clusters)
+            try:
+                response = llm_call(prompt)
+                mapping = parse_merge_response(response)
+                if mapping:
+                    canon_map: dict[str, list[str]] = {}
+                    for member, canon in mapping.items():
+                        canon_map.setdefault(canon, []).append(member)
+                    for canon, members in canon_map.items():
+                        self.cache.record(canon, members, source="llm")
 
-                self.merged = apply_llm_merge(self.merged, mapping)
-                print(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
-        except Exception:
-            pass
+                    self.merged = apply_llm_merge(self.merged, mapping)
+                    print(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
+            except Exception:
+                pass
 
         return self.merged
 
@@ -317,9 +322,11 @@ class TerminologyBuilder:
 
     # ── 便捷入口 ──────────────────────────────────────────
 
-    def merge_and_build(self) -> list[dict[str, str]]:
+    def merge_and_build(
+        self, llm_call: Callable[[str], str] | None = None
+    ) -> list[dict[str, str]]:
         """归并 + 纯程序提取术语表（一步完成）。"""
-        self.merge_lemmas()
+        self.merge_lemmas(llm_call=llm_call)
         return self.build_glossary()
 
 
