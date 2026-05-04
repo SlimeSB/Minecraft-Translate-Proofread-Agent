@@ -143,9 +143,24 @@ class ReportGenerator:
         if not self.stats:
             self.compute_stats()
 
+        # 构建 EN/ZH 速查表
+        en_zh_map: dict[str, dict[str, str]] = {}
+        for entry in self.matched_entries:
+            en_zh_map[entry["key"]] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
+
+        # 为缺失 en_current/zh_current 的 verdict 补全（LLM verdicts 不携带原文）
+        verdicts_out: list[dict[str, Any]] = []
+        for v in self.verdicts:
+            v_out = dict(v)
+            if not v_out.get("en_current") and not v_out.get("zh_current"):
+                pair = en_zh_map.get(v_out.get("key", ""), {})
+                v_out["en_current"] = pair.get("en", "")
+                v_out["zh_current"] = pair.get("zh", "")
+            verdicts_out.append(v_out)
+
         report = {
             "stats": self.stats,
-            "verdicts": self.verdicts,
+            "verdicts": verdicts_out,
         }
 
         path = Path(output_path)
