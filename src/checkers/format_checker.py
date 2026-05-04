@@ -49,8 +49,8 @@ RE_HTML_TAG = re.compile(r"</?[a-zA-Z_]\w*(?:\s[^>]*)?/?>")
 RE_BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
 RE_NEWLINE = re.compile(r"\\n|\n")
 
-# 能量/体积单位
-RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b")
+# 能量/体积单位（\b 需 re.ASCII，否则中文被当作 \w 导致边界失效）
+RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b", re.ASCII)
 
 # 中文全角标点
 RE_CHINESE_PUNCT = re.compile(r"[，。；：？！、‘’“”【】《》（）—…]")
