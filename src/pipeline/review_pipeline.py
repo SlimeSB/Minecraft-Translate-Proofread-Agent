@@ -218,8 +218,22 @@ class ReviewPipeline:
         for v in self.term_verdicts:
             auto_flagged_keys.add(v.get("key", ""))
 
+        # 收集"疑似未翻译"的 key（zh==en 且非代码/专有名词），这些不交 LLM
+        untranslated_keys: set[str] = set()
+        for v in self.format_verdicts:
+            if "值相同" in v.get("reason", ""):
+                untranslated_keys.add(v.get("key", ""))
+
         # 筛选需要 LLM 的条目
         llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys)
+
+        # 剔除疑似未翻译条目（格式检查已给出 ❌ FAIL，无需 LLM 重复判断）
+        if untranslated_keys:
+            removed = len(llm_entries)
+            llm_entries = [e for e in llm_entries if e["key"] not in untranslated_keys]
+            removed -= len(llm_entries)
+            if removed:
+                print(f"  跳过疑似未翻译: {removed} 条")
 
         # 构建自动 verdict 映射（供 LLM 参考）
         auto_verdicts_map: dict[str, list[dict[str, Any]]] = {}
