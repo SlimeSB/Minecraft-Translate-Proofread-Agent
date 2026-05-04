@@ -1,49 +1,48 @@
 # 待办与优化项
 
-> 记录需要改进但未实施的工程问题。无优先级顺序。
+> 记录需要改进但未实施的工程问题。统一入口为 `run.py`。
 
 ## 高优先级
 
-### 2. `terminology_builder.py` 太长（500+ 行）
-建议拆分：`LemmaCache` 独立文件；`_fuzzy_cluster` / `_build_merge_prompt` / `_parse_merge_response` / `_apply_llm_merge` 移到独立模块。
+### 1. `LemmaCache` 应独立文件 ✅
+已在 `src/checkers/lemma_cache.py`，`terminology_builder.py` 通过 import 使用。
 
-### 3. `format_checker.py` `_check_punctuation` 过于敏感
-中英文间距检查在 Patchouli 手册文本中正常但被误报。需要可配置白名单（如 book.* 键忽略间距检查）。
+### 2. `format_checker.py` `_check_punctuation` 过于敏感
+中英文间距检查在 Patchouli 手册文本中正常但被误报。需要可配置 key 前缀白名单（如 `book.*` 键忽略间距检查）。
 
-### 4. 并行数 `max_workers=4` 硬编码
-应该从 `review_config.json` 读取。
-已影响：`LLMBridge.review_batch`、`TerminologyBuilder.build_glossary`。
+### 3. 并行数 `max_workers=4` 硬编码 ✅
+现已从 `review_config.json` 读取，默认 4。`LLMBridge.review_batch` 参数默认 `None` 时从配置取。
+
+### 4. `review_config.json` 缺少 schema 校验 ✅
+`config.py` 不再静默吞掉未知键，启动时输出 stderr 警告。
 
 
 ## 中优先级
 
-### 7. FTS5 索引单例 `_get_db` 全局变量
-跨多文件运行可能泄漏。应传给 pipeline 层管理生命周期。
+### 5. FTS5 索引单例 `_get_db` 全局变量
+`fuzzy_search.py` 中 `_db_instance` 为模块级单例，跨多次运行可能泄漏。应传给 pipeline 层管理生命周期。
 
-### 8. `review_pipeline.py` 模糊搜索候选过滤
+### 6. `review_pipeline.py` 模糊搜索候选过滤
 当前仅对前 100 条做模糊搜索。若条目超过 100 条可能遗漏。
 
-### 9. LLM 日志 `08_llm_call_log.txt` 无滚动 ✅
-长期运行会无限增长。建议按日期分文件或限制行数。
-→ 已改为 `logs/latest.log`，每次运行前自动存档旧日志为 `latest.{时间戳}.log`。
-
-### 10. 无单元测试
+### 7. 无单元测试
 目前靠干运行验证。需对 `format_checker`、`_check_placeholder_integrity` 等关键函数加测试。
 
-### 11. `TerminologyBuilder.main()` 独立 CLI 残留
-正在被 `review_pipeline` 调用，但自己也保留了一个 argparse CLI（`--en --zh --alignment`）。应清理：是否保留独立运行方式，或统一走 `run.py`。
+### 8. 多处 CLI 残留
+以下文件各自保留了 `main()` argparse CLI 入口，应统一走 `run.py`：
+- `src/checkers/terminology_builder.py`
+- `src/llm/llm_bridge.py`
+- `src/pipeline/review_pipeline.py`
+- `src/checkers/format_checker.py`
+
 
 ## 低优先级
 
-### 12. `review_config.json` 中多行字符串可读性
-`style_reference` 等配置项中 `\n` 不易编辑。可考虑外部 `.txt` 文件。
+### 9. `review_config.json` 中多行字符串可读性
+`style_reference`、`review_instruction`、`review_principles`、`merge_system_prompt` 中含 `\n`，不易编辑。可考虑外部 `.txt` 文件。
 
-### 13. `llm_bridge.py` 仍然有自己的 `main()` CLI
-全仓有两个独立 CLI 入口（`run.py` + `llm_bridge.py` 独立运行）。考虑统一。
+### 10. Windows 终端 GBK 输出问题
+`run.py` 已有 `sys.stdout.isatty()` 检查但 PowerShell 管道仍会乱码。需要文档说明或自动检测 PowerShell 环境。
 
-### 14. Windows 终端 GBK 输出问题
-`run.py` 已有 `sys.stdout.isatty()` 检查但 PowerShell 管道仍会乱码。
-需要文档说明或自动检测 PowerShell 环境。
-
-### 15. README 流程图可加 mermaid 图
+### 11. README 流程图可加 mermaid 图
 当前纯文本。可加 mermaid 流程图提升可读性。

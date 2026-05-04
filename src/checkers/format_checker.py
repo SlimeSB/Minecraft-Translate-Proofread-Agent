@@ -302,22 +302,38 @@ class FormatChecker:
 
         issues: list[str] = []
 
-        # 检查英文句号在中文文本中
-        # 排除数字中的小数点: 数字.数字
-        if re.search(r"(?<!\d)\.(?!\d)", zh):
-            # 检查是否在中文上下文中使用英文句号
-            if re.search(r"[\u4e00-\u9fff]\s*\.\s*[\u4e00-\u9fff]", zh):
-                issues.append("中文环境中使用了英文句号'.'，应使用'。'")
+        # 半角 → 全角标点 / 括号检查: (正则, 半角符, 全角符, 跳过条件)
+        _checks: list[tuple[str, str, str, str | None]] = [
+            (r"[\u4e00-\u9fff]\s*\.\s*[\u4e00-\u9fff]", ".", "。", None),
+            (r"[\u4e00-\u9fff]\s*,\s*[\u4e00-\u9fff]", ",", "，", None),
+            (r"[\u4e00-\u9fff]\s*\?\s*[\u4e00-\u9fff]", "?", "？", None),
+            (r"[\u4e00-\u9fff]\s*\!\s*[\u4e00-\u9fff]", "!", "！", None),
+            (r"[\u4e00-\u9fff]\s*;\s*[\u4e00-\u9fff]", ";", "；", None),
+            (r"[\u4e00-\u9fff]\s*:", ":", "：", "http"),       # 单侧中文即可，排除 URL
+            (r"[\u4e00-\u9fff]\s*\(|\)\s*[\u4e00-\u9fff]", "()", "（）", None),
+            (r"[【】]", "【】", "[]", None),                     # 全角方括号 → 半角
+        ]
+        for pattern, half, full, skip_kw in _checks:
+            if skip_kw and skip_kw in zh:
+                continue
+            if re.search(pattern, zh):
+                issues.append(f"中文环境中使用了{half}，应使用'{full}'")
 
-        # 检查英文逗号在中文文本中
-        if re.search(r"[\u4e00-\u9fff]\s*,\s*[\u4e00-\u9fff]", zh):
-            issues.append("中文环境中使用了英文逗号','，应使用'，'")
+        # 中文-中文标点间空格
+        punct_space = re.findall(
+            r"[\u4e00-\u9fff]\s+[，。；：？！、]|[，。；：？！、]\s+[\u4e00-\u9fff]",
+            zh,
+        )
+        if punct_space:
+            issues.append(f"中文与中文标点间有不必要空格（{len(punct_space)}处）")
 
-        # 检查中文与英文/数字间是否有多余空格
-        # 注意：Patchouli 手册文本除外（但此处无法判断上下文，标记为 SUGGEST）
-        extra_spaces = re.findall(r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]", zh)
-        if extra_spaces:
-            issues.append(f"中英文间有不必要空格（{len(extra_spaces)}处）")
+        # 中英文间空格（Patchouli 手册文本除外，此处标记 SUGGEST）
+        en_cn_spaces = re.findall(
+            r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]",
+            zh,
+        )
+        if en_cn_spaces:
+            issues.append(f"中英文间有不必要空格（{len(en_cn_spaces)}处）")
 
         if issues:
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
@@ -368,25 +384,13 @@ class FormatChecker:
         if not key.startswith("subtitles.") and not key.startswith("sound."):
             return None
 
-        # EN 为主谓结构时，ZH 应为 主体：声音
-        # 启发式：如果用全角冒号，检查格式
-        if "：" in zh:
-            # 检查是否用了半角冒号
-            if ":" in zh and "：" not in zh:
+        # ZH 无冒号 + EN 只有1个词（如 "Zapping"）→ 不强求格式
+        if "：" not in zh and ":" not in zh:
+            en_words = en.split()
+            if len(en_words) >= 2 and len(en) < 80:
                 return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                    reason="声音字幕应使用全角冒号'：'",
+                    reason="声音字幕建议使用'主体：声音'格式（全角冒号）",
                 )
-            # 格式正确
-            return None
-
-        # 如果 ZH 没有冒号但 EN 有明确的"名词 + 动词"结构
-        # 用简单启发式：EN 以名词开头且长度较短
-        en_words = en.split()
-        if len(en_words) >= 2 and len(en) < 80:
-            return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason="声音字幕建议使用'主体：声音'格式（全角冒号）",
-            )
-        return None
 
     def _check_tree_terms(
         self, key: str, en: str, zh: str

@@ -299,13 +299,17 @@ class LLMBridge:
         auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
         fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
         batch_size: int = 20,
-        max_workers: int = 4,
+        max_workers: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         并行分批审校条目，汇总所有 LLM verdict。
         """
         if not self.llm_call:
             raise RuntimeError("LLMBridge 未配置 llm_call 函数")
+
+        if max_workers is None:
+            from src.config import MAX_WORKERS as _mw
+            max_workers = _mw
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
