@@ -1,5 +1,7 @@
 # 待办与优化项
 
+快速运行：python run.py --en tests/fixtures/en_us.json --zh tests/fixtures/zh_cn.json -o ./output/
+
 > 记录需要改进但未实施的工程问题。统一入口为 `run.py`。
 
 ## 高优先级
