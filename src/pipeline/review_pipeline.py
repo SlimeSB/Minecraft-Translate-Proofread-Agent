@@ -33,6 +33,7 @@ from src.llm.llm_bridge import (
     LLMBridge, filter_for_llm, classify_entries,
     create_openai_llm_call, create_dry_run_llm_call,
     build_review_prompt, interactive_entry_review,
+    merge_multipart_entries,
 )
 from src.reporting.report_generator import ReportGenerator
 
@@ -248,9 +249,11 @@ class ReviewPipeline:
         self.run_phase3b(llm_entries)
 
         if self.dry_run:
+            merged = merge_multipart_entries(llm_entries)
             prompts = build_review_prompt(
                 llm_entries, self.glossary, auto_verdicts_map,
                 self.fuzzy_results_map, self.batch_size,
+                merged_context=merged,
             )
             total_chars = sum(len(p) for p in prompts)
             print(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")

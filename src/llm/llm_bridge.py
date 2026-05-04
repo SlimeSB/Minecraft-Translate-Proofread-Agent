@@ -221,21 +221,61 @@ def filter_for_llm(
 STYLE_REFERENCE = cfg.STYLE_REFERENCE
 
 
+def merge_multipart_entries(
+    entries: list[dict[str, str]],
+) -> dict[str, tuple[str, str]]:
+    """
+    检测后缀数字的拆分条目，拼接完整原文/译文供 LLM 上下文使用。
+
+    例如:
+      screen.xxx.desc.1, screen.xxx.desc.2, screen.xxx.desc.3
+    → 以 screen.xxx.desc 为基键，拼接 en 和 zh。
+
+    返回: {原始key: (完整EN, 完整ZH)}，仅多段条目有映射。
+    """
+    import re
+    _RE_MULTIPART = re.compile(r"^(.*)\.(\d+)$")
+
+    groups: dict[str, list[dict[str, str]]] = {}
+    for entry in entries:
+        m = _RE_MULTIPART.match(entry["key"])
+        if m:
+            base = m.group(1)
+            groups.setdefault(base, []).append(entry)
+
+    result: dict[str, tuple[str, str]] = {}
+    for base, group in groups.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda e: int(_RE_MULTIPART.match(e["key"]).group(2)))
+        full_en = "".join(e.get("en", "") for e in group)
+        full_zh = "".join(e.get("zh", "") for e in group)
+        for e in group:
+            result[e["key"]] = (full_en, full_zh)
+    return result
+
+
 def build_entry_block(
     entry: dict[str, str],
     index: int = 0,
     fuzzy_results: list[dict[str, Any]] | None = None,
     auto_verdicts: list[dict[str, Any]] | None = None,
     glossary_entries: list[dict[str, str]] | None = None,
+    full_en: str = "",
+    full_zh: str = "",
 ) -> str:
     """为单条 entry 构建 LLM 审校上下文块。key 值在最前面，LLM 应直接引用。"""
     key = entry["key"]
-    en = entry.get("en", "")
-    zh = entry.get("zh", "")
+    en = full_en or entry.get("en", "")
+    zh = full_zh or entry.get("zh", "")
 
     lines = [f"key: `{key}`"]
-    lines.append(f'EN: "{en[:300]}"')
-    lines.append(f'ZH: "{zh[:300]}"')
+    if full_en:
+        lines.append(f'EN (完整上下文): "{en[:600]}"')
+        lines.append(f'ZH (完整上下文): "{zh[:600]}"')
+    else:
+        lines.append(f'EN: "{en[:300]}"')
+        lines.append(f'ZH: "{zh[:300]}"')
 
     if auto_verdicts:
         for v in auto_verdicts:
@@ -267,10 +307,13 @@ def build_review_prompt(
     auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
     fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
     batch_size: int = 20,
+    merged_context: dict[str, tuple[str, str]] | None = None,
 ) -> list[str]:
     """
     构建审校 prompt，按 key 前缀分组，每组用专属审查重点。
     每批最多 batch_size 条。未匹配前缀用默认 prompt。
+
+    :param merged_context: merge_multipart_entries() 的输出，提供多段拼接上下文
     """
     prompts: list[str] = []
 
@@ -308,7 +351,8 @@ def build_review_prompt(
                 key = entry["key"]
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
-                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries)
+                full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
+                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries, full_en, full_zh)
                 blocks.append(block)
 
             prompts.append("\n\n".join(blocks))
@@ -439,9 +483,11 @@ class LLMBridge:
             from src.config import MAX_WORKERS as _mw
             max_workers = _mw
 
+        merged = merge_multipart_entries(entries)
+
         prompts = build_review_prompt(
             entries, glossary_entries, auto_verdicts_map,
-            fuzzy_results_map, batch_size,
+            fuzzy_results_map, batch_size, merged_context=merged,
         )
 
         async def _run_all() -> list[dict[str, Any]]:
