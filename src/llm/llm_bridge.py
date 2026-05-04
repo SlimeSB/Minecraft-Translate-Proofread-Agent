@@ -149,14 +149,14 @@ def build_entry_block(
     entry: dict[str, str],
     fuzzy_results: list[dict[str, Any]] | None = None,
     auto_verdicts: list[dict[str, Any]] | None = None,
+    glossary_entries: list[dict[str, str]] | None = None,
 ) -> str:
     """为单条 entry 构建 LLM 审校上下文块。"""
     key = entry["key"]
     en = entry.get("en", "")
     zh = entry.get("zh", "")
-    cat = classify_key(key)
 
-    lines = [f"[{cat}] `{key}`"]
+    lines = [f"[{classify_key(key)}] `{key}`"]
     lines.append(f'EN: "{en[:300]}"')
     lines.append(f'ZH: "{zh[:300]}"')
 
@@ -170,6 +170,16 @@ def build_entry_block(
             lines.append(
                 f"    sim={fr['similarity']}% | EN: \"{fr['en'][:100]}\" | ZH: \"{fr['zh'][:100]}\""
             )
+
+    # 术语提示：只附上与当前 EN 原文相关的术语
+    if glossary_entries:
+        en_lower = en.lower()
+        hints: list[str] = []
+        for g in glossary_entries:
+            if g["en"].lower() in en_lower:
+                hints.append(f"\"{g['en']}\" → \"{g['zh']}\"")
+        if hints:
+            lines.append(f"  术语: {', '.join(hints[:5])}")
 
     return "\n".join(lines)
 
@@ -208,11 +218,6 @@ def build_review_prompt(
 {cfg.REVIEW_PRINCIPLES}
 """
 
-            if glossary_entries:
-                header += "\n## 术语表\n| EN术语 | 强制译文 |\n|--------|----------|\n"
-                for g in glossary_entries[:30]:
-                    header += f"| {g['en']} | {g['zh']} |\n"
-
             header += f"\n## 待审条目 ({len(batch)}条)\n"
             header += cfg.REVIEW_INSTRUCTION + "\n"
 
@@ -226,7 +231,7 @@ def build_review_prompt(
                 key = entry["key"]
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
-                block = build_entry_block(entry, fuzzy_r, auto_v)
+                block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries)
                 blocks.append(f"#{j+1} {block}")
 
             prompts.append("\n\n".join(blocks))
