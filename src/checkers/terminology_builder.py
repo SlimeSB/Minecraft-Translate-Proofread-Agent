@@ -272,7 +272,7 @@ class TerminologyBuilder:
                     "zh_current": zh,
                     "verdict": "❌ FAIL",
                     "suggestion": std_zh,
-                    "reason": f'术语不一致——"{en_term}"在术语表中译为"{std_zh}"，此处未使用',
+                    "reason": f'术语不一致——“{en_term}”在术语表中译为“{std_zh}”，此处未使用',
                     "source": "terminology_check",
                 })
 

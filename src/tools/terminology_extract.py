@@ -60,6 +60,10 @@ def extract_terms(
     bi_keys: defaultdict[tuple, list[str]] = defaultdict(list)
     tri_keys: defaultdict[tuple, list[str]] = defaultdict(list)
 
+    # ── 完整值短语：整句 token 序列也作为候选 n-gram ──
+    full_freq: defaultdict[tuple, int] = defaultdict(int)
+    full_keys: defaultdict[tuple, list[str]] = defaultdict(list)
+
     for key, value in en_entries:
         tokens = tokenize(value)
         if not tokens:
@@ -93,6 +97,27 @@ def extract_terms(
                     tri_freq[tg] += 1
                     tri_keys[tg].append(key)
                     seen_tri.add(tg)
+
+        # 完整值短语（贪婪匹配）：整句也作为一个候选术语
+        tup = tuple(tokens)
+        if n >= 2:
+            full_freq[tup] += 1
+            full_keys[tup].append(key)
+
+    # 把完整短语合并到对应 n-gram 桶中
+    # 2 词的完整短语 → bigrams；3+ 词的 → trigrams（扩展 max_ngram 未覆盖的长度）
+    for tup in full_freq:
+        n = len(tup)
+        if n == 2:
+            bi_freq[tup] += full_freq[tup]
+            bi_keys[tup].extend(full_keys[tup])
+        elif n == 3:
+            tri_freq[tup] += full_freq[tup]
+            tri_keys[tup].extend(full_keys[tup])
+        else:
+            # 4+ 词：也放入 trigram 桶以便后续提取
+            tri_freq[tup] += full_freq[tup]
+            tri_keys[tup].extend(full_keys[tup])
 
     # ── build sorted result lists ──
     def build_list(
