@@ -163,38 +163,48 @@ class ReportGenerator:
                 "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
                 "suggestion": v.get("suggestion", ""),
                 "reason":     v.get("reason", ""),
-                "source":     v.get("source", "other"),
             }
             if not out["en_current"] and not out["zh_current"]:
                 pair = en_zh_map.get(out["key"], {})
                 out["en_current"] = pair.get("en", "")
                 out["zh_current"] = pair.get("zh", "")
-            # 过滤 key 为 #N 的无效条目
             if not out["key"] or out["key"].startswith("#"):
                 return None
             return out
 
-        # 按来源分组
-        by_source: dict[str, list[dict[str, Any]]] = {}
+        # 按 key 合并：同名 key 取最高优先级判决，reason 合并去重
+        by_key: dict[str, dict[str, Any]] = {}
         for v in self.verdicts:
             nv = _normalize(v)
             if nv is None:
                 continue
-            src = nv["source"]
-            by_source.setdefault(src, []).append(nv)
+            key = nv["key"]
+            if key not in by_key:
+                by_key[key] = nv
+                continue
+            existing = by_key[key]
+            # 合并 reason（去重 union）
+            reasons = set()
+            for r in (existing["reason"], nv["reason"]):
+                for part in r.split("; "):
+                    part = part.strip()
+                    if part:
+                        reasons.add(part)
+            existing["reason"] = "; ".join(reasons)
+            # 取更高优先级的 verdict
+            if VERDICT_PRIORITY.get(nv["verdict"], 0) > VERDICT_PRIORITY.get(existing["verdict"], 0):
+                existing["verdict"] = nv["verdict"]
+                existing["suggestion"] = nv["suggestion"] or existing["suggestion"]
 
-        # 合并视图（去重，最高优先级，用于统计）
-        merged_raw = merge_verdicts(self.verdicts)
-        merged = [nv for v in merged_raw if (nv := _normalize(v)) is not None]
+        merged = sorted(
+            by_key.values(),
+            key=lambda v: VERDICT_PRIORITY.get(v["verdict"], 0),
+            reverse=True,
+        )
 
         report = {
             "stats": self.stats,
-            "by_source": {
-                "format_check": by_source.get("format_check", []),
-                "terminology_check": by_source.get("terminology_check", []),
-                "llm_review": by_source.get("llm_review", []),
-            },
-            "merged": merged,
+            "verdicts": merged,
         }
 
         path = Path(output_path)
