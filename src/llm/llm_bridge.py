@@ -222,16 +222,17 @@ STYLE_REFERENCE = cfg.STYLE_REFERENCE
 
 def build_entry_block(
     entry: dict[str, str],
+    index: int = 0,
     fuzzy_results: list[dict[str, Any]] | None = None,
     auto_verdicts: list[dict[str, Any]] | None = None,
     glossary_entries: list[dict[str, str]] | None = None,
 ) -> str:
-    """为单条 entry 构建 LLM 审校上下文块。"""
+    """为单条 entry 构建 LLM 审校上下文块。key 值在最前面，LLM 应直接引用。"""
     key = entry["key"]
     en = entry.get("en", "")
     zh = entry.get("zh", "")
 
-    lines = [f"[{classify_key(key)}] `{key}`"]
+    lines = [f"key: `{key}`"]
     lines.append(f'EN: "{en[:300]}"')
     lines.append(f'ZH: "{zh[:300]}"')
 
@@ -306,8 +307,8 @@ def build_review_prompt(
                 key = entry["key"]
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
-                block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries)
-                blocks.append(f"#{j+1} {block}")
+                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries)
+                blocks.append(block)
 
             prompts.append("\n\n".join(blocks))
 
@@ -406,7 +407,7 @@ class LLMBridge:
                 parsed = parse_review_response(response)
                 print(f"→ {len(parsed)} verdicts", file=sys.stderr)
                 for v in parsed:
-                    v["source"] = "llm_review"
+                    v.setdefault("source", "llm_review")
                     v.setdefault("en_current", "")
                     v.setdefault("zh_current", "")
                     v.setdefault("suggestion", "")

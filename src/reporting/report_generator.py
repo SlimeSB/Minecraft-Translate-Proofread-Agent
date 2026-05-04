@@ -139,7 +139,7 @@ class ReportGenerator:
         self,
         output_path: str,
     ) -> None:
-        """生成 review_report.json。"""
+        """生成 review_report.json —— 按来源分组，LLM 和程序化 verdict 并存。"""
         if not self.stats:
             self.compute_stats()
 
@@ -148,19 +148,53 @@ class ReportGenerator:
         for entry in self.matched_entries:
             en_zh_map[entry["key"]] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
 
-        # 为缺失 en_current/zh_current 的 verdict 补全（LLM verdicts 不携带原文）
-        verdicts_out: list[dict[str, Any]] = []
+        # 统一规范化 verdict：统一字段名称、补齐 en_current/zh_current
+        _VERDICT_MAP = {  # LLM 可能返回不标准的值
+            "FAIL": "❌ FAIL", "REVIEW": "🔶 REVIEW", "SUGGEST": "⚠️ SUGGEST",
+            "PASS": "PASS",
+        }
+
+        def _normalize(v: dict[str, Any]) -> dict[str, Any]:
+            """统一所有 verdict 的字段结构与枚举值。"""
+            out: dict[str, Any] = {
+                "key":        v.get("key", ""),
+                "en_current": v.get("en_current", ""),
+                "zh_current": v.get("zh_current", ""),
+                "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
+                "suggestion": v.get("suggestion", ""),
+                "reason":     v.get("reason", ""),
+                "source":     v.get("source", "other"),
+            }
+            if not out["en_current"] and not out["zh_current"]:
+                pair = en_zh_map.get(out["key"], {})
+                out["en_current"] = pair.get("en", "")
+                out["zh_current"] = pair.get("zh", "")
+            # 过滤 key 为 #N 的无效条目
+            if not out["key"] or out["key"].startswith("#"):
+                return None
+            return out
+
+        # 按来源分组
+        by_source: dict[str, list[dict[str, Any]]] = {}
         for v in self.verdicts:
-            v_out = dict(v)
-            if not v_out.get("en_current") and not v_out.get("zh_current"):
-                pair = en_zh_map.get(v_out.get("key", ""), {})
-                v_out["en_current"] = pair.get("en", "")
-                v_out["zh_current"] = pair.get("zh", "")
-            verdicts_out.append(v_out)
+            nv = _normalize(v)
+            if nv is None:
+                continue
+            src = nv["source"]
+            by_source.setdefault(src, []).append(nv)
+
+        # 合并视图（去重，最高优先级，用于统计）
+        merged_raw = merge_verdicts(self.verdicts)
+        merged = [nv for v in merged_raw if (nv := _normalize(v)) is not None]
 
         report = {
             "stats": self.stats,
-            "verdicts": verdicts_out,
+            "by_source": {
+                "format_check": by_source.get("format_check", []),
+                "terminology_check": by_source.get("terminology_check", []),
+                "llm_review": by_source.get("llm_review", []),
+            },
+            "merged": merged,
         }
 
         path = Path(output_path)

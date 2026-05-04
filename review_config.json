@@ -33,7 +33,7 @@
   "default_review_focus": "翻译需准确自然; 术语一致; 匹配语境",
   "style_reference": "- 物品名: 材质+核心名词, e.g. \"铁盾牌\"\n- 咒语名: 4-6字文学感, e.g. \"守护咒文\"\n- 界面: 直白功能性, e.g. \"耐久度: %d\"\n- 告警: 简短直接, e.g. \"无法在此使用\"\n- 声音字幕: 主体：声音 (全角冒号)\n- 键盘键/能量单位: 保留原文 (Shift, Ctrl, FE, RF)",
   "review_system_prompt": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。",
-  "review_instruction": "对每条输出: {\"key\": \"...\", \"verdict\": \"...\", \"suggestion\": \"...\", \"reason\": \"...\"}\nPASS条目可不输出。仅输出JSON数组。",
+  "review_instruction": "对每条输出: {\"key\": \"原文中\ue006号条目的key值\", \"verdict\": \"PASS/⚠️ SUGGEST/🔶 REVIEW/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"审校理由\"}\nPASS条目可不输出。仅输出JSON数组。key字段请使用条目中\ue006key字段的值（如 gui.crazyae2addons.save），不得编造或使用#1、#2等序号。",
   "review_principles": "- 以原文为准,逐词理解后评价译文\n- 禁止过度发挥,风格差异过大标记🔶 REVIEW或❌ FAIL\n- 禁止不适烂梗,直接❌ FAIL\n- 专有名词保留原文不翻译\n- 检查语气是否匹配原文",
   "merge_system_prompt": "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。\n判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。\n输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }\n不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。",
   "keyboard_guidance": "检测到预设的键盘按键，建议保留原文。",
