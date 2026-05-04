@@ -403,12 +403,11 @@ class LLMBridge:
         async def _process(i: int, prompt: str) -> list[dict[str, Any]]:
             async with sem:
                 try:
-                    print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens)...",
-                          end=" ", flush=True, file=sys.stderr)
                     loop = asyncio.get_running_loop()
                     response = await loop.run_in_executor(None, self.llm_call, prompt)
                     parsed = parse_review_response(response)
-                    print(f"→ {len(parsed)} verdicts", file=sys.stderr)
+                    print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
+                          file=sys.stderr)
                     for v in parsed:
                         v.setdefault("source", "llm_review")
                         v.setdefault("en_current", "")
@@ -417,7 +416,7 @@ class LLMBridge:
                         v.setdefault("reason", "")
                     return parsed
                 except Exception as e:
-                    print(f"✗ {e}", file=sys.stderr)
+                    print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
                     return [{
                         "key": "", "en_current": "", "zh_current": "",
                         "verdict": "🔶 REVIEW", "suggestion": "",
