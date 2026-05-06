@@ -102,6 +102,7 @@ class ReviewPipeline:
                 "en": entry["en"],
                 "zh": entry["zh"],
                 "namespace": entry.get("namespace", ""),
+                "format": entry.get("format", "json"),
                 "_change": {
                     "old_en": entry.get("old_en", ""),
                     "old_zh": entry.get("old_zh", ""),
@@ -161,7 +162,8 @@ class ReviewPipeline:
 
         print("[Phase 1] 键对齐...")
         warnings: list[str] = []
-        if str(self.en_path).endswith(".lang"):
+        is_lang = str(self.en_path).endswith(".lang")
+        if is_lang:
             self.en_data, en_w = load_lang(str(self.en_path))
             self.zh_data, zh_w = load_lang(str(self.zh_path))
             warnings.extend(f"[EN] {w}" for w in en_w)
@@ -174,6 +176,10 @@ class ReviewPipeline:
         for w in warnings:
             print(f"  {w}")
         self.alignment = align_keys(self.en_data, self.zh_data)
+        # 注入 format 字段
+        fmt = "lang" if is_lang else "json"
+        for e in self.alignment.get("matched_entries", []):
+            e["format"] = fmt
 
         stats = self.alignment["stats"]
         print(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | ⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
@@ -192,11 +198,14 @@ class ReviewPipeline:
         """执行术语提取、归并、构建术语表、一致性检查。"""
         print("[Phase 2] 术语提取与一致性检查...")
 
-        cache_path = "lemma_cache.json"  # 项目根目录，可提交共享
+        # 过滤 GuideME 条目，术语只从 lang/json 中提取
+        lang_en = {k: v for k, v in self.en_data.items() if not k.startswith("ae2guide:")}
+        lang_zh = {k: v for k, v in self.zh_data.items() if not k.startswith("ae2guide:")}
+
+        cache_path = "lemma_cache.json"
         tb = TerminologyBuilder(cache_path=cache_path)
-        tb.load(self.en_data, self.zh_data, self.alignment)
+        tb.load(lang_en, lang_zh, self.alignment)
         tb.extract(min_freq=2, max_ngram=3)
-        # 缓存查表 → 模糊聚类 → 纯程序提取术语表
         tb.merge_lemmas(llm_call=self.llm_call)
         self.glossary = tb.build_glossary()
         self.term_verdicts = tb.check_consistency()

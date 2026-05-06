@@ -109,7 +109,7 @@ def align(
         if not en_changed and not zh_changed:
             continue
 
-        entry: dict[str, Any] = {"key": key, "en": n_en, "zh": n_zh}
+        entry: dict[str, Any] = {"key": key, "en": n_en, "zh": n_zh, "format": "json"}
 
         if en_changed and zh_changed:
             review_type = "normal"

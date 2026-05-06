@@ -88,6 +88,7 @@ def align(
             "en": new_en,
             "zh": new_zh,
             "namespace": g["namespace"],
+            "format": "guideme",
         }
         if en_changed:
             entry["old_en"] = old_en
