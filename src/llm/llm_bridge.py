@@ -414,7 +414,7 @@ def parse_review_response(response: str) -> list[dict[str, Any]]:
         if line.startswith("{") and line.endswith("}"):
             try:
                 obj = json.loads(line)
-                if "key" in obj and "verdict" in obj:
+                if "key" in obj and ("verdict" in obj or "action" in obj):
                     results.append(obj)
             except json.JSONDecodeError:
                 continue
