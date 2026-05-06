@@ -1,5 +1,5 @@
 {
-  "_note": "翻译审校配置文件。修改后无需改代码。",
+  "_note": "翻译审校配置文件。修改后无需改代码。多行文本可用字符串数组替代 \\n 转义。",
   "pr_change_context_prompt": "这是一个 PR review，每个人翻译风格不一样，注意审查不必要的更改。",
   "desc_key_suffixes": [
     ".desc", ".description", ".lore", ".tooltip",
@@ -33,11 +33,32 @@
     "subtitles.", "sound.", "book.", "entity.", "effect.", "potion."
   ],
   "default_review_focus": "翻译需准确自然; 术语一致; 匹配语境",
-  "style_reference": "- 物品名: 材质+核心名词, e.g. \"铁盾牌\"\n- 咒语名: 4-6字文学感, e.g. \"守护咒文\"\n- 界面: 直白功能性, e.g. \"耐久度: %d\"\n- 告警: 简短直接, e.g. \"无法在此使用\"\n- 声音字幕: 主体：声音 (全角冒号)\n- 键盘键/能量单位: 保留原文 (Shift, Ctrl, FE, RF)",
+  "style_reference": [
+    "- 物品名: 材质+核心名词, e.g. \"铁盾牌\"",
+    "- 咒语名: 4-6字文学感, e.g. \"守护咒文\"",
+    "- 界面: 直白功能性, e.g. \"耐久度: %d\"",
+    "- 告警: 简短直接, e.g. \"无法在此使用\"",
+    "- 声音字幕: 主体：声音 (全角冒号)",
+    "- 键盘键/能量单位: 保留原文 (Shift, Ctrl, FE, RF)"
+  ],
   "review_system_prompt": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。",
-  "review_instruction": "对每条输出: {\"key\": \"条目的key值\", \"verdict\": \"PASS/⚠️ SUGGEST/🔶 REVIEW/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"审校理由\"}\nPASS条目不输出。仅输出JSON数组。key字段请使用条目中key字段的值（如 gui.crazyae2addons.save），不得编造或使用#1、#2等序号。",
-  "review_principles": "- 以原文为准,逐词理解后评价译文\n- 禁止过度发挥,风格差异过大标记🔶 REVIEW或❌ FAIL\n- 禁止不适烂梗,直接❌ FAIL\n- 专有名词保留原文不翻译\n- 检查语气是否匹配原文",
-  "merge_system_prompt": "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。\n判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。\n输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }\n不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。",
+  "review_instruction": [
+    "对每条输出: {\"key\": \"条目的key值\", \"verdict\": \"PASS/⚠️ SUGGEST/🔶 REVIEW/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"审校理由\"}",
+    "PASS条目不输出。仅输出JSON数组。key字段请使用条目中key字段的值（如 gui.crazyae2addons.save），不得编造或使用#1、#2等序号。"
+  ],
+  "review_principles": [
+    "- 以原文为准,逐词理解后评价译文",
+    "- 禁止过度发挥,风格差异过大标记🔶 REVIEW或❌ FAIL",
+    "- 禁止不适烂梗,直接❌ FAIL",
+    "- 专有名词保留原文不翻译",
+    "- 检查语气是否匹配原文"
+  ],
+  "merge_system_prompt": [
+    "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。",
+    "判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。",
+    "输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }",
+    "不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。"
+  ],
   "keyboard_guidance": "检测到预设的键盘按键，建议保留原文。",
   "mouse_guidance": "检测到鼠标操作，注意使用“左键点击”、“右击”、“按住右键”等，而非“左键”、“右键”",
   "review_header_prefix": "你是Minecraft模组简中翻译审校专家",
@@ -60,6 +81,24 @@
   ],
   "max_workers": 8,
   "filter_system_prompt": "你是Minecraft模组翻译审校专家。以下是自动检查+LLM审校后汇总的翻译问题列表。请判断每条问题是否确实需要提出：过滤掉误报、过度严格、或对游戏体验无实际影响的问题。",
-  "filter_instruction": "对每条问题输出一个JSON对象:\n- 驳回: {\"key\": \"条目的key值\", \"action\": \"discard\", \"reason\": \"驳回理由\"}\n- 保留: {\"key\": \"条目的key值\", \"action\": \"keep\", \"reason\": \"清洗后的一句简练中文问题描述\"}\n仅输出JSON数组。\n\n判定标准：\n- 术语不一致但上下文合理（如Tag View Cell中tag不是「标签标准发信器」的意思）→ discard\n- 值相同但确为无需翻译的代码/数字/占位符 → discard\n- 标点/空格问题对玩家体验无实际影响 → discard\n- 自动检查建议「加空格」但中文排版无需 → discard\n- 真正的翻译错误（漏译、误译、语气不匹配）→ keep\n- 尾部空格不一致可能影响布局 → keep\n\nkeep条目的reason须：\n- 合并去重：同类问题合并为一句，去掉冗余的「术语不一致」等标签\n- 简洁准确：一段话讲清楚，不重复、不自相矛盾\n- 去除自动检查格式套话（如「值相同」「疑似未翻译」），改写为自然语言",
+  "filter_instruction": [
+    "对每条问题输出一个JSON对象:",
+    "- 驳回: {\"key\": \"条目的key值\", \"action\": \"discard\", \"reason\": \"驳回理由\"}",
+    "- 保留: {\"key\": \"条目的key值\", \"action\": \"keep\", \"reason\": \"清洗后的一句简练中文问题描述\"}",
+    "仅输出JSON数组。",
+    "",
+    "判定标准：",
+    "- 术语不一致但上下文合理（如Tag View Cell中tag不是「标签标准发信器」的意思）→ discard",
+    "- 值相同但确为无需翻译的代码/数字/占位符 → discard",
+    "- 标点/空格问题对玩家体验无实际影响 → discard",
+    "- 自动检查建议「加空格」但中文排版无需 → discard",
+    "- 真正的翻译错误（漏译、误译、语气不匹配）→ keep",
+    "- 尾部空格不一致可能影响布局 → keep",
+    "",
+    "keep条目的reason须：",
+    "- 合并去重：同类问题合并为一句，去掉冗余的「术语不一致」等标签",
+    "- 简洁准确：一段话讲清楚，不重复、不自相矛盾",
+    "- 去除自动检查格式套话（如「值相同」「疑似未翻译」），改写为自然语言"
+  ],
   "filter_batch_size": 50
 }

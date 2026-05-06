@@ -104,18 +104,22 @@ LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
 
 # ── Prompt / 引导文本（必填，缺失则报错）───
 
+def _as_text(val: str | list[str]) -> str:
+    """支持字符串或字符串数组两种格式，数组会被 join 成多行文本。"""
+    return "\n".join(val) if isinstance(val, list) else val
+
 # 未匹配前缀的默认审查重点
 DEFAULT_REVIEW_FOCUS: str = get("default_review_focus")
 # 风格参考（注入到每条 prompt）
-STYLE_REFERENCE: str = get("style_reference")
+STYLE_REFERENCE: str = _as_text(get("style_reference"))
 # LLM system prompt
 REVIEW_SYSTEM_PROMPT: str = get("review_system_prompt")
 # LLM 输出格式指令
-REVIEW_INSTRUCTION: str = get("review_instruction")
+REVIEW_INSTRUCTION: str = _as_text(get("review_instruction"))
 # 审校普适原则（注入到每条 prompt）
-REVIEW_PRINCIPLES: str = get("review_principles")
+REVIEW_PRINCIPLES: str = _as_text(get("review_principles"))
 # 术语归并 LLM system prompt
-MERGE_SYSTEM_PROMPT: str = get("merge_system_prompt")
+MERGE_SYSTEM_PROMPT: str = _as_text(get("merge_system_prompt"))
 # prompt 标题前缀
 REVIEW_HEADER_PREFIX: str = get("review_header_prefix")
 # 检测到键盘按键时的补充指南
@@ -126,5 +130,5 @@ MOUSE_GUIDANCE: str = get("mouse_guidance")
 # ── Phase 5: 最终 LLM 过滤 ──
 
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
-FILTER_INSTRUCTION: str = get("filter_instruction")
+FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
