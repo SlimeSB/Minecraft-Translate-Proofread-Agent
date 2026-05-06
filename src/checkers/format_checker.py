@@ -171,8 +171,10 @@ class FormatChecker:
         issues: list[str] = []
 
         # printf 占位符 (归一化: %1$s → %s)
-        en_printf = [_normalize_printf(p) for p in RE_PRINTF.findall(en)]
-        zh_printf = [_normalize_printf(p) for p in RE_PRINTF.findall(zh)]
+        en_printf = [_normalize_printf(p) for p in
+                     RE_PRINTF.findall(en) + RE_POSITIONAL_PRINTF.findall(en)]
+        zh_printf = [_normalize_printf(p) for p in
+                     RE_PRINTF.findall(zh) + RE_POSITIONAL_PRINTF.findall(zh)]
         if sorted(en_printf) != sorted(zh_printf):
             en_count = {p: en_printf.count(p) for p in set(en_printf)}
             zh_count = {p: zh_printf.count(p) for p in set(zh_printf)}

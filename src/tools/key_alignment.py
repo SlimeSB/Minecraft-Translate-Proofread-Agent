@@ -30,8 +30,15 @@
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+_RE_CODE_LIKE = re.compile(r"^[A-Z_]+$|^[0-9]+$|^[A-Za-z0-9_.-]+$|^§[0-9a-fA-F].*")
+
+
+def _is_code_or_proper_noun(text: str) -> bool:
+    return bool(_RE_CODE_LIKE.match(text.strip()))
 
 
 def load_json(path: str) -> dict:
@@ -60,6 +67,8 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
         en_val = entry["en"]
         zh_val = entry["zh"]
         if en_val == zh_val:
+            if _is_code_or_proper_noun(en_val):
+                continue
             if en_val == "":
                 reason = "均为空字符串"
             else:
