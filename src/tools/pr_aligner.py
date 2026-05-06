@@ -48,21 +48,30 @@ def _api_get(url: str, token: str = "") -> Any:
         raise RuntimeError(f"GitHub API 错误 {e.code}: {body}") from e
 
 
-def _raw_get(url: str, token: str = "") -> str:
-    """拉取 raw.githubusercontent.com 的文件内容。"""
+def _raw_get(url: str, token: str = "", retries: int = 3) -> str:
+    """拉取 raw.githubusercontent.com 的文件内容（带重试）。"""
     headers = _build_headers(token)
-    # raw 文件的 token 放在 URL 参数中
     if token:
         url += f"?token={token}"
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return ""  # 文件不存在
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Raw 文件错误 {e.code}: {body}") from e
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            timeout = 30 * attempt
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return ""  # 文件不存在
+            body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Raw 文件错误 {e.code}: {body}") from e
+        except (TimeoutError, urllib.error.URLError) as e:
+            last_err = e
+            if attempt < retries:
+                wait = attempt * 2
+                print(f"  [重试 {attempt}/{retries}] {url.split('/')[-1]} 超时，{wait}s 后重试...")
+                time.sleep(wait)
+    raise RuntimeError(f"Raw 文件拉取失败（重试{retries}次）: {last_err}")
 
 
 def _parse_lang_path(path: str) -> dict[str, str] | None:
