@@ -414,7 +414,7 @@ def parse_review_response(response: str) -> list[dict[str, Any]]:
         if line.startswith("{") and line.endswith("}"):
             try:
                 obj = json.loads(line)
-                if "key" in obj and ("verdict" in obj or "action" in obj):
+                if "key" in obj and "verdict" in obj:
                     results.append(obj)
             except json.JSONDecodeError:
                 continue
@@ -588,11 +588,11 @@ class LLMBridge:
                             k = item.get("key", "")
                             if not k:
                                 continue
-                            if item.get("action") == "pass":
+                            if item.get("verdict") == "PASS":
                                 local_keys.add(k)
                                 local_records.append({"key": k, "reason": item.get("reason", "")})
                                 print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
-                            elif item.get("action") == "keep":
+                            elif item.get("verdict") == "keep":
                                 r = item.get("reason", "")
                                 if r:
                                     local_reasons[k] = r
