@@ -86,6 +86,8 @@ def run_pr_aligner(
         entries, warnings = _lang.align(old_en, new_en, old_zh, new_zh)
 
         if entries:
+            for e in entries:
+                e["namespace"] = slug
             result_mods[resolved_mod_key] = {
                 "mod_info": mi,
                 "entries": entries,

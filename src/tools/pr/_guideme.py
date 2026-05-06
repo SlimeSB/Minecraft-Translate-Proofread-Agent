@@ -45,26 +45,29 @@ def align(
 
         rel_path = info["rel_path"]
         if rel_path not in groups:
-            groups[rel_path] = {"en_base": None, "en_head": None, "zh_base": None, "zh_head": None}
+            groups[rel_path] = {"paths": {"en_base": None, "en_head": None, "zh_base": None, "zh_head": None}, "namespace": info["slug"]}
+        g = groups[rel_path]
 
         status = f.get("status", "modified")
         slot_base = "zh_base" if info["is_zh"] else "en_base"
         slot_head = "zh_head" if info["is_zh"] else "en_head"
 
         if status != "removed":
-            groups[rel_path][slot_head] = filename
+            g["paths"][slot_head] = filename
         if status not in ("added", "renamed", "copied") and "removed" not in status:
-            groups[rel_path][slot_base] = filename
+            g["paths"][slot_base] = filename
 
     # 对每个页面，如果只有 en 没有 zh，从 en 路径推导 zh 路径
-    for rel_path, paths in groups.items():
+    for rel_path, g in groups.items():
+        paths = g["paths"]
         if paths["zh_head"] is None and paths["en_head"]:
             paths["zh_head"] = paths["en_head"].replace("/ae2guide/", "/ae2guide/_zh_cn/")
         if paths["zh_base"] is None and paths["en_base"]:
             paths["zh_base"] = paths["en_base"].replace("/ae2guide/", "/ae2guide/_zh_cn/")
 
     # 拉取文件内容并对齐
-    for rel_path, paths in groups.items():
+    for rel_path, g in groups.items():
+        paths = g["paths"]
         try:
             old_en = raw_get_fn(f"{raw_base}/{paths['en_base']}", token) if paths["en_base"] else ""
             new_en = raw_get_fn(f"{raw_head}/{paths['en_head']}", token) if paths["en_head"] else ""
@@ -84,6 +87,7 @@ def align(
             "key": f"ae2guide:{rel_path}",
             "en": new_en,
             "zh": new_zh,
+            "namespace": g["namespace"],
         }
         if en_changed:
             entry["old_en"] = old_en
