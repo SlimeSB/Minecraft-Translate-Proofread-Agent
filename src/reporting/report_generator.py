@@ -114,12 +114,10 @@ class ReportGenerator:
         failed = sum(1 for v in self.verdicts if v.get("verdict") == "❌ FAIL")
         suggest = sum(1 for v in self.verdicts if v.get("verdict") == "⚠️ SUGGEST")
         review = sum(1 for v in self.verdicts if v.get("verdict") == "🔶 REVIEW")
-        passed = total - len(self.verdicts)  # 不在 verdicts 中的即 PASS
-        # 如果有些 PASS 在 verdicts 中显式声明
-        explicit_pass = sum(1 for v in self.verdicts if v.get("verdict") == "PASS")
+        passed = total - failed - suggest - review
         self.stats = {
             "total": total,
-            "PASS": max(passed, explicit_pass),
+            "PASS": passed,
             "⚠️ SUGGEST": suggest,
             "❌ FAIL": failed,
             "🔶 REVIEW": review,
