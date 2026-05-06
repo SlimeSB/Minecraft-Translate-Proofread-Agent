@@ -6,14 +6,29 @@
     python run.py --en en_us.json --zh zh_cn.json -o ./output/ --no-llm
     python run.py --en en_us.json --zh zh_cn.json -o ./output/ --interactive
 
-LLM 配置（通过环境变量）:
+LLM 配置（通过 .env 或环境变量）:
     REVIEW_OPENAI_API_KEY    必需，OpenAI 兼容 API key（DeepSeek 等）
     REVIEW_OPENAI_BASE_URL   可选，默认 https://api.deepseek.com
     REVIEW_OPENAI_MODEL      可选，默认 deepseek-v4-flash
+    GITHUB_TOKEN             可选，GitHub API Token（避免限流）
 """
 import argparse
 import os
 import sys
+
+# 加载 .env 文件（若存在）
+_ENV_PATH = ".env"
+if os.path.exists(_ENV_PATH):
+    with open(_ENV_PATH, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#"):
+                continue
+            if "=" in _line:
+                _k, _v = _line.split("=", 1)
+                _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
 
 # 强制 UTF-8 输出（兼容 Windows GBK 终端）。
 # 仅在 stdout 是终端时 reconfigure（管道场景会破坏 PowerShell 的 OutputEncoding）。
@@ -45,8 +60,8 @@ def main() -> None:
                         help="PR 编号（PR 模式，--repo 可省略默认读配置）")
     parser.add_argument("--repo", default=None,
                         help="GitHub 仓库名，默认从配置读取")
-    parser.add_argument("--token", default="",
-                        help="GitHub Token（可选，公共仓库限流 60 req/hr）")
+    parser.add_argument("--token", default=None,
+                        help="GitHub Token，默认从 GITHUB_TOKEN 环境变量读取")
     parser.add_argument("--pr-alignment", default=None,
                         help="已保存的 PR 对齐 JSON 文件路径（跳过拉取步骤）")
 
@@ -153,11 +168,12 @@ def main() -> None:
     elif is_pr:
         # 调用 PR 对齐器
         from src.tools.pr import run_pr_aligner
+        github_token = args.token or os.environ.get("GITHUB_TOKEN", "")
         align_output = run_pr_aligner(
             repo=args.repo,
             pr=args.pr,
             output_dir=args.output_dir,
-            token=args.token,
+            token=github_token,
         )
         import json as _json_al2
         with open(align_output, "r", encoding="utf-8") as _f:

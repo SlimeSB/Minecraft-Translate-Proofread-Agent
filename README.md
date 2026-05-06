@@ -40,12 +40,13 @@ pip install openai
 cp .env.example .env
 ```
 
-编辑 `.env` 填入 API 密钥：
+编辑 `.env` 填入密钥（启动时自动加载，无需手动 source）：
 
 ```
 REVIEW_OPENAI_API_KEY=sk-your-key-here
 REVIEW_OPENAI_BASE_URL=https://api.deepseek.com/
 REVIEW_OPENAI_MODEL=deepseek-v4-flash
+GITHUB_TOKEN=ghp_your_token_here
 ```
 
 ## 用法
