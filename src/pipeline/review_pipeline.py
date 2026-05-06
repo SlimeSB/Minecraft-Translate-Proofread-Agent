@@ -410,6 +410,7 @@ class ReviewPipeline:
 
         review_path = self.output_dir / "06_review_report.json"
         rg.generate_review_report(str(review_path))
+        rg.generate_markdown_report(str(self.output_dir / "report.md"))
 
         # 如果有 namespace 信息，按 namespace 拆分报告
         ns_map: dict[str, list[dict[str, Any]]] = {}
@@ -437,6 +438,7 @@ class ReviewPipeline:
                 ns_report = ns_dir / ns / "06_review_report.json"
                 ns_report.parent.mkdir(parents=True, exist_ok=True)
                 ns_rg.generate_review_report(str(ns_report))
+                ns_rg.generate_markdown_report(str(ns_report.parent / "report.md"), ns)
             print(f"  按 namespace 拆分: {len(ns_map)} 组 → {ns_dir}")
 
         print(f"  审校报告: {review_path}")

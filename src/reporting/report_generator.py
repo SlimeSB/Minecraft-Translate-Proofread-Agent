@@ -256,6 +256,37 @@ class ReportGenerator:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(annotated, f, ensure_ascii=False, indent=2)
 
+    def generate_markdown_report(self, output_path: str, namespace: str = "") -> None:
+        """生成可读的 Markdown 审校报告。"""
+        if not self.stats:
+            self.compute_stats()
+
+        lines: list[str] = []
+        lines.append(f"# 审校报告{f' — {namespace}' if namespace else ''}")
+        lines.append("")
+        lines.append("| 判定 | Key | 原文 | 译文 | 建议 | 问题 |")
+        lines.append("|------|-----|------|------|------|------|")
+
+        for v in self.verdicts:
+            verdict = v.get("verdict", "")
+            if verdict == "PASS":
+                continue
+            key = v.get("key", "")
+            en = (v.get("en_current", "") or "")[:60]
+            zh = (v.get("zh_current", "") or "")[:60]
+            suggestion = (v.get("suggestion", "") or "")[:60]
+            reason = (v.get("reason", "") or "")[:80]
+            lines.append(f"| {verdict} | `{key}` | {en} | {zh} | {suggestion} | {reason} |")
+
+        lines.append("")
+        s = self.stats
+        lines.append(f"- 总计 {s['total']} 条 | PASS {s['PASS']} | ⚠️ SUGGEST {s['⚠️ SUGGEST']} | ❌ FAIL {s['❌ FAIL']} | 🔶 REVIEW {s['🔶 REVIEW']}")
+
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
     def print_summary(self) -> None:
         """打印审校摘要。"""
         if not self.stats:

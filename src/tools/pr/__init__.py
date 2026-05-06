@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -110,16 +111,29 @@ def run_pr_aligner(
             "entries": guideme_entries,
         }
 
-    # Step 5: 按 namespace 分组
-    from collections import defaultdict
-    ns_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # Step 5: 过滤纯删除条目（en/zh 均为空但 old 有值）
+    deletions: dict[str, int] = defaultdict(int)
+    real_entries: list[dict[str, Any]] = []
     for e in all_entries:
+        if e.get("en", "") == "" and e.get("zh", "") == "" and (e.get("old_en") or e.get("old_zh")):
+            ns = e.get("namespace", "__unknown__")
+            deletions[ns] += 1
+        else:
+            real_entries.append(e)
+
+    for ns, count in sorted(deletions.items()):
+        if count > 5:
+            print(f"  ⚠ [{ns}] 发现 {count} 条删除条目（key已移除），旧版本使用该模组翻译可能出现key缺失，注意兼容性")
+
+    # Step 6: 按 namespace 分组
+    ns_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in real_entries:
         ns = e.get("namespace", "__unknown__")
         ns_groups[ns].append(e)
 
-    # Step 6: 统计
-    en_changed_count = sum(1 for e in all_entries if "old_en" in e)
-    zh_changed_count = sum(1 for e in all_entries if "old_zh" in e)
+    # Step 7: 统计
+    en_changed_count = sum(1 for e in real_entries if "old_en" in e)
+    zh_changed_count = sum(1 for e in real_entries if "old_zh" in e)
 
     result: dict[str, Any] = {
         "repo": repo,
@@ -127,11 +141,13 @@ def run_pr_aligner(
         "base_sha": base_sha,
         "head_sha": head_sha,
         "mods": result_mods,
-        "all_entries": all_entries,
+        "all_entries": real_entries,
         "all_warnings": all_warnings,
+        "deletions": dict(deletions),
         "namespaces": {ns: {"count": len(entries), "entries": entries} for ns, entries in ns_groups.items()},
         "stats": {
-            "total_changed_keys": len(all_entries),
+            "total_changed_keys": len(real_entries),
+            "deleted_keys": sum(deletions.values()),
             "en_changed": en_changed_count,
             "zh_changed": zh_changed_count,
             "zh_unchanged_warnings": len(all_warnings),
