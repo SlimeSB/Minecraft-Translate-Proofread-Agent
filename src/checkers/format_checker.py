@@ -202,12 +202,12 @@ class FormatChecker:
         en_brace = RE_BRACE_VAR.findall(en)
         zh_brace = RE_BRACE_VAR.findall(zh)
         if sorted(en_brace) != sorted(zh_brace):
-            missing = [p for p in en_brace if p not in zh_brace]
-            extra = [p for p in zh_brace if p not in en_brace]
-            if missing:
-                issues.append(f"缺失变量: {{{', {'.join(missing)}}}")
-            if extra:
-                issues.append(f"多余变量: {{{', {'.join(extra)}}}")
+            missing_brace = [p for p in en_brace if p not in zh_brace]
+            extra_brace = [p for p in zh_brace if p not in en_brace]
+            if missing_brace:
+                issues.append(f"缺失变量: {{{'}, {'.join(missing_brace)}}}")
+            if extra_brace:
+                issues.append(f"多余变量: {{{'}, {'.join(extra_brace)}}}")
 
         if issues:
             return self._verdict(key, en, zh, "❌ FAIL",
