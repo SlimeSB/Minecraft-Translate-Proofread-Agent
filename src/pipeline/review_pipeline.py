@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 # 复用现有模块
-from src.tools.key_alignment import align_keys, load_json
+from src.tools.key_alignment import align_keys, load_json, load_json_clean
 from src.checkers.format_checker import FormatChecker
 from src.checkers.terminology_builder import TerminologyBuilder
 from src.tools.fuzzy_search import fuzzy_search_lines
@@ -158,8 +158,12 @@ class ReviewPipeline:
             return self.alignment
 
         print("[Phase 1] 键对齐...")
-        self.en_data = load_json(str(self.en_path))
-        self.zh_data = load_json(str(self.zh_path))
+        self.en_data, en_warnings = load_json_clean(str(self.en_path))
+        self.zh_data, zh_warnings = load_json_clean(str(self.zh_path))
+        for w in en_warnings:
+            print(f"  [EN] {w}")
+        for w in zh_warnings:
+            print(f"  [ZH] {w}")
         self.alignment = align_keys(self.en_data, self.zh_data)
 
         stats = self.alignment["stats"]
