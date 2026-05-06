@@ -92,14 +92,17 @@ class LLMBridge:
             fuzzy_results_map, batch_size, merged_context=merged,
         )
 
-        async def _run_all() -> list[dict[str, Any]]:
+        async def _run_all() -> list[VerdictDict]:
             sem = asyncio.Semaphore(max_workers)
 
-            async def _process(i: int, prompt: str) -> list[dict[str, Any]]:
+            async def _process(i: int, prompt: str) -> list[VerdictDict]:
                 async with sem:
                     try:
                         loop = asyncio.get_running_loop()
                         response = await loop.run_in_executor(None, self.llm_call, prompt)
+                        # 检测非 JSON 响应（如 HTML 404 页面）
+                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
                         parsed = parse_review_response(response)
                         print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
                               file=sys.stderr)
@@ -113,13 +116,13 @@ class LLMBridge:
                     except Exception as e:
                         print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
                         return [{
-                            "key": "", "en_current": "", "zh_current": "",
+                            "key": "__llm_error__", "en_current": "", "zh_current": "",
                             "verdict": "🔶 REVIEW", "suggestion": "",
-                            "reason": f"LLM调用失败: {e}", "source": "llm_error",
+                            "reason": f"LLM调用失败 (批次{i+1}): {e}", "source": "llm_error",
                         }]
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
-            results: list[dict[str, Any]] = []
+            results: list[VerdictDict] = []
             for coro in asyncio.as_completed(tasks):
                 results.extend(await coro)
             return results
@@ -155,6 +158,8 @@ class LLMBridge:
                     try:
                         loop = asyncio.get_running_loop()
                         response = await loop.run_in_executor(None, _call, prompt)
+                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
                         parsed = parse_review_response(response)
                         local_keys: set[str] = set()
                         local_records: list[FilterDiscardRecord] = []

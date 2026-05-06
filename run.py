@@ -57,7 +57,12 @@ def _check_api(base_url: str, api_key: str) -> bool:
     import urllib.error
     import urllib.request
 
-    models_url = base_url.rstrip("/") + "/models"
+    # OpenAI SDK 会自动追加 /chat/completions，不要把路径写在 base_url 里
+    base_url = base_url.rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[: -len("/chat/completions")]
+
+    models_url = base_url + "/models"
     headers = {"User-Agent": "MinecraftTranslateProofreadAgent/1.0"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -80,7 +85,7 @@ def _check_api(base_url: str, api_key: str) -> bool:
         return False
 
     # /models 不可用时用 chat/completions 做一个最小请求验证连通性
-    chat_url = base_url.rstrip("/") + "/chat/completions"
+    chat_url = base_url + "/chat/completions"
     body = json.dumps({
         "model": os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash"),
         "messages": [{"role": "user", "content": "ping"}],

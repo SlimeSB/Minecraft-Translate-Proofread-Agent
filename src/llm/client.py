@@ -19,6 +19,12 @@ def create_openai_llm_call(
     if system_prompt is None:
         from src import config as _cfg
         system_prompt = _cfg.REVIEW_SYSTEM_PROMPT
+
+    # OpenAI SDK 会自动追加 /chat/completions，不要让它重复
+    base_url = base_url.rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[: -len("/chat/completions")]
+
     try:
         from openai import OpenAI
     except ImportError:
