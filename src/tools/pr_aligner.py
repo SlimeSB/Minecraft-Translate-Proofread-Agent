@@ -23,6 +23,11 @@ _LANG_PATH_RE = re.compile(
     r"^projects/([^/]+)/assets/([^/]+)/([^/]+)/lang/(en_us|zh_cn)\.json$"
 )
 
+# GuideME 路径正则：projects/{version}/assets/{curseforge_id}/{slug}/ae2guide/[...].md
+_GUIDEME_PATH_RE = re.compile(
+    r"^projects/([^/]+)/assets/([^/]+)/([^/]+)/ae2guide/(_zh_cn/)?(.+\.md)$"
+)
+
 _USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"
 
 
@@ -211,6 +216,95 @@ def _align_mod_entries(
     return entries, warnings
 
 
+def _align_guideme_files(
+    changed_files: list[dict[str, Any]],
+    raw_base: str,
+    raw_head: str,
+    token: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """对齐 GuideME .md 文档文件（按相对路径匹配中英文）。"""
+    entries: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    # 按模组和相对路径分组
+    guideme_files: dict[str, dict[str, dict[str, str | None]]] = {}
+    for f in changed_files:
+        filename = f.get("filename", "")
+        m = _GUIDEME_PATH_RE.match(filename)
+        if not m:
+            continue
+        version, curseforge_id, slug, zh_prefix, rel_path = m.groups()
+        mod_key = f"{version}/{curseforge_id}/{slug}"
+        if mod_key not in guideme_files:
+            guideme_files[mod_key] = {}
+        if rel_path not in guideme_files[mod_key]:
+            guideme_files[mod_key][rel_path] = {"en_base": None, "en_head": None, "zh_base": None, "zh_head": None}
+
+        status = f.get("status", "modified")
+        base_path = f"projects/{version}/assets/{curseforge_id}/{slug}/ae2guide"
+        is_zh = bool(zh_prefix)
+
+        if is_zh:
+            if status != "removed":
+                guideme_files[mod_key][rel_path]["zh_head"] = filename
+            if status not in ("added", "renamed", "copied") and "removed" not in status:
+                guideme_files[mod_key][rel_path]["zh_base"] = filename
+        else:
+            if status != "removed":
+                guideme_files[mod_key][rel_path]["en_head"] = filename
+            if status not in ("added", "renamed", "copied") and "removed" not in status:
+                guideme_files[mod_key][rel_path]["en_base"] = filename
+
+    for mod_key, pages in guideme_files.items():
+        version, curseforge_id, slug = mod_key.split("/", 2)
+        base_path = f"projects/{version}/assets/{curseforge_id}/{slug}/ae2guide"
+
+        for rel_path, paths in pages.items():
+            en_path = f"{base_path}/{rel_path}"
+            zh_path = f"{base_path}/_zh_cn/{rel_path}"
+
+            try:
+                old_en = _raw_get(f"{raw_base}/{en_path}", token) if paths["en_base"] else ""
+                new_en = _raw_get(f"{raw_head}/{en_path}", token) if paths["en_head"] else ""
+                old_zh = _raw_get(f"{raw_base}/{zh_path}", token) if paths["zh_base"] else ""
+                new_zh = _raw_get(f"{raw_head}/{zh_path}", token) if paths["zh_head"] else ""
+            except RuntimeError as e:
+                warnings.append({"key": rel_path, "type": "fetch_error", "message": str(e)})
+                continue
+
+            en_changed = (old_en != new_en)
+            zh_changed = (old_zh != new_zh)
+
+            if not en_changed and not zh_changed:
+                continue
+
+            entry: dict[str, Any] = {
+                "key": f"ae2guide:{rel_path}",
+                "en": new_en,
+                "zh": new_zh,
+            }
+            if en_changed:
+                entry["old_en"] = old_en
+                if not zh_changed and old_en.strip():
+                    warnings.append({
+                        "key": entry["key"],
+                        "type": "en_changed_zh_unchanged",
+                        "message": f"GuideME原文变更但翻译未跟随: {rel_path}",
+                    })
+            if zh_changed:
+                entry["old_zh"] = old_zh
+
+            review_type = "normal"
+            if en_changed and not zh_changed:
+                review_type = "en_changed_zh_unchanged"
+            elif zh_changed and not en_changed:
+                review_type = "zh_only_change"
+            entry["review_type"] = review_type
+            entries.append(entry)
+
+    return entries, warnings
+
+
 def run_pr_aligner(
     repo: str,
     pr: int,
@@ -317,6 +411,19 @@ def run_pr_aligner(
 
         time.sleep(0.1)  # 限流
 
+    # Step 4.5: GuideME 文档对齐
+    guideme_entries, guideme_warnings = _align_guideme_files(
+        all_changed_files, raw_base, raw_head, token,
+    )
+    if guideme_entries:
+        print(f"  GuideME 文档: {len(guideme_entries)} 条变更")
+        all_entries.extend(guideme_entries)
+        all_warnings.extend(guideme_warnings)
+        result_mods["__guideme__"] = {
+            "mod_info": {"version": "", "curseforge_id": "", "slug": ""},
+            "entries": guideme_entries,
+        }
+
     # Step 5: 统计
     en_changed_count = sum(1 for e in all_entries if "old_en" in e)
     zh_changed_count = sum(1 for e in all_entries if "old_zh" in e)
@@ -337,6 +444,7 @@ def run_pr_aligner(
             "zh_changed": zh_changed_count,
             "en_unchanged_zh_changed": en_unchanged_zh_changed,
             "zh_unchanged_warnings": zh_unchanged_warnings,
+            "guideme_entries": len(guideme_entries),
         },
     }
 

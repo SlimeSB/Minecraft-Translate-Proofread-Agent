@@ -36,6 +36,7 @@ _KNOWN_KEYS: set[str] = {
     "filter_instruction",
     "filter_batch_size",
     "pr_change_context_prompt",
+    "default_pr_repo",
 }
 
 
@@ -132,3 +133,7 @@ MOUSE_GUIDANCE: str = get("mouse_guidance")
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
 FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
+
+# ── PR 模式 ──
+
+DEFAULT_PR_REPO: str = get("default_pr_repo", "CFPAOrg/Minecraft-Mod-Language-Package")

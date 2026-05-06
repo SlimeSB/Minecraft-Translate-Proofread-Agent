@@ -22,6 +22,7 @@ if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
 
 from src.pipeline.review_pipeline import ReviewPipeline
 from src.llm.llm_bridge import create_openai_llm_call
+from src import config as cfg
 
 
 def main() -> None:
@@ -41,9 +42,9 @@ def main() -> None:
 
     # PR 模式参数
     parser.add_argument("--pr", type=int, default=None,
-                        help="PR 编号（PR 模式）")
+                        help="PR 编号（PR 模式，--repo 可省略默认读配置）")
     parser.add_argument("--repo", default=None,
-                        help="GitHub 仓库名，如 CFPAOrg/Minecraft-Mod-Language-Package")
+                        help="GitHub 仓库名，默认从配置读取")
     parser.add_argument("--token", default="",
                         help="GitHub Token（可选，公共仓库限流 60 req/hr）")
     parser.add_argument("--pr-alignment", default=None,
@@ -68,11 +69,14 @@ def main() -> None:
 
     # 参数互斥：传统模式 vs PR 模式
     is_traditional = bool(args.en and args.zh)
-    is_pr = bool(args.pr and args.repo)
+    is_pr = bool(args.pr)
     is_pr_alignment = bool(args.pr_alignment)
 
     if not is_traditional and not is_pr and not is_pr_alignment:
-        parser.error("请提供 --en/--zh（传统模式）或 --pr/--repo（PR 模式）或 --pr-alignment")
+        parser.error("请提供 --en/--zh（传统模式）或 --pr（PR 模式）或 --pr-alignment")
+
+    if is_pr:
+        args.repo = args.repo or cfg.DEFAULT_PR_REPO
 
     if is_traditional:
         if not os.path.exists(args.en):
