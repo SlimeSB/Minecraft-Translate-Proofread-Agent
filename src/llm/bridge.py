@@ -56,8 +56,13 @@ def parse_review_response(response: str) -> list[dict[str, Any]]:
 
 class LLMBridge:
 
-    def __init__(self, llm_call: LLMCallable | None = None):
+    def __init__(
+        self,
+        llm_call: LLMCallable | None = None,
+        filter_llm_call: LLMCallable | None = None,
+    ):
         self.llm_call = llm_call
+        self.filter_llm_call = filter_llm_call
 
     # ── 批量审校 ──────────────────────────────────────
 
@@ -122,7 +127,8 @@ class LLMBridge:
         batch_size: int | None = None,
         max_workers: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-        if not self.llm_call:
+        _call = self.filter_llm_call or self.llm_call
+        if not _call:
             return verdicts, []
         if batch_size is None:
             batch_size = cfg.FILTER_BATCH_SIZE
@@ -141,7 +147,7 @@ class LLMBridge:
                 async with sem:
                     try:
                         loop = asyncio.get_running_loop()
-                        response = await loop.run_in_executor(None, self.llm_call, prompt)
+                        response = await loop.run_in_executor(None, _call, prompt)
                         parsed = parse_review_response(response)
                         local_keys: set[str] = set()
                         local_records: list[dict[str, str]] = []

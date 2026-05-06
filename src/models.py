@@ -58,6 +58,7 @@ class PipelineContext:
 
     # ── LLM 回调 ──
     llm_call: Callable[[str], str] | None = None
+    filter_llm_call: Callable[[str], str] | None = None  # Phase 5 用，独立 system_prompt
 
     # ── 运行选项 ──
     no_llm: bool = False

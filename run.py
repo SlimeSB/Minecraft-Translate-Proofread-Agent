@@ -248,6 +248,7 @@ def main() -> None:
 
     # ── 构建 LLM 调用 ──
     llm_call = None
+    filter_llm_call = None
     if not args.no_llm and not args.interactive and not args.dry_run:
         api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
         base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
@@ -260,13 +261,18 @@ def main() -> None:
             if not _check_api(base_url, api_key):
                 print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
                 print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
-            llm_call = create_openai_llm_call(api_key, model, base_url)
+            llm_call = create_openai_llm_call(api_key, model, base_url,
+                                                 system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
+            filter_llm_call = create_openai_llm_call(api_key, model, base_url,
+                                                       system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                                       log_dir="logs/filter")
 
     pipeline = ReviewPipeline(
         en_path=args.en or "",
         zh_path=args.zh or "",
         output_dir=args.output_dir,
         llm_call=llm_call,
+        filter_llm_call=filter_llm_call,
         no_llm=args.no_llm,
         interactive=args.interactive,
         dry_run=args.dry_run,

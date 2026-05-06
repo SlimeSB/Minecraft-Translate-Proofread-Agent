@@ -33,7 +33,7 @@ def run_phase5(ctx: PipelineContext) -> None:
         print("  (仅 GuideME 条目，无需过滤)")
         return
 
-    bridge = LLMBridge(ctx.llm_call)
+    bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
     filtered, discard_records = bridge.filter_verdicts(review_verdicts)
     removed = len(discard_records)
     print(f"  驳回 {removed} 条, 保留 {len(filtered)} 条")

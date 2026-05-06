@@ -11,9 +11,7 @@ from src import config as cfg
 # 键名前缀分组
 # ═══════════════════════════════════════════════════════════
 
-KEY_PREFIX_PROMPTS: dict[str, tuple[str, str]] = {
-    k: tuple(v) for k, v in cfg.KEY_PREFIX_PROMPTS.items()
-}
+KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = cfg.KEY_PREFIX_PROMPTS
 
 
 def group_prefix(key: str) -> str:
@@ -40,7 +38,7 @@ def classify_key(key: str) -> str:
     prefix = group_prefix(key)
     if prefix == "__default__":
         return "其他"
-    return KEY_PREFIX_PROMPTS.get(prefix, ("其他", ""))[0]
+    return KEY_PREFIX_PROMPTS.get(prefix, {}).get("label", "其他")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -85,7 +83,7 @@ LLM_REQUIRED_PREFIXES: set[str] = cfg.LLM_REQUIRED_PREFIXES
 LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 _RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
 
-STYLE_REFERENCE = cfg.STYLE_REFERENCE
+STYLE_REFERENCE = ""  # 暂无风格参考，可通过 llm.style_reference 配置
 
 
 def needs_llm_review(entry: dict[str, str]) -> bool:
@@ -247,7 +245,9 @@ def build_review_prompt(
     prompts: list[str] = []
     groups = classify_entries(entries)
     for prefix, group_entries in groups.items():
-        cat_label, focus_notes = KEY_PREFIX_PROMPTS.get(prefix, ("其他", cfg.DEFAULT_REVIEW_FOCUS))
+        info = KEY_PREFIX_PROMPTS.get(prefix, {})
+        cat_label = info.get("label", "其他")
+        focus_notes = info.get("focus", cfg.DEFAULT_REVIEW_FOCUS)
         effective_batch = 1 if prefix == "ae2guide:" else batch_size
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
