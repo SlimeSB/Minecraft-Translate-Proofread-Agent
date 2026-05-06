@@ -1,5 +1,6 @@
 {
   "_note": "翻译审校配置文件。修改后无需改代码。",
+  "pr_change_context_prompt": "这是一个 PR review，每个人翻译风格不一样，注意审查不必要的更改。",
   "desc_key_suffixes": [
     ".desc", ".description", ".lore", ".tooltip",
     ".flavor", ".info", ".message", ".text"

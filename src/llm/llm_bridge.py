@@ -270,12 +270,21 @@ def build_entry_block(
     zh = full_zh or entry.get("zh", "")
 
     lines = [f"key: `{key}`"]
+
     if full_en:
         lines.append(f'EN (完整上下文): "{en[:600]}"')
         lines.append(f'ZH (完整上下文): "{zh[:600]}"')
     else:
         lines.append(f'EN: "{en[:300]}"')
         lines.append(f'ZH: "{zh[:300]}"')
+
+    # PR 模式：追加变更字段（只加可选的 old 字段）
+    change = entry.get("_change")
+    if change:
+        if change.get("old_en"):
+            lines.append(f'old_en: "{change["old_en"][:300]}"')
+        if change.get("old_zh"):
+            lines.append(f'old_zh: "{change["old_zh"][:300]}"')
 
     if auto_verdicts:
         for v in auto_verdicts:
@@ -337,6 +346,14 @@ def build_review_prompt(
 ## 普适原则
 {cfg.REVIEW_PRINCIPLES}
 """
+
+            # PR 模式：如果批次中有变更条目，注入 PR 模式审校指南
+            has_change = any(
+                entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
+                for entry in batch
+            )
+            if has_change:
+                header += f"\n## PR 模式审校指南\n{cfg.get('pr_change_context_prompt', '')}\n"
 
             header += f"\n## 待审条目 ({len(batch)}条)\n"
             header += cfg.REVIEW_INSTRUCTION + "\n"

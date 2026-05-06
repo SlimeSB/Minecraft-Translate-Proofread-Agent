@@ -35,9 +35,20 @@ def main() -> None:
         """,
     )
 
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
+    parser.add_argument("--en", default=None, help="en_us.json 路径（传统模式必需）")
+    parser.add_argument("--zh", default=None, help="zh_cn.json 路径（传统模式必需）")
     parser.add_argument("-o", "--output-dir", default="./output", help="输出目录")
+
+    # PR 模式参数
+    parser.add_argument("--pr", type=int, default=None,
+                        help="PR 编号（PR 模式）")
+    parser.add_argument("--repo", default=None,
+                        help="GitHub 仓库名，如 CFPAOrg/Minecraft-Mod-Language-Package")
+    parser.add_argument("--token", default="",
+                        help="GitHub Token（可选，公共仓库限流 60 req/hr）")
+    parser.add_argument("--pr-alignment", default=None,
+                        help="已保存的 PR 对齐 JSON 文件路径（跳过拉取步骤）")
+
     parser.add_argument("--no-llm", action="store_true",
                         help="跳过 LLM 审校")
     parser.add_argument("--interactive", action="store_true",
@@ -55,12 +66,21 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.en):
-        print(f"错误: EN 文件不存在: {args.en}", file=sys.stderr)
-        sys.exit(1)
-    if not os.path.exists(args.zh):
-        print(f"错误: ZH 文件不存在: {args.zh}", file=sys.stderr)
-        sys.exit(1)
+    # 参数互斥：传统模式 vs PR 模式
+    is_traditional = bool(args.en and args.zh)
+    is_pr = bool(args.pr and args.repo)
+    is_pr_alignment = bool(args.pr_alignment)
+
+    if not is_traditional and not is_pr and not is_pr_alignment:
+        parser.error("请提供 --en/--zh（传统模式）或 --pr/--repo（PR 模式）或 --pr-alignment")
+
+    if is_traditional:
+        if not os.path.exists(args.en):
+            print(f"错误: EN 文件不存在: {args.en}", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.exists(args.zh):
+            print(f"错误: ZH 文件不存在: {args.zh}", file=sys.stderr)
+            sys.exit(1)
 
     # ── filter-only 模式：仅重跑 Phase 5 ──
     if args.filter_only:
@@ -114,6 +134,32 @@ def main() -> None:
             print(f"  已更新: {review_path}")
         sys.exit(0)
 
+    # ── PR 模式逻辑 ──
+    pr_alignment: dict | None = None
+
+    if is_pr_alignment:
+        # 从文件加载已有的 PR 对齐数据
+        print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
+        import json as _json_al
+        with open(args.pr_alignment, "r", encoding="utf-8") as _f:
+            pr_alignment = _json_al.load(_f)
+        print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
+              f"{len(pr_alignment.get('all_warnings', []))} 条警告")
+
+    elif is_pr:
+        # 调用 PR 对齐器
+        from src.tools.pr_aligner import run_pr_aligner
+        align_output = run_pr_aligner(
+            repo=args.repo,
+            pr=args.pr,
+            output_dir=args.output_dir,
+            token=args.token,
+        )
+        import json as _json_al2
+        with open(align_output, "r", encoding="utf-8") as _f:
+            pr_alignment = _json_al2.load(_f)
+
+    # ── 构建 LLM 调用 ──
     llm_call = None
     if not args.no_llm and not args.interactive and not args.dry_run:
         api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
@@ -125,8 +171,8 @@ def main() -> None:
             llm_call = create_openai_llm_call(api_key, model, base_url)
 
     pipeline = ReviewPipeline(
-        en_path=args.en,
-        zh_path=args.zh,
+        en_path=args.en or "",
+        zh_path=args.zh or "",
         output_dir=args.output_dir,
         llm_call=llm_call,
         no_llm=args.no_llm,
@@ -135,6 +181,7 @@ def main() -> None:
         min_term_freq=args.min_term_freq,
         fuzzy_threshold=args.fuzzy_threshold,
         batch_size=args.batch_size,
+        pr_alignment=pr_alignment,
     )
     pipeline.run()
 
