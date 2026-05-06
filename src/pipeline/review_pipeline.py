@@ -38,6 +38,7 @@ from src.llm.llm_bridge import (
 from src.reporting.report_generator import ReportGenerator
 
 
+
 # ═══════════════════════════════════════════════════════════
 # 流水线编排器
 # ═══════════════════════════════════════════════════════════
@@ -47,9 +48,9 @@ class ReviewPipeline:
 
     def __init__(
         self,
-        en_path: str,
-        zh_path: str,
-        output_dir: str,
+        en_path: str = "",
+        zh_path: str = "",
+        output_dir: str = "./output",
         *,
         llm_call=None,
         no_llm: bool = False,
@@ -59,9 +60,10 @@ class ReviewPipeline:
         fuzzy_threshold: float = 60.0,
         fuzzy_top: int = 5,
         batch_size: int = 20,
+        pr_alignment: dict | None = None,
     ):
-        self.en_path = Path(en_path)
-        self.zh_path = Path(zh_path)
+        self.en_path = Path(en_path) if en_path else None
+        self.zh_path = Path(zh_path) if zh_path else None
         self.output_dir = Path(output_dir)
         self.llm_call = llm_call
         self.no_llm = no_llm
@@ -78,16 +80,96 @@ class ReviewPipeline:
         self.alignment: dict[str, Any] = {}
         self.format_verdicts: list[dict[str, Any]] = []
         self.term_verdicts: list[dict[str, Any]] = []
+
+        # PR 模式数据
+        self.pr_mode = pr_alignment is not None
+        self.pr_alignment = pr_alignment
+        self.pr_change_meta: dict[str, dict[str, Any]] = {}
+        self.pr_warnings: list[dict[str, Any]] = []
+        self.zh_only_entries: list[dict[str, Any]] = []
         self.glossary: list[dict[str, Any]] = []
         self.fuzzy_results_map: dict[str, list[dict[str, Any]]] = {}
         self.llm_verdicts: list[dict[str, Any]] = []
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # PR 模式：加载对齐数据
+        if self.pr_mode:
+            self._load_pr_alignment()
+
+    # ── PR 模式：加载 PR 对齐数据 ──────────────────────────
+
+    def _load_pr_alignment(self) -> None:
+        """从 PR 对齐数据构建流水线内部结构。"""
+        print("[PR Mode] 加载 PR 对齐数据...")
+        data = self.pr_alignment
+
+        # 构建 matched_entries 格式（兼容 Phase 1 输出）
+        # 同时附加 _change 字段，供后续 LLM prompt 注入变更上下文
+        matched: list[dict[str, str]] = []
+        for entry in data.get("all_entries", []):
+            key = entry["key"]
+            matched.append({
+                "key": key,
+                "en": entry["en"],
+                "zh": entry["zh"],
+                "_change": {
+                    "old_en": entry.get("old_en", ""),
+                    "old_zh": entry.get("old_zh", ""),
+                },
+            })
+
+        self.en_data = {e["key"]: e["en"] for e in matched}
+        self.zh_data = {e["key"]: e["zh"] for e in matched}
+
+        self.alignment = {
+            "matched_entries": matched,
+            "missing_zh": [],
+            "extra_zh": [],
+            "suspicious_untranslated": [],
+            "stats": {
+                "matched": len(matched),
+                "missing_zh": 0,
+                "extra_zh": 0,
+                "suspicious_untranslated": 0,
+                "total_en": len(matched),
+                "total_zh": len(matched),
+            },
+        }
+
+        # 保存 01_alignment.json（PR 模式也生成）
+        alignment_path = self.output_dir / "01_alignment.json"
+        with open(alignment_path, "w", encoding="utf-8") as f:
+            json.dump(self.alignment, f, ensure_ascii=False, indent=2)
+        print(f"  已保存: {alignment_path}")
+
+        # 构建 pr_change_meta
+        for entry in data.get("all_entries", []):
+            key = entry["key"]
+            self.pr_change_meta[key] = {
+                "en_changed": "old_en" in entry,
+                "zh_changed": "old_zh" in entry,
+                "old_en": entry.get("old_en", ""),
+                "old_zh": entry.get("old_zh", ""),
+                "warning": entry.get("review_type") == "en_changed_zh_unchanged",
+                "review_type": entry.get("review_type", "normal"),
+            }
+            if entry.get("review_type") == "zh_only_change":
+                self.zh_only_entries.append(entry)
+
+        # 保存 warnings
+        self.pr_warnings = data.get("all_warnings", [])
+        print(f"  已加载: {len(matched)} 条变更, {len(self.pr_warnings)} 条警告, "
+              f"{len(self.zh_only_entries)} 条 ZH-only 变更")
+
     # ── Phase 1: 键对齐 ───────────────────────────────────
 
     def run_phase1(self) -> dict[str, Any]:
-        """执行键对齐。"""
+        """执行键对齐（PR 模式下跳过，直接返回已对齐数据）。"""
+        if self.pr_mode:
+            print("[Phase 1] PR 模式：跳过键对齐，使用 PR 差异数据...")
+            return self.alignment
+
         print("[Phase 1] 键对齐...")
         self.en_data = load_json(str(self.en_path))
         self.zh_data = load_json(str(self.zh_path))
@@ -133,7 +215,7 @@ class ReviewPipeline:
     # ── Phase 3a: 格式检查 ────────────────────────────────
 
     def run_phase3a(self) -> list[dict[str, Any]]:
-        """执行全自动格式检查。"""
+        """执行全自动格式检查（PR 模式注入额外 warning verdict）。"""
         print("[Phase 3a] 格式检查...")
 
         checker = FormatChecker()
@@ -143,8 +225,25 @@ class ReviewPipeline:
             verdicts = checker.check_all(entry)
             all_v.extend(verdicts)
 
+        # PR 模式：注入原文变更但翻译未变更的 warning 作为 SUGGEST verdict
+        if self.pr_mode and self.pr_warnings:
+            for w in self.pr_warnings:
+                key = w["key"]
+                meta = self.pr_change_meta.get(key, {})
+                old_en = meta.get("old_en", "")
+                cur_en = self.en_data.get(key, "")
+                all_v.append({
+                    "key": key,
+                    "verdict": "⚠️ SUGGEST",
+                    "source": "pr_warning",
+                    "reason": f"原文变更但翻译未变更。旧EN: {old_en[:60]!r} → 新EN: {cur_en[:60]!r}",
+                    "suggestion": "",
+                })
+
         self.format_verdicts = all_v
         print(f"  格式问题: {len(all_v)} 条")
+        if self.pr_warnings:
+            print(f"  PR 警告注入: {len(self.pr_warnings)} 条")
 
         # 保存
         fmt_path = self.output_dir / "03_format_verdicts.json"
@@ -221,7 +320,7 @@ class ReviewPipeline:
             if "值相同" in v.get("reason", ""):
                 untranslated_keys.add(v.get("key", ""))
 
-        # 筛选需要 LLM 的条目
+        # 筛选需要 LLM 的条目（所有条目一视同仁，含 zh_only_change）
         llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys, self.glossary)
 
         # 剔除疑似未翻译条目（格式检查已给出 ❌ FAIL，无需 LLM 重复判断）
@@ -239,11 +338,13 @@ class ReviewPipeline:
             if k:
                 auto_verdicts_map.setdefault(k, []).append(v)
 
-        print(f"[Phase 3c] LLM审校: 总{len(matched)}条 → 自动通过{len(auto_pass)}条, 需审校{len(llm_entries)}条")
+        print(f"[Phase 3c] LLM审校: 总{len(matched)}条 → 自动通过{len(auto_pass)}条, "
+              f"需审校{len(llm_entries)}条")
 
         if not llm_entries:
             print("  无需 LLM 审校")
-            return []
+            self.llm_verdicts = []
+            return self.llm_verdicts
 
         # 先做模糊搜索
         self.run_phase3b(llm_entries)
@@ -261,7 +362,8 @@ class ReviewPipeline:
             groups = classify_entries(llm_entries)
             for cat, entries in sorted(groups.items()):
                 print(f"    {cat}: {len(entries)} 条")
-            return []
+            self.llm_verdicts = []
+            return self.llm_verdicts
 
         if self.interactive:
             print("  进入交互审校模式...")

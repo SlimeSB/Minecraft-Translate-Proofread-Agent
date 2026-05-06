@@ -34,6 +34,7 @@ _KNOWN_KEYS: set[str] = {
     "filter_system_prompt",
     "filter_instruction",
     "filter_batch_size",
+    "pr_change_context_prompt",
 }
 
 
