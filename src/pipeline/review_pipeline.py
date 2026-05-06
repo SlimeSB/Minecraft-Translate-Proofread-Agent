@@ -13,6 +13,7 @@ from typing import Any
 
 # 复用现有模块
 from src.tools.key_alignment import align_keys, load_json, load_json_clean
+from src.tools.lang_parser import load_lang, load_lang_text
 from src.checkers.format_checker import FormatChecker
 from src.checkers.terminology_builder import TerminologyBuilder
 from src.tools.fuzzy_search import fuzzy_search_lines
@@ -158,12 +159,19 @@ class ReviewPipeline:
             return self.alignment
 
         print("[Phase 1] 键对齐...")
-        self.en_data, en_warnings = load_json_clean(str(self.en_path))
-        self.zh_data, zh_warnings = load_json_clean(str(self.zh_path))
-        for w in en_warnings:
-            print(f"  [EN] {w}")
-        for w in zh_warnings:
-            print(f"  [ZH] {w}")
+        warnings: list[str] = []
+        if str(self.en_path).endswith(".lang"):
+            self.en_data, en_w = load_lang(str(self.en_path))
+            self.zh_data, zh_w = load_lang(str(self.zh_path))
+            warnings.extend(f"[EN] {w}" for w in en_w)
+            warnings.extend(f"[ZH] {w}" for w in zh_w)
+        else:
+            self.en_data, en_w = load_json_clean(str(self.en_path))
+            self.zh_data, zh_w = load_json_clean(str(self.zh_path))
+            warnings.extend(f"[EN] {w}" for w in en_w)
+            warnings.extend(f"[ZH] {w}" for w in zh_w)
+        for w in warnings:
+            print(f"  {w}")
         self.alignment = align_keys(self.en_data, self.zh_data)
 
         stats = self.alignment["stats"]
