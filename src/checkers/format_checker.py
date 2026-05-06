@@ -68,6 +68,9 @@ NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"^[0-9]+$"),            # 纯数字
     re.compile(r"^[A-Za-z0-9_.-]+$"),   # 纯ASCII标识符
     re.compile(r"^§[0-9a-fA-F].*"),     # 格式码开头
+    re.compile(r"^%[a-zA-Z0-9_.$]*$"),  # 纯占位符: %s, %d, %1$s
+    re.compile(r"^\{[^{}]*\}$"),        # 纯占位符: {0}, {name}
+    re.compile(r"^%[A-Za-z_]\w*%$"),    # 纯占位符: %msg%, %key%
 ]
 
 

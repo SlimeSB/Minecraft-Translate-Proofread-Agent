@@ -78,10 +78,14 @@ def _group_prefix(key: str) -> str:
 
 
 def classify_entries(entries: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
-    """按 key 前缀分组，每组只含一种前缀类型。未匹配的归入 '__default__'。"""
+    """按 key 前缀分组。ae2guide: 前缀独立成组以便逐条审校。未匹配的归入 '__default__'。"""
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
-        prefix = _group_prefix(entry["key"])
+        key = entry["key"]
+        if key.startswith("ae2guide:"):
+            prefix = "ae2guide:"
+        else:
+            prefix = _group_prefix(key)
         groups.setdefault(prefix, []).append(entry)
     return groups
 
@@ -332,8 +336,10 @@ def build_review_prompt(
         cat_label, focus_notes = KEY_PREFIX_PROMPTS.get(
             prefix, ("其他", cfg.DEFAULT_REVIEW_FOCUS)
         )
-        for i in range(0, len(group_entries), batch_size):
-            batch = group_entries[i:i + batch_size]
+        # GuideME 文档逐条单独审校
+        effective_batch = 1 if prefix == "ae2guide:" else batch_size
+        for i in range(0, len(group_entries), effective_batch):
+            batch = group_entries[i:i + effective_batch]
 
             header = f"""{cfg.REVIEW_HEADER_PREFIX}。当前类型: {cat_label}（{prefix}*）。
 
