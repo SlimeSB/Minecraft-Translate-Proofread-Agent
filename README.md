@@ -120,29 +120,40 @@ python run.py --filter-only -o ./output/
 ├── data/
 │   └── vanilla_keys.json         # 原版 key 列表（碰撞检测）
 ├── src/
-│   ├── config.py                 # 配置加载器
+│   ├── models.py                  # PipelineContext / Verdict 数据类
+│   ├── config.py                  # 配置加载器
 │   ├── pipeline/
-│   │   └── review_pipeline.py    # 主编排器（6 阶段流水线）
+│   │   ├── pipeline.py            # 薄编排器（6 阶段纯函数调用）
+│   │   ├── phase1_alignment.py    # Phase 1 键对齐 / PR 数据加载
+│   │   ├── phase2_terminology.py  # Phase 2 术语提取与一致性检查
+│   │   ├── phase3a_format.py      # Phase 3a 全自动格式检查
+│   │   ├── phase3b_fuzzy.py       # Phase 3b 模糊搜索
+│   │   ├── phase3c_review.py      # Phase 3c LLM 审校
+│   │   ├── phase4_report.py       # Phase 4 报告生成
+│   │   └── phase5_filter.py       # Phase 5 最终 LLM 过滤
 │   ├── checkers/
-│   │   ├── format_checker.py     # 全自动格式验证
-│   │   ├── terminology_builder.py# 术语提取 & 一致性检查
-│   │   ├── lemma_merge.py        # 词形归并逻辑
-│   │   └── lemma_cache.py        # 词形缓存
+│   │   ├── format_checker.py      # 全自动格式验证
+│   │   ├── terminology_builder.py # 术语提取 & 一致性检查
+│   │   ├── lemma_merge.py         # 词形归并逻辑
+│   │   └── lemma_cache.py         # 词形缓存
 │   ├── llm/
-│   │   └── llm_bridge.py         # LLM 桥接（prompt构建/批量审校/过滤）
+│   │   ├── __init__.py            # re-export 层
+│   │   ├── client.py              # OpenAI 客户端工厂 + 日志/重试
+│   │   ├── prompts.py             # 提示词构建、条目分类、术语覆盖检查
+│   │   └── bridge.py              # LLMBridge: 异步批处理、过滤、解析、交互
 │   ├── reporting/
-│   │   └── report_generator.py   # 报告生成 & 合并
+│   │   └── report_generator.py    # 报告生成 & 合并
 │   └── tools/
-│       ├── key_alignment.py      # 键对齐 & 原版碰撞检测
-│       ├── lang_parser.py        # .lang 文件解析器
-│       ├── terminology_extract.py# N-gram 术语提取
-│       ├── fuzzy_search.py       # SQLite FTS5 模糊搜索
-│       ├── pr_aligner.py         # PR CLI 入口（兼容）
-│       └── pr/                   # PR 对齐模块化架构
-│           ├── __init__.py       #   编排器
-│           ├── _http.py          #   GitHub API 拉取
-│           ├── _lang.py          #   JSON 语言文件对齐
-│           └── _guideme.py       #   GuideME 文档对齐
+│       ├── key_alignment.py       # 键对齐 & 原版碰撞检测
+│       ├── lang_parser.py         # .lang 文件解析器
+│       ├── terminology_extract.py # N-gram 术语提取
+│       ├── fuzzy_search.py        # SQLite FTS5 模糊搜索
+│       ├── pr_aligner.py          # PR CLI 入口（兼容）
+│       └── pr/                    # PR 对齐模块化架构
+│           ├── __init__.py        #   编排器
+│           ├── _http.py           #   GitHub API 拉取
+│           ├── _lang.py           #   JSON 语言文件对齐
+│           └── _guideme.py        #   GuideME 文档对齐
 ├── tests/
 │   ├── fixtures/                 # 测试数据
 │   ├── test_format_checker.py

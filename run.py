@@ -36,8 +36,8 @@ if os.path.exists(_ENV_PATH):
 if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from src.pipeline.review_pipeline import ReviewPipeline
-from src.llm.llm_bridge import create_openai_llm_call
+from src.pipeline.pipeline import ReviewPipeline
+from src.llm.client import create_openai_llm_call
 from src import config as cfg
 
 
@@ -185,7 +185,7 @@ def main() -> None:
         model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
         llm_call = create_openai_llm_call(api_key, model, base_url)
 
-        from src.llm.llm_bridge import LLMBridge
+        from src.llm.bridge import LLMBridge
         bridge = LLMBridge(llm_call)
 
         with open(review_path, "r", encoding="utf-8") as f:
