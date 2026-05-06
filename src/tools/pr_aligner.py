@@ -185,8 +185,9 @@ def _align_mod_entries(
 
         if en_changed:
             entry["old_en"] = o_en
-            if not zh_changed:
-                # 原文变更但翻译未变更 → warning
+            if not zh_changed and o_en:
+                # 原文有实际内容但翻译未跟随变更 → warning
+                # 排除旧原文为空的情况（即新增条目，不算变更）
                 warnings.append({
                     "key": key,
                     "type": "en_changed_zh_unchanged",
