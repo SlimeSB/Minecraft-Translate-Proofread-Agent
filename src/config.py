@@ -11,6 +11,7 @@ _cfg_cache: dict[str, Any] | None = None
 _KNOWN_KEYS: set[str] = {
     "_note",
     "desc_key_suffixes",
+    "punctuation_spacing_whitelist",
     "key_prefix_prompts",
     "llm_required_prefixes",
     "default_review_focus",
@@ -72,6 +73,11 @@ def get(key: str, default: Any = None) -> Any:
 DESC_KEY_SUFFIXES: tuple[str, ...] = tuple(
     get("desc_key_suffixes", [".desc", ".description", ".lore", ".tooltip",
                                ".flavor", ".info", ".message", ".text"])
+)
+
+# 标点检查：免检中英文间距的 key 前缀（如 book.*、patchouli.* 等手册文本）
+PUNCTUATION_SPACING_WHITELIST: tuple[str, ...] = tuple(
+    get("punctuation_spacing_whitelist", ["book.", "patchouli."])
 )
 
 # 术语提取：最低频次（低于此值的 n-gram 不进入术语表）

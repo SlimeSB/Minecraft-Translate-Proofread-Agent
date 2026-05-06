@@ -5,6 +5,7 @@
     ".desc", ".description", ".lore", ".tooltip",
     ".flavor", ".info", ".message", ".text"
   ],
+  "punctuation_spacing_whitelist": ["book.", "patchouli."],
   "key_prefix_prompts": {
     "advancements.":    ["进度",     "进度标题允许创意发挥但须忠实原文核心含义; 进度描述须准确传达完成条件"],
     "death.":           ["死亡信息", "检查语气是否匹配原文(黑色幽默/文学引用); 占位符顺序需对照原文; 死亡消息提示文本需准确"],

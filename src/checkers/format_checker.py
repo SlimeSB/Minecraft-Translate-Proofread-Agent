@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any
 
+from src import config as cfg
+
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
 # ═══════════════════════════════════════════════════════════
@@ -335,12 +337,13 @@ class FormatChecker:
             issues.append(f"中文与中文标点间有不必要空格（{len(punct_space)}处）")
 
         # 中英文间空格（Patchouli 手册文本除外，此处标记 SUGGEST）
-        en_cn_spaces = re.findall(
-            r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]",
-            zh,
-        )
-        if en_cn_spaces:
-            issues.append(f"中英文间有不必要空格（{len(en_cn_spaces)}处）")
+        if not any(key.startswith(p) for p in cfg.PUNCTUATION_SPACING_WHITELIST):
+            en_cn_spaces = re.findall(
+                r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]",
+                zh,
+            )
+            if en_cn_spaces:
+                issues.append(f"中英文间有不必要空格（{len(en_cn_spaces)}处）")
 
         if issues:
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
