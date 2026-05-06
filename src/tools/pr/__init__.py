@@ -110,10 +110,16 @@ def run_pr_aligner(
             "entries": guideme_entries,
         }
 
-    # Step 5: 统计
+    # Step 5: 按 namespace 分组
+    from collections import defaultdict
+    ns_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in all_entries:
+        ns = e.get("namespace", "__unknown__")
+        ns_groups[ns].append(e)
+
+    # Step 6: 统计
     en_changed_count = sum(1 for e in all_entries if "old_en" in e)
     zh_changed_count = sum(1 for e in all_entries if "old_zh" in e)
-    en_unchanged_zh_changed = sum(1 for e in all_entries if e.get("review_type") == "zh_only_change")
 
     result: dict[str, Any] = {
         "repo": repo,
@@ -123,25 +129,44 @@ def run_pr_aligner(
         "mods": result_mods,
         "all_entries": all_entries,
         "all_warnings": all_warnings,
+        "namespaces": {ns: {"count": len(entries), "entries": entries} for ns, entries in ns_groups.items()},
         "stats": {
             "total_changed_keys": len(all_entries),
             "en_changed": en_changed_count,
             "zh_changed": zh_changed_count,
-            "en_unchanged_zh_changed": en_unchanged_zh_changed,
             "zh_unchanged_warnings": len(all_warnings),
             "guideme_entries": len(guideme_entries),
+            "namespaces": len(ns_groups),
         },
     }
 
-    # 保存
-    output_path = Path(output_dir) / "00_pr_alignment.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
+    # 保存合并文件
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    combined_path = output_dir_path / "00_pr_alignment.json"
+    with open(combined_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
+
+    # 保存按 namespace 分文件
+    ns_dir = output_dir_path / "pr_namespaces"
+    ns_dir.mkdir(parents=True, exist_ok=True)
+    for ns, entries in ns_groups.items():
+        ns_file = ns_dir / f"{ns}.json"
+        with open(ns_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "namespace": ns,
+                "entries": entries,
+                "count": len(entries),
+                "warnings": [w for w in all_warnings if any(
+                    w.get("key") == e.get("key") for e in entries
+                )],
+            }, f, ensure_ascii=False, indent=2)
 
     print(f"[PR Aligner] 完成: {len(all_entries)} 条变更, "
           f"EN 变更 {en_changed_count}, ZH 变更 {zh_changed_count}, "
-          f"警告 {len(all_warnings)} 条")
-    print(f"  输出: {output_path}")
+          f"警告 {len(all_warnings)} 条, {len(ns_groups)} 个 namespace")
+    print(f"  合并: {combined_path}")
+    if len(ns_groups) > 1:
+        print(f"  分文件: {ns_dir} ({', '.join(ns_groups.keys())})")
 
-    return str(output_path)
+    return str(combined_path)

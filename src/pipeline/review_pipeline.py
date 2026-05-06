@@ -101,6 +101,7 @@ class ReviewPipeline:
                 "key": key,
                 "en": entry["en"],
                 "zh": entry["zh"],
+                "namespace": entry.get("namespace", ""),
                 "_change": {
                     "old_en": entry.get("old_en", ""),
                     "old_zh": entry.get("old_zh", ""),
@@ -408,8 +409,35 @@ class ReviewPipeline:
         )
 
         review_path = self.output_dir / "06_review_report.json"
-
         rg.generate_review_report(str(review_path))
+
+        # 如果有 namespace 信息，按 namespace 拆分报告
+        ns_map: dict[str, list[dict[str, Any]]] = {}
+        for v in rg.verdicts:
+            matched = next((e for e in self.alignment.get("matched_entries", [])
+                           if e["key"] == v.get("key")), None)
+            if not matched:
+                continue
+            ns = matched.get("namespace") or v.get("namespace", "")
+            if ns:
+                ns_map.setdefault(ns, []).append(v)
+
+        if ns_map:
+            ns_dir = self.output_dir / "namespaces"
+            ns_dir.mkdir(parents=True, exist_ok=True)
+            for ns, verdicts in ns_map.items():
+                ns_rg = ReportGenerator()
+                ns_rg.alignment = self.alignment
+                ns_rg.matched_entries = [
+                    e for e in self.alignment.get("matched_entries", [])
+                    if e.get("namespace") == ns
+                ]
+                ns_rg.verdicts = verdicts
+                ns_rg.compute_stats()
+                ns_report = ns_dir / ns / "06_review_report.json"
+                ns_report.parent.mkdir(parents=True, exist_ok=True)
+                ns_rg.generate_review_report(str(ns_report))
+            print(f"  按 namespace 拆分: {len(ns_map)} 组 → {ns_dir}")
 
         print(f"  审校报告: {review_path}")
         rg.print_summary()
