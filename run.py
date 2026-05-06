@@ -152,7 +152,7 @@ def main() -> None:
 
     elif is_pr:
         # 调用 PR 对齐器
-        from src.tools.pr_aligner import run_pr_aligner
+        from src.tools.pr import run_pr_aligner
         align_output = run_pr_aligner(
             repo=args.repo,
             pr=args.pr,
