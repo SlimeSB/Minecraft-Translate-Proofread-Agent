@@ -8,9 +8,23 @@
     rg.generate(output_dir)
 """
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+
+def _print(*args, **kwargs) -> None:
+    """安全打印，应对 Windows GBK 终端无法输出 emoji 的情况。"""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        safe = [
+            str(a).encode(encoding, errors="replace").decode(encoding)
+            for a in args
+        ]
+        print(*safe, **kwargs)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -247,8 +261,8 @@ class ReportGenerator:
         if not self.stats:
             self.compute_stats()
         s = self.stats
-        print("\n## 审校完毕")
-        print(f"- 总计: {s['total']} 条 | PASS: {s['PASS']} | ⚠️ SUGGEST: {s['⚠️ SUGGEST']} | ❌ FAIL: {s['❌ FAIL']} | 🔶 REVIEW: {s['🔶 REVIEW']}")
+        _print("\n## 审校完毕")
+        _print(f"- 总计: {s['total']} 条 | PASS: {s['PASS']} | ⚠️ SUGGEST: {s['⚠️ SUGGEST']} | ❌ FAIL: {s['❌ FAIL']} | 🔶 REVIEW: {s['🔶 REVIEW']}")
 
         # 分类统计
         by_source = defaultdict(int)
@@ -256,23 +270,23 @@ class ReportGenerator:
         for v in self.verdicts:
             by_source[v.get("source", "unknown")] += 1
         if by_source:
-            print("- 来源分布:", dict(by_source))
+            _print("- 来源分布:", dict(by_source))
 
     def print_verdict_table(self, max_rows: int = 30) -> None:
         """打印非 PASS verdict 表格。"""
         non_pass = [v for v in self.verdicts if v.get("verdict") != "PASS"]
         if not non_pass:
-            print("所有条目均 PASS ✓")
+            _print("所有条目均 PASS ✓")
             return
 
-        print(f"\n## 审校结论 ({len(non_pass)} 条)")
-        print(f"| {'判定':<10} | {'键名':<45} | {'问题':<50} |")
-        print(f"|{'-'*10}|{'-'*45}|{'-'*50}|")
+        _print(f"\n## 审校结论 ({len(non_pass)} 条)")
+        _print(f"| {'判定':<10} | {'键名':<45} | {'问题':<50} |")
+        _print(f"|{'-'*10}|{'-'*45}|{'-'*50}|")
         for v in non_pass[:max_rows]:
             key = v.get("key", "")[:42]
             reason = v.get("reason", "")[:48]
             verdict = v.get("verdict", "")
-            print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
+            _print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
         if len(non_pass) > max_rows:
-            print(f"... 还有 {len(non_pass) - max_rows} 条")
+            _print(f"... 还有 {len(non_pass) - max_rows} 条")
 

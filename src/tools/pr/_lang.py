@@ -4,20 +4,22 @@ import re
 from typing import Any
 
 _LANG_PATH_RE = re.compile(
-    r"^projects/([^/]+)/assets/([^/]+)/([^/]+)/lang/(en_us|zh_cn)\.json$"
+    r"^projects/(?:assets/(?P<cid>[^/]+)/(?P<ver>[^/]+)"
+    r"|(?P<ver2>[^/]+)/assets/(?P<cid2>[^/]+))"
+    r"/(?P<slug>[^/]+)/lang/(?P<lang>en_us|zh_cn)\.json$"
 )
 
 
 def match(path: str) -> dict[str, str] | None:
-    """尝试匹配语言文件路径，返回 {version, curseforge_id, slug, lang} 或 None。"""
+    """尝试匹配语言文件路径（兼容新旧两种目录结构）。"""
     m = _LANG_PATH_RE.match(path)
     if not m:
         return None
     return {
-        "version": m.group(1),
-        "slug": m.group(3),
-        "curseforge_id": m.group(2),
-        "lang": m.group(4),
+        "curseforge_id": m.group("cid") or m.group("cid2"),
+        "version": m.group("ver") or m.group("ver2"),
+        "slug": m.group("slug"),
+        "lang": m.group("lang"),
     }
 
 
