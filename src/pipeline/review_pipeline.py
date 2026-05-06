@@ -436,6 +436,9 @@ class ReviewPipeline:
             ns_dir = self.output_dir / "namespaces"
             ns_dir.mkdir(parents=True, exist_ok=True)
             for ns, verdicts in ns_map.items():
+                ns_keys = {e["key"] for e in self.alignment.get("matched_entries", [])
+                           if e.get("namespace") == ns}
+
                 ns_rg = ReportGenerator()
                 ns_rg.alignment = self.alignment
                 ns_rg.matched_entries = [
@@ -444,10 +447,33 @@ class ReviewPipeline:
                 ]
                 ns_rg.verdicts = verdicts
                 ns_rg.compute_stats()
-                ns_report = ns_dir / ns / "06_review_report.json"
-                ns_report.parent.mkdir(parents=True, exist_ok=True)
-                ns_rg.generate_review_report(str(ns_report))
-                ns_rg.generate_markdown_report(str(ns_report.parent / "report.md"), ns)
+                ns_path = ns_dir / ns
+                ns_path.mkdir(parents=True, exist_ok=True)
+
+                # 报告
+                ns_rg.generate_review_report(str(ns_path / "06_review_report.json"))
+                ns_rg.generate_markdown_report(str(ns_path / "report.md"), ns)
+
+                # 中间记录 —— 同上写到 namespace 下
+                # 术语表（全局，直接拷贝）
+                with open(ns_path / "02_terminology_glossary.json", "w", encoding="utf-8") as f:
+                    json.dump(self.glossary, f, ensure_ascii=False, indent=2)
+                # 格式检查 verdicts
+                ns_fmt_v = [v for v in self.format_verdicts if v.get("key") in ns_keys]
+                with open(ns_path / "03_format_verdicts.json", "w", encoding="utf-8") as f:
+                    json.dump({"total_checked": len(ns_rg.matched_entries), "issues_found": len(ns_fmt_v), "verdicts": ns_fmt_v},
+                              f, ensure_ascii=False, indent=2)
+                # 模糊搜索结果
+                ns_fuzzy = {k: v for k, v in self.fuzzy_results_map.items() if k in ns_keys}
+                if ns_fuzzy:
+                    with open(ns_path / "04_fuzzy_results.json", "w", encoding="utf-8") as f:
+                        json.dump(ns_fuzzy, f, ensure_ascii=False, indent=2)
+                # LLM verdicts
+                ns_llm_v = [v for v in self.llm_verdicts if v.get("key") in ns_keys]
+                if ns_llm_v:
+                    with open(ns_path / "05_llm_verdicts.json", "w", encoding="utf-8") as f:
+                        json.dump(ns_llm_v, f, ensure_ascii=False, indent=2)
+
             print(f"  按 namespace 拆分: {len(ns_map)} 组 → {ns_dir}")
 
         print(f"  审校报告: {review_path}")
@@ -473,19 +499,33 @@ class ReviewPipeline:
             print("  无 verdict 需要过滤")
             return
 
+        # GuideME 条目不参与驳回审查，直接保留
+        guideme_keys: set[str] = {
+            e["key"] for e in self.alignment.get("matched_entries", [])
+            if e.get("format") == "guideme"
+        }
+        guideme_verdicts = [v for v in verdicts if v.get("key") in guideme_keys]
+        review_verdicts = [v for v in verdicts if v.get("key") not in guideme_keys]
+        if guideme_verdicts:
+            print(f"  跳过 GuideME {len(guideme_verdicts)} 条")
+
+        if not review_verdicts:
+            print("  (仅 GuideME 条目，无需过滤)")
+            return
+
         bridge = LLMBridge(self.llm_call)
-        filtered, discard_records = bridge.filter_verdicts(verdicts)
+        filtered, discard_records = bridge.filter_verdicts(review_verdicts)
         removed = len(discard_records)
         print(f"  驳回 {removed} 条, 保留 {len(filtered)} 条")
+
+        # GuideME 条目直接保留
+        filtered.extend(guideme_verdicts)
 
         # 保存驳回记录
         discard_path = self.output_dir / "07_filter_discards.json"
         with open(discard_path, "w", encoding="utf-8") as f:
             json.dump(discard_records, f, ensure_ascii=False, indent=2)
         print(f"  驳回记录: {discard_path}")
-
-        if removed == 0:
-            return
 
         # 重新统计数据
         stats = {

@@ -585,15 +585,16 @@ class LLMBridge:
                         local_records: list[dict[str, str]] = []
                         local_reasons: dict[str, str] = {}
                         for item in parsed:
-                            k = item.get("key", "")
+                            k = item.get("key", "").strip()
                             if not k:
                                 continue
-                            if item.get("verdict") == "PASS":
+                            vd = item.get("verdict", "").strip()
+                            if vd == "PASS":
                                 local_keys.add(k)
-                                local_records.append({"key": k, "reason": item.get("reason", "")})
+                                local_records.append({"key": k, "reason": item.get("reason", "").strip()})
                                 print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
-                            elif item.get("verdict") != "PASS":
-                                r = item.get("reason", "")
+                            elif vd != "PASS":
+                                r = item.get("reason", "").strip()
                                 if r:
                                     local_reasons[k] = r
                         print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条",
