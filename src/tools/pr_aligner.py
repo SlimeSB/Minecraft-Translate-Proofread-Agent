@@ -117,15 +117,15 @@ def _group_mod_files(
 
         status = f.get("status", "modified")
         if parsed["lang"] == "en_us":
-            mods[mod_key]["en_head"] = filename
-            if "renamed" in status or "added" in status or "copied" in status:
-                # 新增/重命名的文件，base 中不存在，en_base 保持为 None
-                pass
-            else:
-                # 修改的文件，base 用同一路径，实际从 base sha 拉
+            if status == "removed":
                 mods[mod_key]["en_base"] = filename
+            else:
+                mods[mod_key]["en_head"] = filename
+                if "renamed" not in status and "added" not in status and "copied" not in status:
+                    mods[mod_key]["en_base"] = filename
         elif parsed["lang"] == "zh_cn":
-            mods[mod_key]["zh_head"] = filename
+            if status != "removed":
+                mods[mod_key]["zh_head"] = filename
 
     # 如果只有 en 变更没有 zh 变更，zh_base 和 zh_head 用 en 同路径
     for mod_key, mod_data in mods.items():
@@ -270,19 +270,27 @@ def run_pr_aligner(
         resolved_mod_key = f"{version}/{cid}/{slug}"
 
         try:
-            # 拉取 old_en
+            # 拉取 old_en (from base)
             old_en_url = f"{raw_base}/{en_path}"
             old_en_text = _raw_get(old_en_url, token)
 
-            # 拉取 new_en
-            new_en_url = f"{raw_head}/{en_path}"
-            new_en_text = _raw_get(new_en_url, token)
+            # 拉取 new_en (from head, 文件被删除则为空)
+            if mod_data["en_head"] is not None:
+                new_en_url = f"{raw_head}/{en_path}"
+                new_en_text = _raw_get(new_en_url, token)
+            else:
+                new_en_text = ""
 
-            # 拉取 old_zh
-            old_zh_text = _raw_get(f"{raw_base}/{zh_path}", token)
+            # 拉取 old_zh (from base)
+            old_zh_url = f"{raw_base}/{zh_path}"
+            old_zh_text = _raw_get(old_zh_url, token)
 
-            # 拉取 new_zh
-            new_zh_text = _raw_get(f"{raw_head}/{zh_path}", token)
+            # 拉取 new_zh (from head, 文件被删除则为空)
+            if mod_data["zh_head"] is not None:
+                new_zh_url = f"{raw_head}/{zh_path}"
+                new_zh_text = _raw_get(new_zh_url, token)
+            else:
+                new_zh_text = ""
         except RuntimeError as e:
             print(f"  警告: 模组 {resolved_mod_key} 拉取失败: {e}")
             continue
