@@ -588,7 +588,7 @@ class LLMBridge:
                             k = item.get("key", "")
                             if not k:
                                 continue
-                            if item.get("action") == "discard":
+                            if item.get("action") == "pass":
                                 local_keys.add(k)
                                 local_records.append({"key": k, "reason": item.get("reason", "")})
                                 print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
