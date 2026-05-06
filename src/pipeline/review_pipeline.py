@@ -4,22 +4,9 @@ Minecraft 模组翻译审校流水线 — 主编排器。
 将原本完全依赖 LLM 的审校流程改造为：
   程序化自动检查 (90%+) → 仅启发式问题交 LLM
 
-用法:
-    # 完整流水线（含 LLM）
-    python review_pipeline.py --en en_us.json --zh zh_cn.json --output-dir ./output/ --api-key sk-xxx
-
-    # 仅自动检查（不调 LLM）
-    python review_pipeline.py --en en_us.json --zh zh_cn.json --output-dir ./output/ --no-llm
-
-    # 交互模式（手动逐条审校）
-    python review_pipeline.py --en en_us.json --zh zh_cn.json --output-dir ./output/ --interactive
-
-    # 干运行（查看会将多少条目发给 LLM）
-    python review_pipeline.py --en en_us.json --zh zh_cn.json --output-dir ./output/ --dry-run
+统一入口为 run.py。
 """
-import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -493,85 +480,3 @@ class ReviewPipeline:
             print(f"\n错误: {e}", file=sys.stderr)
             raise
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Minecraft 模组翻译审校流水线 — 自动检查 + LLM 启发式审校",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  # 完整流水线
-  python review_pipeline.py --en en_us.json --zh zh_cn.json -o ./output/ --api-key sk-xxx
-
-  # 仅自动检查
-  python review_pipeline.py --en en_us.json --zh zh_cn.json -o ./output/ --no-llm
-
-  # 交互模式
-  python review_pipeline.py --en en_us.json --zh zh_cn.json -o ./output/ --interactive
-
-  # 查看会将多少条目发给 LLM
-  python review_pipeline.py --en en_us.json --zh zh_cn.json -o ./output/ --dry-run
-        """,
-    )
-
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("-o", "--output-dir", required=True, help="输出目录")
-    parser.add_argument("--api-key", default=None,
-                        help="OpenAI API key（或设环境变量 OPENAI_API_KEY）")
-    parser.add_argument("--model", default="gpt-4o", help="LLM 模型")
-    parser.add_argument("--base-url", default="https://api.openai.com/v1",
-                        help="API base URL")
-    parser.add_argument("--no-llm", action="store_true",
-                        help="跳过 LLM 审校，仅自动检查")
-    parser.add_argument("--interactive", action="store_true",
-                        help="交互模式：逐条手动判定")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="干运行：显示统计不调 LLM")
-    parser.add_argument("--min-term-freq", type=int, default=3,
-                        help="术语最低频次阈值，默认3")
-    parser.add_argument("--fuzzy-threshold", type=float, default=60.0,
-                        help="模糊搜索相似度阈值，默认60")
-    parser.add_argument("--batch-size", type=int, default=20,
-                        help="LLM 每批条目数，默认20")
-
-    args = parser.parse_args()
-
-    # 验证输入文件
-    if not os.path.exists(args.en):
-        print(f"错误: EN 文件不存在: {args.en}", file=sys.stderr)
-        sys.exit(1)
-    if not os.path.exists(args.zh):
-        print(f"错误: ZH 文件不存在: {args.zh}", file=sys.stderr)
-        sys.exit(1)
-
-    # 构建 LLM 调用函数
-    llm_call = None
-    if not args.no_llm and not args.interactive and not args.dry_run:
-        api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            print("警告: 未提供 API key，将跳过 LLM 审校（使用 --api-key 或 --no-llm）")
-        else:
-            llm_call = create_openai_llm_call(api_key, args.model, args.base_url)
-
-    pipeline = ReviewPipeline(
-        en_path=args.en,
-        zh_path=args.zh,
-        output_dir=args.output_dir,
-        llm_call=llm_call,
-        no_llm=args.no_llm,
-        interactive=args.interactive,
-        dry_run=args.dry_run,
-        min_term_freq=args.min_term_freq,
-        fuzzy_threshold=args.fuzzy_threshold,
-        batch_size=args.batch_size,
-    )
-    pipeline.run()
-
-
-if __name__ == "__main__":
-    main()

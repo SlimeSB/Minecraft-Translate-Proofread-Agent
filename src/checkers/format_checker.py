@@ -2,19 +2,13 @@
 全自动格式验证器：对每条 aligned entry 执行结构化格式检查。
 所有检查均为确定性规则，无需 LLM 参与。
 
-用法（独立）:
-    python format_checker.py --alignment alignment.json [--output verdicts.json]
-
-用法（模块）:
+用法:
     from format_checker import FormatChecker
     checker = FormatChecker()
     verdicts = checker.check_all(matched_entries)
 """
-import argparse
 import json
 import re
-import sys
-from pathlib import Path
 from typing import Any
 
 # ═══════════════════════════════════════════════════════════
@@ -435,54 +429,3 @@ class FormatChecker:
             "source": "format_check",
         }
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="对 aligned entries 执行全自动格式检查"
-    )
-    parser.add_argument("--alignment", required=True,
-                        help="alignment.json 路径（来自 key_alignment.py）")
-    parser.add_argument("--output", default=None,
-                        help="保存 verdicts 到文件（可选）")
-
-    args = parser.parse_args()
-
-    try:
-        with open(args.alignment, "r", encoding="utf-8") as f:
-            alignment = json.load(f)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-
-    matched = alignment.get("matched_entries", [])
-    checker = FormatChecker()
-    all_verdicts: list[dict[str, Any]] = []
-
-    for entry in matched:
-        verdicts = checker.check_all(entry)
-        all_verdicts.extend(verdicts)
-
-    result = {
-        "total_checked": len(matched),
-        "issues_found": len(all_verdicts),
-        "verdicts": all_verdicts,
-    }
-
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

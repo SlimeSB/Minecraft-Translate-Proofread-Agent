@@ -1,22 +1,13 @@
 """
 报告生成器：合并所有 verdict来源、去重冲突解决、生成审校报告。
 
-用法（独立）:
-    python report_generator.py --alignment alignment.json \\
-        --format-verdicts format_verdicts.json \\
-        --term-verdicts term_verdicts.json \\
-        --llm-verdicts llm_verdicts.json \\
-        --output-dir ./output/
-
-用法（模块）:
+用法:
     from report_generator import ReportGenerator
     rg = ReportGenerator()
     rg.collect(format_v, term_v, llm_v)
     rg.generate(output_dir)
 """
-import argparse
 import json
-import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -287,72 +278,3 @@ class ReportGenerator:
         if len(non_pass) > max_rows:
             print(f"... 还有 {len(non_pass) - max_rows} 条")
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="合并 verdict 并生成审校报告"
-    )
-    parser.add_argument("--alignment", required=True,
-                        help="alignment.json 路径")
-    parser.add_argument("--format-verdicts", default=None,
-                        help="format_checker 输出的 verdicts JSON")
-    parser.add_argument("--term-verdicts", default=None,
-                        help="terminology_builder 输出的 verdicts JSON")
-    parser.add_argument("--llm-verdicts", default=None,
-                        help="LLM 输出的 verdicts JSON")
-    parser.add_argument("--output-dir", required=True,
-                        help="输出目录")
-
-    args = parser.parse_args()
-
-    # 加载 alignment
-    try:
-        with open(args.alignment, "r", encoding="utf-8") as f:
-            alignment = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        sys.exit(1)
-
-    rg = ReportGenerator()
-    rg.load_alignment(alignment)
-
-    # 加载各来源 verdicts
-    verdict_lists: list[list[dict[str, Any]]] = []
-    for path, label in [
-        (args.format_verdicts, "format"),
-        (args.term_verdicts, "term"),
-        (args.llm_verdicts, "llm"),
-    ]:
-        if path:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    verdict_lists.append(data)
-                elif isinstance(data, dict) and "verdicts" in data:
-                    verdict_lists.append(data["verdicts"])
-            except (FileNotFoundError, json.JSONDecodeError) as e:
-                print(f"警告: 无法加载 {label} verdicts: {e}")
-
-    rg.collect(*verdict_lists)
-
-    # 生成报告
-    output_dir = Path(args.output_dir)
-    review_path = output_dir / "review_report.json"
-    annotated_path = output_dir / "zh_cn_annotated.json"
-
-    rg.generate_review_report(str(review_path))
-    rg.generate_annotated_json(str(annotated_path))
-
-    print(f"审校报告已写入 {review_path}")
-    print(f"可读注释版已写入 {annotated_path}")
-    rg.print_summary()
-    rg.print_verdict_table()
-
-
-if __name__ == "__main__":
-    main()
