@@ -131,6 +131,40 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
     }
 
 
+def check_vanilla_collisions(
+    en_data: dict[str, str],
+    vanilla_keys_path: str = "data/vanilla_keys.json",
+) -> list[dict[str, Any]]:
+    """检查模组 key 是否覆盖了原版 key。
+
+    返回碰撞列表，每项: {key, mod_value, vanilla_is_known}。
+    若原版 key 文件不存在则返回空列表。
+    """
+    try:
+        with open(vanilla_keys_path, "r", encoding="utf-8") as f:
+            vanilla_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+    vanilla_set: set[str] = set(vanilla_data.get("keys", []))
+    if not vanilla_set:
+        return []
+
+    mod_keys = set(en_data.keys())
+    collisions = mod_keys & vanilla_set
+
+    if not collisions:
+        return []
+
+    return [
+        {
+            "key": k,
+            "mod_value": str(en_data[k])[:80],
+        }
+        for k in sorted(collisions)
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="比较 en_us.json 和 zh_cn.json 的键对齐情况"
