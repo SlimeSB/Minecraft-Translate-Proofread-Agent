@@ -59,13 +59,21 @@ def run_pr_aligner(
         mi = mod_data["mod_info"]
         version, cid, slug = mi["version"], mi["curseforge_id"], mi["slug"]
         resolved_mod_key = f"{version}/{cid}/{slug}"
-        base_path = f"projects/{version}/assets/{cid}/{slug}/lang"
+
+        # 用实际文件路径构造 URL（兼容新旧目录结构）
+        en_head = mod_data["en_head"]
+        en_base = mod_data["en_base"]
+        if en_head or en_base:
+            sample = en_head or en_base
+            lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
+        else:
+            lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
 
         try:
-            old_en_text = _http.raw_get(f"{raw_base}/{base_path}/en_us.json", token)
-            new_en_text = _http.raw_get(f"{raw_head}/{base_path}/en_us.json", token) if mod_data["en_head"] is not None else ""
-            old_zh_text = _http.raw_get(f"{raw_base}/{base_path}/zh_cn.json", token)
-            new_zh_text = _http.raw_get(f"{raw_head}/{base_path}/zh_cn.json", token) if mod_data["zh_head"] is not None else ""
+            old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token)
+            new_en_text = _http.raw_get(f"{raw_head}/{lang_dir}/en_us.json", token) if en_head is not None else ""
+            old_zh_text = _http.raw_get(f"{raw_base}/{lang_dir}/zh_cn.json", token)
+            new_zh_text = _http.raw_get(f"{raw_head}/{lang_dir}/zh_cn.json", token) if mod_data["zh_head"] is not None else ""
         except RuntimeError as e:
             print(f"  警告: 模组 {resolved_mod_key} 拉取失败: {e}")
             continue
