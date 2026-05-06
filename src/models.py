@@ -1,12 +1,200 @@
-"""核心领域数据模型。
+"""核心领域数据模型 —— TypedDict + dataclass。
 
-所有 Phase 通过 PipelineContext 传递数据，不再用 God Object 的 self.* 杂糅。
+所有 dict 形状在此统一定义，禁止 Any 裸奔。
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, TypedDict
 
-# ── Verdict 枚举 ───────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# TypedDict — 领域字典形状
+# ═══════════════════════════════════════════════════════════
+
+
+class EntryDict(TypedDict, total=False):
+    """对齐条目。Phase 1 产出，贯穿全管道。"""
+    key: str
+    en: str
+    zh: str
+    format: str         # "json" | "lang" | "guideme"
+    namespace: str       # PR 模式
+    _change: "ChangeDict"
+
+
+class ChangeDict(TypedDict, total=False):
+    """PR 模式条目附带的变更上下文。"""
+    old_en: str
+    old_zh: str
+
+
+class MissingEntryDict(TypedDict):
+    """EN 有但 ZH 无的条目。"""
+    key: str
+    en: str
+
+
+class ExtraEntryDict(TypedDict):
+    """ZH 有但 EN 无的条目。"""
+    key: str
+    zh: str
+
+
+class SuspiciousEntryDict(TypedDict):
+    """疑似未翻译条目。"""
+    key: str
+    en: str
+    zh: str
+    reason: str
+
+
+class AlignmentStats(TypedDict):
+    matched: int
+    missing_zh: int
+    extra_zh: int
+    suspicious_untranslated: int
+    total_en: int
+    total_zh: int
+
+
+class AlignmentDict(TypedDict):
+    """键对齐结果。Phase 1 产出。"""
+    matched_entries: list[EntryDict]
+    missing_zh: list[MissingEntryDict]
+    extra_zh: list[ExtraEntryDict]
+    suspicious_untranslated: list[SuspiciousEntryDict]
+    stats: AlignmentStats
+
+
+class VerdictDict(TypedDict, total=False):
+    """审校判决。Phase 3a/2/3c 产出，Phase 4/5 消费。"""
+    key: str
+    en_current: str
+    zh_current: str
+    verdict: str        # "PASS" | "⚠️ SUGGEST" | "🔶 REVIEW" | "❌ FAIL"
+    suggestion: str
+    reason: str
+    source: str          # "format_check" | "terminology_check" | "llm_review" | "interactive" | "pr_warning" | "llm_error"
+
+
+class GlossaryDict(TypedDict):
+    """术语表条目。"""
+    en: str
+    zh: str
+
+
+class FuzzyResultDict(TypedDict):
+    """模糊搜索结果。"""
+    similarity: float
+    key: str
+    en: str
+    zh: str
+
+
+class PRAlignmentEntryDict(TypedDict, total=False):
+    """PR 对齐条目（来自 GitHub PR diff）。"""
+    key: str
+    en: str
+    zh: str
+    namespace: str
+    format: str
+    old_en: str
+    old_zh: str
+    review_type: str     # "normal" | "en_changed_zh_unchanged" | "zh_only_change"
+
+
+class PRAlignmentWrapper(TypedDict):
+    """PR 对齐数据整体结构。"""
+    all_entries: list[PRAlignmentEntryDict]
+    all_warnings: list["PRWarningDict"]
+
+
+class PRWarningDict(TypedDict):
+    """PR 警告。"""
+    key: str
+
+
+class PRChangeMetaDict(TypedDict):
+    """PR 变更元信息。"""
+    en_changed: bool
+    zh_changed: bool
+    old_en: str
+    old_zh: str
+    warning: bool
+    review_type: str
+
+
+class ReviewStatsDict(TypedDict):
+    total: int
+    PASS: int
+    SUGGEST: int      # ⚠️ SUGGEST
+    FAIL: int          # ❌ FAIL
+    REVIEW: int        # 🔶 REVIEW
+
+
+class ReviewReportDict(TypedDict):
+    """审校报告（06_review_report.json）。"""
+    stats: ReviewStatsDict
+    verdicts: list[VerdictDict]
+
+
+class FilterDiscardRecord(TypedDict):
+    """Phase 5 过滤驳回记录。"""
+    key: str
+    reason: str
+
+
+class FormatVerdictsContainer(TypedDict):
+    """格式检查 verdicts 容器（03_format_verdicts.json）。"""
+    total_checked: int
+    issues_found: int
+    verdicts: list[VerdictDict]
+
+
+class KeyPrefixConfig(TypedDict, total=False):
+    """key_prefixes 中每个前缀的配置。"""
+    label: str
+    focus: str
+    llm_required: bool
+
+
+class EnZhPair(TypedDict):
+    """EN/ZH 速查条目。"""
+    en: str
+    zh: str
+
+
+# ═══════════════════════════════════════════════════════════
+# 辅助类型别名
+# ═══════════════════════════════════════════════════════════
+
+# {prefix: [entries]}
+GroupedEntries = dict[str, list[EntryDict]]
+
+# {key: (full_en, full_zh)}
+MultipartContext = dict[str, tuple[str, str]]
+
+# {key: [verdicts]}
+AutoVerdictsMap = dict[str, list[VerdictDict]]
+
+# {key: [fuzzy results]}
+FuzzyResultsMap = dict[str, list[FuzzyResultDict]]
+
+# {key: {en, zh}}
+EnZhLookup = dict[str, EnZhPair]
+
+# {key: str}
+StrDict = dict[str, str]
+
+# {prefix: config}
+KeyPrefixMap = dict[str, KeyPrefixConfig]
+
+# LLM 调用签名
+LLMCallable = Callable[[str], str]
+
+# ═══════════════════════════════════════════════════════════
+# Verdict 枚举
+# ═══════════════════════════════════════════════════════════
+
 VERDICT_PASS    = "PASS"
 VERDICT_SUGGEST = "⚠️ SUGGEST"
 VERDICT_REVIEW  = "🔶 REVIEW"
@@ -21,27 +209,10 @@ VERDICT_PRIORITY: dict[str, int] = {
 
 ALL_VERDICTS = frozenset([VERDICT_PASS, VERDICT_SUGGEST, VERDICT_REVIEW, VERDICT_FAIL])
 
-# ── 术语条目 ────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# 管道上下文 (dataclass)
+# ═══════════════════════════════════════════════════════════
 
-@dataclass
-class GlossaryEntry:
-    en: str
-    zh: str
-
-# ── 审校判决 ────────────────────────────────────────────────
-
-@dataclass
-class Verdict:
-    key: str
-    verdict: str                      # PASS / ⚠️ SUGGEST / 🔶 REVIEW / ❌ FAIL
-    reason: str = ""
-    suggestion: str = ""
-    en_current: str = ""
-    zh_current: str = ""
-    source: str = ""                  # "format_check" | "terminology_check" | "llm_review" | "interactive" | "pr_warning" | "llm_error"
-
-
-# ── 管道上下文 ─────────────────────────────────────────────
 
 @dataclass
 class PipelineContext:
@@ -57,8 +228,8 @@ class PipelineContext:
     output_dir: Path = Path("./output")
 
     # ── LLM 回调 ──
-    llm_call: Callable[[str], str] | None = None
-    filter_llm_call: Callable[[str], str] | None = None  # Phase 5 用，独立 system_prompt
+    llm_call: LLMCallable | None = None
+    filter_llm_call: LLMCallable | None = None
 
     # ── 运行选项 ──
     no_llm: bool = False
@@ -71,32 +242,32 @@ class PipelineContext:
 
     # ── PR 模式 ──
     pr_mode: bool = False
-    pr_alignment: dict[str, Any] | None = None
-    pr_change_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
-    pr_warnings: list[dict[str, Any]] = field(default_factory=list)
-    zh_only_entries: list[dict[str, Any]] = field(default_factory=list)
+    pr_alignment: PRAlignmentWrapper | None = None
+    pr_change_meta: dict[str, PRChangeMetaDict] = field(default_factory=dict)
+    pr_warnings: list[PRWarningDict] = field(default_factory=list)
+    zh_only_entries: list[PRAlignmentEntryDict] = field(default_factory=list)
 
     # ── 中间结果 ──
-    en_data: dict[str, str] = field(default_factory=dict)
-    zh_data: dict[str, str] = field(default_factory=dict)
-    alignment: dict[str, Any] = field(default_factory=dict)
+    en_data: StrDict = field(default_factory=dict)
+    zh_data: StrDict = field(default_factory=dict)
+    alignment: AlignmentDict = field(default_factory=dict)
 
-    glossary: list[dict[str, Any]] = field(default_factory=list)
+    glossary: list[GlossaryDict] = field(default_factory=list)
 
-    format_verdicts: list[dict[str, Any]] = field(default_factory=list)
-    term_verdicts: list[dict[str, Any]] = field(default_factory=list)
-    llm_verdicts: list[dict[str, Any]] = field(default_factory=list)
+    format_verdicts: list[VerdictDict] = field(default_factory=list)
+    term_verdicts: list[VerdictDict] = field(default_factory=list)
+    llm_verdicts: list[VerdictDict] = field(default_factory=list)
 
-    fuzzy_results_map: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def alignment_entries(self) -> list[dict[str, Any]]:
+    def alignment_entries(self) -> list[EntryDict]:
         return self.alignment.get("matched_entries", [])
 
-    def auto_verdicts_map(self) -> dict[str, list[dict[str, Any]]]:
-        m: dict[str, list[dict[str, Any]]] = {}
+    def auto_verdicts_map(self) -> AutoVerdictsMap:
+        m: AutoVerdictsMap = {}
         for v in self.format_verdicts + self.term_verdicts:
             k = v.get("key", "")
             if k:

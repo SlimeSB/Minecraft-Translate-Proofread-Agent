@@ -1,8 +1,7 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
 import json
-from typing import Any
 
-from src.models import PipelineContext
+from src.models import EntryDict, PipelineContext, VerdictDict
 from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b

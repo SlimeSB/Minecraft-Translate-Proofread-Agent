@@ -4,9 +4,8 @@
 """
 import sys
 from pathlib import Path
-from typing import Any
 
-from src.models import PipelineContext
+from src.models import LLMCallable, PipelineContext, PRAlignmentWrapper
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
 from src.pipeline.phase3a_format import run_phase3a
@@ -27,8 +26,8 @@ class ReviewPipeline:
         zh_path: str = "",
         output_dir: str = "./output",
         *,
-        llm_call=None,
-        filter_llm_call=None,
+        llm_call: LLMCallable | None = None,
+        filter_llm_call: LLMCallable | None = None,
         no_llm: bool = False,
         interactive: bool = False,
         dry_run: bool = False,
@@ -36,7 +35,7 @@ class ReviewPipeline:
         fuzzy_threshold: float = 60.0,
         fuzzy_top: int = 5,
         batch_size: int = 20,
-        pr_alignment: dict | None = None,
+        pr_alignment: PRAlignmentWrapper | None = None,
     ):
         self.ctx = PipelineContext(
             en_path=Path(en_path) if en_path else None,

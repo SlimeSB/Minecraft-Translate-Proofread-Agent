@@ -1,7 +1,11 @@
 """Phase 5: 最终 LLM 过滤 —— 审视已汇总的 verdict，筛除误报。"""
 import json
 
-from src.models import PipelineContext, VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST
+from src.models import (
+    EntryDict, FilterDiscardRecord, PipelineContext,
+    ReviewReportDict, VerdictDict,
+    VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
+)
 from src.llm.bridge import LLMBridge
 
 
@@ -14,7 +18,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     with open(review_path, "r", encoding="utf-8") as f:
         report = json.load(f)
 
-    verdicts: list[dict] = report.get("verdicts", [])
+    verdicts: list[VerdictDict] = report.get("verdicts", [])
     if not verdicts:
         print("  无 verdict 需要过滤")
         return

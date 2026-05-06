@@ -1,15 +1,14 @@
 """Phase 3b: 模糊搜索相似的现有译文条目。"""
 import json
-from typing import Any
 
-from src.models import PipelineContext
+from src.models import EntryDict, FuzzyResultDict, FuzzyResultsMap, PipelineContext
 from src.tools.fuzzy_search import fuzzy_search_lines
 
 
-def run_phase3b(ctx: PipelineContext, llm_entries: list[dict[str, str]]) -> None:
+def run_phase3b(ctx: PipelineContext, llm_entries: list[EntryDict]) -> None:
     print("[Phase 3b] 模糊搜索...")
     fuzzy_trigger_patterns = [".desc", "death.attack.", "advancements."]
-    to_search: list[dict[str, str]] = [
+    to_search: list[EntryDict] = [
         e for e in llm_entries
         if any(p in e["key"] for p in fuzzy_trigger_patterns)
     ]

@@ -3,10 +3,17 @@ import asyncio
 import json
 import re
 import sys
-from typing import Any
 
 from src import config as cfg
-from src.llm.client import LLMCallable
+from src.models import (
+    AutoVerdictsMap,
+    EntryDict,
+    FilterDiscardRecord,
+    FuzzyResultsMap,
+    GlossaryDict,
+    LLMCallable,
+    VerdictDict,
+)
 from src.llm.prompts import (
     build_filter_prompt,
     build_review_prompt,
@@ -19,7 +26,7 @@ from src.llm.prompts import (
 # 响应解析器
 # ═══════════════════════════════════════════════════════════
 
-def parse_review_response(response: str) -> list[dict[str, Any]]:
+def parse_review_response(response: str) -> list[VerdictDict]:
     # 直接解析整个响应
     try:
         data = json.loads(response)
@@ -68,13 +75,13 @@ class LLMBridge:
 
     def review_batch(
         self,
-        entries: list[dict[str, str]],
-        glossary_entries: list[dict[str, Any]] | None = None,
-        auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
-        fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
+        entries: list[EntryDict],
+        glossary_entries: list[GlossaryDict] | None = None,
+        auto_verdicts_map: AutoVerdictsMap | None = None,
+        fuzzy_results_map: FuzzyResultsMap | None = None,
         batch_size: int = 20,
         max_workers: int | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[VerdictDict]:
         if not self.llm_call:
             raise RuntimeError("LLMBridge 未配置 llm_call 函数")
         if max_workers is None:
@@ -123,10 +130,10 @@ class LLMBridge:
 
     def filter_verdicts(
         self,
-        verdicts: list[dict[str, Any]],
+        verdicts: list[VerdictDict],
         batch_size: int | None = None,
         max_workers: int | None = None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    ) -> tuple[list[VerdictDict], list[FilterDiscardRecord]]:
         _call = self.filter_llm_call or self.llm_call
         if not _call:
             return verdicts, []
@@ -137,20 +144,20 @@ class LLMBridge:
         prompts = build_filter_prompt(verdicts, batch_size)
         print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批", file=sys.stderr)
 
-        async def _run_all() -> tuple[set[str], list[dict[str, str]], dict[str, str]]:
+        async def _run_all() -> tuple[set[str], list[FilterDiscardRecord], dict[str, str]]:
             sem = asyncio.Semaphore(max_workers)
             discarded_keys: set[str] = set()
-            discard_records: list[dict[str, str]] = []
+            discard_records: list[FilterDiscardRecord] = []
             cleaned_reasons: dict[str, str] = {}
 
-            async def _process(i: int, prompt: str) -> tuple[set[str], list[dict[str, str]], dict[str, str]]:
+            async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str]]:
                 async with sem:
                     try:
                         loop = asyncio.get_running_loop()
                         response = await loop.run_in_executor(None, _call, prompt)
                         parsed = parse_review_response(response)
                         local_keys: set[str] = set()
-                        local_records: list[dict[str, str]] = []
+                        local_records: list[FilterDiscardRecord] = []
                         local_reasons: dict[str, str] = {}
                         for item in parsed:
                             k = item.get("key", "").strip()
@@ -195,10 +202,10 @@ class LLMBridge:
 # ═══════════════════════════════════════════════════════════
 
 def interactive_entry_review(
-    entries: list[dict[str, str]],
-    auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
-    fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
-) -> list[dict[str, Any]]:
+    entries: list[EntryDict],
+    auto_verdicts_map: AutoVerdictsMap | None = None,
+    fuzzy_results_map: FuzzyResultsMap | None = None,
+) -> list[VerdictDict]:
     verdicts: list[dict[str, Any]] = []
     options = {
         "1": ("PASS", ""),

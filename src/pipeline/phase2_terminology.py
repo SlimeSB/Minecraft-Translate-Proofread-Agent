@@ -1,7 +1,7 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
 import json
 
-from src.models import PipelineContext
+from src.models import GlossaryDict, PipelineContext, VerdictDict
 from src.checkers.terminology_builder import TerminologyBuilder
 
 

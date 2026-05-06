@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-LLMCallable = Callable[[str], str]
+from src.models import LLMCallable
 
 
 def create_openai_llm_call(

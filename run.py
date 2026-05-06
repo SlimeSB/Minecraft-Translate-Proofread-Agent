@@ -38,6 +38,7 @@ if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
 
 from src.pipeline.pipeline import ReviewPipeline
 from src.llm.client import create_openai_llm_call
+from src.models import PRAlignmentWrapper
 from src import config as cfg
 
 
@@ -221,7 +222,7 @@ def main() -> None:
         sys.exit(0)
 
     # ── PR 模式逻辑 ──
-    pr_alignment: dict | None = None
+    pr_alignment: PRAlignmentWrapper | None = None
 
     if is_pr_alignment:
         # 从文件加载已有的 PR 对齐数据

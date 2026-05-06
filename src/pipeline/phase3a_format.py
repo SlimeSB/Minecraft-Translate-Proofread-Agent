@@ -1,7 +1,7 @@
 """Phase 3a: 全自动格式检查。"""
 import json
 
-from src.models import PipelineContext
+from src.models import EntryDict, FormatVerdictsContainer, PipelineContext, VerdictDict
 from src.checkers.format_checker import FormatChecker
 
 
@@ -9,7 +9,7 @@ def run_phase3a(ctx: PipelineContext) -> None:
     print("[Phase 3a] 格式检查...")
     checker = FormatChecker()
     matched = ctx.alignment.get("matched_entries", [])
-    all_v: list[dict] = []
+    all_v: list[VerdictDict] = []
     for entry in matched:
         all_v.extend(checker.check_all(entry))
 

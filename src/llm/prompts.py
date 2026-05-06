@@ -3,15 +3,25 @@
 包含：条目分类、审校提示词、Phase 5 过滤提示词、术语覆盖率检查。
 """
 import re
-from typing import Any
 
 from src import config as cfg
+from src.models import (
+    AutoVerdictsMap,
+    EntryDict,
+    FuzzyResultDict,
+    FuzzyResultsMap,
+    GlossaryDict,
+    GroupedEntries,
+    KeyPrefixConfig,
+    MultipartContext,
+    VerdictDict,
+)
 
 # ═══════════════════════════════════════════════════════════
 # 键名前缀分组
 # ═══════════════════════════════════════════════════════════
 
-KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = cfg.KEY_PREFIX_PROMPTS
+KEY_PREFIX_PROMPTS: dict[str, KeyPrefixConfig] = cfg.KEY_PREFIX_PROMPTS
 
 
 def group_prefix(key: str) -> str:
@@ -22,7 +32,7 @@ def group_prefix(key: str) -> str:
     return best if best else "__default__"
 
 
-def classify_entries(entries: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
         key = entry["key"]
@@ -55,7 +65,7 @@ _RE_MOUSE_OP = re.compile(
 )
 
 
-def detect_input_guidance(entries: list[dict[str, str]]) -> str:
+def detect_input_guidance(entries: list[EntryDict]) -> str:
     has_keyboard = False
     has_mouse = False
     for entry in entries:
@@ -86,7 +96,7 @@ _RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
 STYLE_REFERENCE = ""  # 暂无风格参考，可通过 llm.style_reference 配置
 
 
-def needs_llm_review(entry: dict[str, str]) -> bool:
+def needs_llm_review(entry: EntryDict) -> bool:
     key = entry["key"]
     if group_prefix(key) in LLM_REQUIRED_PREFIXES:
         return True
@@ -98,7 +108,7 @@ def needs_llm_review(entry: dict[str, str]) -> bool:
     return False
 
 
-def _is_glossary_covered(en: str, zh: str, glossary: list[dict[str, str]]) -> bool:
+def _is_glossary_covered(en: str, zh: str, glossary: list[GlossaryDict]) -> bool:
     if not glossary:
         return False
     en_lower = en.lower()
@@ -136,12 +146,12 @@ def _is_glossary_covered(en: str, zh: str, glossary: list[dict[str, str]]) -> bo
 
 
 def filter_for_llm(
-    matched_entries: list[dict[str, str]],
+    matched_entries: list[EntryDict],
     auto_flagged_keys: set[str],
-    glossary: list[dict[str, str]] | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    llm_entries: list[dict[str, str]] = []
-    auto_pass: list[dict[str, str]] = []
+    glossary: list[GlossaryDict] | None = None,
+) -> tuple[list[EntryDict], list[EntryDict]]:
+    llm_entries: list[EntryDict] = []
+    auto_pass: list[EntryDict] = []
     for entry in matched_entries:
         key = entry["key"]
         if key in auto_flagged_keys:
@@ -162,11 +172,11 @@ def filter_for_llm(
 # ═══════════════════════════════════════════════════════════
 
 def build_entry_block(
-    entry: dict[str, str],
+    entry: EntryDict,
     index: int = 0,
-    fuzzy_results: list[dict[str, Any]] | None = None,
-    auto_verdicts: list[dict[str, Any]] | None = None,
-    glossary_entries: list[dict[str, str]] | None = None,
+    fuzzy_results: list[FuzzyResultDict] | None = None,
+    auto_verdicts: list[VerdictDict] | None = None,
+    glossary_entries: list[GlossaryDict] | None = None,
     full_en: str = "",
     full_zh: str = "",
 ) -> str:
@@ -211,7 +221,7 @@ def build_entry_block(
 _RE_MULTIPART = re.compile(r"^(.*)\.(\d+)$")
 
 
-def merge_multipart_entries(entries: list[dict[str, str]]) -> dict[str, tuple[str, str]]:
+def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
         m = _RE_MULTIPART.match(entry["key"])
@@ -235,12 +245,12 @@ def merge_multipart_entries(entries: list[dict[str, str]]) -> dict[str, tuple[st
 # ═══════════════════════════════════════════════════════════
 
 def build_review_prompt(
-    entries: list[dict[str, str]],
-    glossary_entries: list[dict[str, str]] | None = None,
-    auto_verdicts_map: dict[str, list[dict[str, Any]]] | None = None,
-    fuzzy_results_map: dict[str, list[dict[str, Any]]] | None = None,
+    entries: list[EntryDict],
+    glossary_entries: list[GlossaryDict] | None = None,
+    auto_verdicts_map: AutoVerdictsMap | None = None,
+    fuzzy_results_map: FuzzyResultsMap | None = None,
     batch_size: int = 20,
-    merged_context: dict[str, tuple[str, str]] | None = None,
+    merged_context: MultipartContext | None = None,
 ) -> list[str]:
     prompts: list[str] = []
     groups = classify_entries(entries)
@@ -290,7 +300,7 @@ def build_review_prompt(
 # ═══════════════════════════════════════════════════════════
 
 def build_filter_prompt(
-    verdicts: list[dict[str, Any]],
+    verdicts: list[VerdictDict],
     batch_size: int = 50,
 ) -> list[str]:
     prompts: list[str] = []

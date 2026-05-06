@@ -1,8 +1,7 @@
 """Phase 4: 报告生成 —— 合并 verdict、生成 JSON/Markdown、按 namespace 拆分。"""
 import json
-from typing import Any
 
-from src.models import PipelineContext
+from src.models import AlignmentDict, EntryDict, FuzzyResultsMap, GlossaryDict, PipelineContext, VerdictDict
 from src.reporting.report_generator import ReportGenerator
 
 
@@ -18,7 +17,7 @@ def run_phase4(ctx: PipelineContext) -> None:
     rg.generate_markdown_report(str(ctx.output_dir / "report.md"))
 
     # ── 按 namespace 拆分 ──
-    ns_map: dict[str, list[dict[str, Any]]] = {}
+    ns_map: dict[str, list[VerdictDict]] = {}
     for v in rg.verdicts:
         matched = next((e for e in ctx.alignment.get("matched_entries", [])
                         if e["key"] == v.get("key")), None)

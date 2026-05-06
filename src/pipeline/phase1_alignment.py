@@ -1,10 +1,15 @@
 """Phase 1: 键对齐（传统模式）或 PR 数据加载。"""
 import json
-import sys
 
-from src.models import PipelineContext
+from src.models import (
+    AlignmentDict,
+    EntryDict,
+    PipelineContext,
+    PRAlignmentEntryDict,
+    PRChangeMetaDict,
+    PRWarningDict,
+)
 from src.tools.key_alignment import align_keys, load_json, load_json_clean
-from src.tools.lang_parser import load_lang_text
 
 
 def run_phase1(ctx: PipelineContext) -> None:
@@ -17,7 +22,7 @@ def run_phase1(ctx: PipelineContext) -> None:
 def _load_pr_alignment(ctx: PipelineContext) -> None:
     print("[PR Mode] 加载 PR 对齐数据...")
     data = ctx.pr_alignment
-    matched: list[dict[str, str]] = []
+    matched: list[EntryDict] = []
     for entry in data.get("all_entries", []):
         key = entry["key"]
         matched.append({
