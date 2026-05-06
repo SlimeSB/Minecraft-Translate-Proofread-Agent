@@ -13,6 +13,7 @@ LLM 配置（通过 .env 或环境变量）:
     GITHUB_TOKEN             可选，GitHub API Token（避免限流）
 """
 import argparse
+import json
 import os
 import sys
 
@@ -38,6 +39,72 @@ if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
 from src.pipeline.review_pipeline import ReviewPipeline
 from src.llm.llm_bridge import create_openai_llm_call
 from src import config as cfg
+
+
+def _safe_print(*args, **kwargs) -> None:
+    """GBK 安全打印。"""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "utf-8"
+        for a in args:
+            print(str(a).encode(enc, errors="replace").decode(enc), **kwargs)
+
+
+def _check_api(base_url: str, api_key: str) -> bool:
+    """启动前检查 API 可用性。成功返回 True。"""
+    import urllib.error
+    import urllib.request
+
+    models_url = base_url.rstrip("/") + "/models"
+    headers = {"User-Agent": "MinecraftTranslateProofreadAgent/1.0"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        req = urllib.request.Request(models_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                _safe_print(f"  [OK] API 连接正常: {base_url}")
+                return True
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _safe_print(f"  [FAIL] API Key 无效 (401): {base_url}")
+            return False
+        elif e.code == 403:
+            _safe_print(f"  [FAIL] API 访问被拒绝 (403): {base_url}")
+            return False
+    except Exception as e:
+        _safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
+        return False
+
+    # /models 不可用时用 chat/completions 做一个最小请求验证连通性
+    chat_url = base_url.rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash"),
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+    }).encode("utf-8")
+    headers["Content-Type"] = "application/json"
+    try:
+        req = urllib.request.Request(chat_url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status in (200, 201):
+                _safe_print(f"  [OK] API 可用: {base_url}")
+                return True
+            body_text = resp.read().decode("utf-8", errors="replace")
+            if "invalid" in body_text.lower():
+                _safe_print(f"  [FAIL] API Key 无效: {base_url}")
+                return False
+            _safe_print(f"  [OK] API 连接正常: {base_url}")
+            return True
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")[:200]
+        _safe_print(f"  [FAIL] API 请求失败 ({e.code}): {body_text}")
+        return False
+    except Exception as e:
+        _safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
+        return False
 
 
 def main() -> None:
@@ -183,11 +250,16 @@ def main() -> None:
     llm_call = None
     if not args.no_llm and not args.interactive and not args.dry_run:
         api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
+        base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
+        model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+
         if not api_key:
             print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
         else:
-            base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
-            model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+            print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
+            if not _check_api(base_url, api_key):
+                print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
+                print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
             llm_call = create_openai_llm_call(api_key, model, base_url)
 
     pipeline = ReviewPipeline(
