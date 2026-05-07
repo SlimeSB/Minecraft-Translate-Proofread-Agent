@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CACHE_PATH = "lemma_cache.json"
+DEFAULT_CACHE_PATH = "data/lemma_cache.json"
 
 
 class LemmaCache:
@@ -22,7 +22,8 @@ class LemmaCache:
     def __init__(self, path: str = DEFAULT_CACHE_PATH):
         self.path = Path(path)
         self.map: dict[str, str] = {}       # {variant_lower: canonical}
-        self._freq: dict[str, int] = {}     # {canonical_lower: freq}
+        self._freq: dict[str, int] = {}     # {canonical_lower: cumulative freq}
+        self._contrib: dict[str, int] = {}  # {variant_lower: lookup count for current mapping}
         self._loaded = False
 
     def load(self) -> dict[str, str]:
@@ -84,6 +85,7 @@ class LemmaCache:
         if canon is not None:
             canon_lower = canon.lower().strip()
             self._freq[canon_lower] = self._freq.get(canon_lower, 0) + 1
+            self._contrib[key] = self._contrib.get(key, 0) + 1
             return canon
         return None
 
@@ -93,6 +95,7 @@ class LemmaCache:
         # 更新 canonical 自身
         self.map[canon_key] = canonical
         self._freq[canon_key] = self._freq.get(canon_key, 0) + 1
+        self._contrib[canon_key] = self._contrib.get(canon_key, 0) + 1
 
         for m in members:
             mk = m.lower().strip()
@@ -101,8 +104,11 @@ class LemmaCache:
             if mk in self.map:
                 old_canon = self.map[mk].lower().strip()
                 if old_canon in self._freq:
-                    self._freq[old_canon] = max(0, self._freq.get(old_canon, 1) - 1)
+                    # 从旧 canonical 减去该 variant 的实际贡献次数
+                    contrib = self._contrib.pop(mk, 1)
+                    self._freq[old_canon] = max(0, self._freq.get(old_canon, 0) - contrib)
             self.map[mk] = canonical
+            self._contrib[mk] = self._contrib.get(mk, 0) + 1
             self._freq[canon_key] = self._freq.get(canon_key, 0) + 1
 
         self.save()

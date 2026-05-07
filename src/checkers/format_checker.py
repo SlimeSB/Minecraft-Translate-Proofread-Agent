@@ -2,20 +2,16 @@
 全自动格式验证器：对每条 aligned entry 执行结构化格式检查。
 所有检查均为确定性规则，无需 LLM 参与。
 
-用法（独立）:
-    python format_checker.py --alignment alignment.json [--output verdicts.json]
-
-用法（模块）:
+用法:
     from format_checker import FormatChecker
     checker = FormatChecker()
     verdicts = checker.check_all(matched_entries)
 """
-import argparse
 import json
 import re
-import sys
-from pathlib import Path
 from typing import Any
+
+from src import config as cfg
 
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
@@ -72,6 +68,9 @@ NON_TRANSLATABLE_PATTERNS = [
     re.compile(r"^[0-9]+$"),            # 纯数字
     re.compile(r"^[A-Za-z0-9_.-]+$"),   # 纯ASCII标识符
     re.compile(r"^§[0-9a-fA-F].*"),     # 格式码开头
+    re.compile(r"^%[a-zA-Z0-9_.$]*$"),  # 纯占位符: %s, %d, %1$s
+    re.compile(r"^\{[^{}]*\}$"),        # 纯占位符: {0}, {name}
+    re.compile(r"^%[A-Za-z_]\w*%$"),    # 纯占位符: %msg%, %key%
 ]
 
 
@@ -175,8 +174,10 @@ class FormatChecker:
         issues: list[str] = []
 
         # printf 占位符 (归一化: %1$s → %s)
-        en_printf = [_normalize_printf(p) for p in RE_PRINTF.findall(en)]
-        zh_printf = [_normalize_printf(p) for p in RE_PRINTF.findall(zh)]
+        en_printf = [_normalize_printf(p) for p in
+                     RE_PRINTF.findall(en) + RE_POSITIONAL_PRINTF.findall(en)]
+        zh_printf = [_normalize_printf(p) for p in
+                     RE_PRINTF.findall(zh) + RE_POSITIONAL_PRINTF.findall(zh)]
         if sorted(en_printf) != sorted(zh_printf):
             en_count = {p: en_printf.count(p) for p in set(en_printf)}
             zh_count = {p: zh_printf.count(p) for p in set(zh_printf)}
@@ -202,12 +203,12 @@ class FormatChecker:
         en_brace = RE_BRACE_VAR.findall(en)
         zh_brace = RE_BRACE_VAR.findall(zh)
         if sorted(en_brace) != sorted(zh_brace):
-            missing = [p for p in en_brace if p not in zh_brace]
-            extra = [p for p in zh_brace if p not in en_brace]
-            if missing:
-                issues.append(f"缺失变量: {{{', {'.join(missing)}}}")
-            if extra:
-                issues.append(f"多余变量: {{{', {'.join(extra)}}}")
+            missing_brace = [p for p in en_brace if p not in zh_brace]
+            extra_brace = [p for p in zh_brace if p not in en_brace]
+            if missing_brace:
+                issues.append(f"缺失变量: {{{'}, {'.join(missing_brace)}}}")
+            if extra_brace:
+                issues.append(f"多余变量: {{{'}, {'.join(extra_brace)}}}")
 
         if issues:
             return self._verdict(key, en, zh, "❌ FAIL",
@@ -341,12 +342,13 @@ class FormatChecker:
             issues.append(f"中文与中文标点间有不必要空格（{len(punct_space)}处）")
 
         # 中英文间空格（Patchouli 手册文本除外，此处标记 SUGGEST）
-        en_cn_spaces = re.findall(
-            r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]",
-            zh,
-        )
-        if en_cn_spaces:
-            issues.append(f"中英文间有不必要空格（{len(en_cn_spaces)}处）")
+        if not any(key.startswith(p) for p in cfg.PUNCTUATION_SPACING_WHITELIST):
+            en_cn_spaces = re.findall(
+                r"[\u4e00-\u9fff]\s+[A-Za-z0-9]|[A-Za-z0-9]\s+[\u4e00-\u9fff]",
+                zh,
+            )
+            if en_cn_spaces:
+                issues.append(f"中英文间有不必要空格（{len(en_cn_spaces)}处）")
 
         if issues:
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
@@ -435,54 +437,3 @@ class FormatChecker:
             "source": "format_check",
         }
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="对 aligned entries 执行全自动格式检查"
-    )
-    parser.add_argument("--alignment", required=True,
-                        help="alignment.json 路径（来自 key_alignment.py）")
-    parser.add_argument("--output", default=None,
-                        help="保存 verdicts 到文件（可选）")
-
-    args = parser.parse_args()
-
-    try:
-        with open(args.alignment, "r", encoding="utf-8") as f:
-            alignment = json.load(f)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-
-    matched = alignment.get("matched_entries", [])
-    checker = FormatChecker()
-    all_verdicts: list[dict[str, Any]] = []
-
-    for entry in matched:
-        verdicts = checker.check_all(entry)
-        all_verdicts.extend(verdicts)
-
-    result = {
-        "total_checked": len(matched),
-        "issues_found": len(all_verdicts),
-        "verdicts": all_verdicts,
-    }
-
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

@@ -1,4 +1,8 @@
-"""全局配置模块。所有模块从这里取配置，避免重复。"""
+"""全局配置模块。所有模块从这里取配置，避免重复。
+
+review_config.json 使用嵌套分组结构，
+本模块在加载时展平为旧版扁平 API，保持所有消费者兼容。
+"""
 import json
 import sys
 from typing import Any
@@ -7,35 +11,8 @@ CONFIG_PATH = "review_config.json"
 
 _cfg_cache: dict[str, Any] | None = None
 
-# 已知合法配置键，其余键启动时发出警告
-_KNOWN_KEYS: set[str] = {
-    "_note",
-    "desc_key_suffixes",
-    "key_prefix_prompts",
-    "llm_required_prefixes",
-    "default_review_focus",
-    "style_reference",
-    "review_system_prompt",
-    "review_instruction",
-    "review_principles",
-    "merge_system_prompt",
-    "review_header_prefix",
-    "keyboard_guidance",
-    "mouse_guidance",
-    "term_min_freq",
-    "term_min_consensus",
-    "term_max_zh_len",
-    "term_max_en_len",
-    "term_consensus_min_total",
-    "fuzzy_cluster_threshold",
-    "fuzzy_cluster_top_n",
-    "term_blacklist",
-    "max_workers",
-    "filter_system_prompt",
-    "filter_instruction",
-    "filter_batch_size",
-    "pr_change_context_prompt",
-}
+# 顶层分组键
+_TOP_GROUPS = {"pipeline", "key_prefixes", "llm", "terminology", "format", "pr", "_comment"}
 
 
 def _load() -> dict[str, Any]:
@@ -43,20 +20,78 @@ def _load() -> dict[str, Any]:
     if _cfg_cache is None:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                _cfg_cache = json.load(f)
+                raw = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            _cfg_cache = {}
-        _validate(_cfg_cache)
+            raw = {}
+        _validate(raw)
+        _cfg_cache = _flatten(raw)
     return _cfg_cache
 
 
-def _validate(cfg: dict[str, Any]) -> None:
-    unknown = set(cfg) - _KNOWN_KEYS
+def _validate(raw: dict[str, Any]) -> None:
+    unknown = set(raw) - _TOP_GROUPS
     if unknown:
         print(
-            f"[config] 警告: review_config.json 中有未知键将被忽略: {', '.join(sorted(unknown))}",
+            f"[config] 警告: review_config.json 中有未知顶层分组将被忽略: {', '.join(sorted(unknown))}",
             file=sys.stderr,
         )
+
+
+def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
+    """将嵌套 JSON 展平为旧的扁平键空间。"""
+    flat: dict[str, Any] = {}
+
+    # ── pipeline ──
+    p = raw.get("pipeline", {})
+    flat["max_workers"] = p.get("max_workers", 4)
+    flat["filter_batch_size"] = p.get("filter_batch_size", 50)
+
+    # ── key_prefixes ──
+    # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
+    # llm_required_prefixes 从嵌入的 llm_required 标记自动派生
+    kp = raw.get("key_prefixes", {})
+    flat["key_prefix_prompts"] = kp
+    flat["llm_required_prefixes"] = [
+        prefix for prefix, info in kp.items() if info.get("llm_required")
+    ]
+
+    # ── llm ──
+    l = raw.get("llm", {})
+    flat["review_system_prompt"] = l.get("system_prompt")
+    flat["review_header_prefix"] = l.get("header_prefix")
+    flat["default_review_focus"] = l.get("default_review_focus")
+    flat["review_instruction"] = l.get("review_instruction", [])
+    flat["review_principles"] = l.get("review_principles", [])
+    flat["merge_system_prompt"] = l.get("merge_system_prompt", [])
+    flat["keyboard_guidance"] = l.get("keyboard_guidance")
+    flat["mouse_guidance"] = l.get("mouse_guidance")
+
+    filt = l.get("filter", {})
+    flat["filter_system_prompt"] = filt.get("system_prompt")
+    flat["filter_instruction"] = filt.get("instruction", [])
+
+    # ── terminology ──
+    t = raw.get("terminology", {})
+    flat["term_min_freq"] = t.get("min_freq", 5)
+    flat["term_min_consensus"] = t.get("min_consensus", 0.6)
+    flat["term_max_zh_len"] = t.get("max_zh_len", 40)
+    flat["term_max_en_len"] = t.get("max_en_len", 60)
+    flat["term_consensus_min_total"] = t.get("consensus_min_total", 3)
+    flat["fuzzy_cluster_threshold"] = t.get("fuzzy_cluster_threshold", 65.0)
+    flat["fuzzy_cluster_top_n"] = t.get("fuzzy_cluster_top_n", 200)
+    flat["term_blacklist"] = t.get("blacklist", [])
+
+    # ── format ──
+    fmt = raw.get("format", {})
+    flat["desc_key_suffixes"] = fmt.get("desc_key_suffixes", [])
+    flat["punctuation_spacing_whitelist"] = fmt.get("punctuation_spacing_whitelist", [])
+
+    # ── pr ──
+    pr = raw.get("pr", {})
+    flat["pr_change_context_prompt"] = pr.get("change_context_prompt")
+    flat["default_pr_repo"] = pr.get("default_repo", "CFPAOrg/Minecraft-Mod-Language-Package")
+
+    return flat
 
 
 def get(key: str, default: Any = None) -> Any:
@@ -66,59 +101,47 @@ def get(key: str, default: Any = None) -> Any:
     return val
 
 
-# ── 常用配置项 ──
+# ═══════════════════════════════════════════════════════════
+# 常用配置项（保持与旧版完全相同的 API）
+# ═══════════════════════════════════════════════════════════
 
-# 需要 LLM 审校的描述性 key 后缀（如 .desc / .tooltip）
 DESC_KEY_SUFFIXES: tuple[str, ...] = tuple(
     get("desc_key_suffixes", [".desc", ".description", ".lore", ".tooltip",
                                ".flavor", ".info", ".message", ".text"])
 )
 
-# 术语提取：最低频次（低于此值的 n-gram 不进入术语表）
+PUNCTUATION_SPACING_WHITELIST: tuple[str, ...] = tuple(
+    get("punctuation_spacing_whitelist", ["book.", "patchouli."])
+)
+
 TERM_MIN_FREQ: int = get("term_min_freq", 5)
-# 术语提取：中文共识比例（同一英文对应多种中文时，需 ≥ 此比例才收录）
 TERM_MIN_CONSENSUS: float = get("term_min_consensus", 0.6)
-# 术语提取：中文最大长度（超过此长度不收录）
 TERM_MAX_ZH_LEN: int = get("term_max_zh_len", 40)
-# 术语提取：英文最大长度
 TERM_MAX_EN_LEN: int = get("term_max_en_len", 60)
-# 术语提取：共识计算的最低样本数
 TERM_CONSENSUS_MIN_TOTAL: int = get("term_consensus_min_total", 3)
-# 词形模糊聚类相似度阈值（0-100）
 FUZZY_CLUSTER_THRESHOLD: float = get("fuzzy_cluster_threshold", 65.0)
-# 词形模糊聚类最多参与条目数
 FUZZY_CLUSTER_TOP_N: int = get("fuzzy_cluster_top_n", 200)
-# 异步 LLM 最大并发数
 MAX_WORKERS: int = get("max_workers", 4)
 
-# key 前缀 → [类别标签, 审查重点] 映射
-KEY_PREFIX_PROMPTS: dict[str, list[str]] = get("key_prefix_prompts")
-# 强制 LLM 审校的 key 前缀（不可自动通过）
+KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
 LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
 
-# ── Prompt / 引导文本（必填，缺失则报错）───
 
-# 未匹配前缀的默认审查重点
+def _as_text(val: str | list[str]) -> str:
+    return "\n".join(val) if isinstance(val, list) else val
+
+
 DEFAULT_REVIEW_FOCUS: str = get("default_review_focus")
-# 风格参考（注入到每条 prompt）
-STYLE_REFERENCE: str = get("style_reference")
-# LLM system prompt
 REVIEW_SYSTEM_PROMPT: str = get("review_system_prompt")
-# LLM 输出格式指令
-REVIEW_INSTRUCTION: str = get("review_instruction")
-# 审校普适原则（注入到每条 prompt）
-REVIEW_PRINCIPLES: str = get("review_principles")
-# 术语归并 LLM system prompt
-MERGE_SYSTEM_PROMPT: str = get("merge_system_prompt")
-# prompt 标题前缀
+REVIEW_INSTRUCTION: str = _as_text(get("review_instruction"))
+REVIEW_PRINCIPLES: str = _as_text(get("review_principles"))
+MERGE_SYSTEM_PROMPT: str = _as_text(get("merge_system_prompt"))
 REVIEW_HEADER_PREFIX: str = get("review_header_prefix")
-# 检测到键盘按键时的补充指南
 KEYBOARD_GUIDANCE: str = get("keyboard_guidance")
-# 检测到鼠标操作时的补充指南
 MOUSE_GUIDANCE: str = get("mouse_guidance")
 
-# ── Phase 5: 最终 LLM 过滤 ──
-
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
-FILTER_INSTRUCTION: str = get("filter_instruction")
+FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
+
+DEFAULT_PR_REPO: str = get("default_pr_repo", "CFPAOrg/Minecraft-Mod-Language-Package")

@@ -1,0 +1,188 @@
+"""PR 差异对齐 — 编排器，从 GitHub PR 拉取差异并对齐文件。"""
+
+import json
+import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from . import _http, _lang, _guideme
+
+
+def run_pr_aligner(
+    repo: str,
+    pr: int,
+    output_dir: str,
+    token: str = "",
+) -> str:
+    """主入口：执行 PR 对齐流程，返回输出文件路径。"""
+    owner, repo_name = repo.split("/", 1)
+    api_base = f"https://api.github.com/repos/{owner}/{repo_name}"
+
+    print(f"[PR Aligner] 开始处理 PR #{pr} ({repo})...")
+
+    # Step 1: 获取 PR 详情
+    pr_info = _http.api_get(f"{api_base}/pulls/{pr}", token)
+    base_sha = pr_info["base"]["sha"]
+    head_sha = pr_info["head"]["sha"]
+    print(f"  Base: {base_sha[:12]}")
+    print(f"  Head: {head_sha[:12]}")
+
+    # Step 2: 获取变更文件列表
+    page = 1
+    all_changed_files: list[dict[str, Any]] = []
+    while True:
+        url = f"{api_base}/pulls/{pr}/files?per_page=100&page={page}"
+        files_page = _http.api_get(url, token)
+        if not files_page:
+            break
+        all_changed_files.extend(files_page)
+        if len(files_page) < 100:
+            break
+        page += 1
+        time.sleep(0.1)
+
+    print(f"  变更文件: {len(all_changed_files)} 个")
+
+    # Step 3: 按模组分组建 JSON 语言文件
+    mods = _lang.group_mod_files(all_changed_files)
+    print(f"  模组语言文件: {len(mods)} 组")
+
+    # Step 4: 对齐 JSON lang
+    all_entries: list[dict[str, Any]] = []
+    all_warnings: list[dict[str, Any]] = []
+    result_mods: dict[str, Any] = {}
+
+    raw_base = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{base_sha}"
+    raw_head = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{head_sha}"
+
+    for mod_key, mod_data in mods.items():
+        mi = mod_data["mod_info"]
+        version, cid, slug = mi["version"], mi["curseforge_id"], mi["slug"]
+        resolved_mod_key = f"{version}/{cid}/{slug}"
+
+        # 用实际文件路径构造 URL（兼容新旧目录结构）
+        en_head = mod_data["en_head"]
+        en_base = mod_data["en_base"]
+        if en_head or en_base:
+            sample = en_head or en_base
+            lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
+        else:
+            lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
+
+        try:
+            old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token)
+            new_en_text = _http.raw_get(f"{raw_head}/{lang_dir}/en_us.json", token) if en_head is not None else ""
+            old_zh_text = _http.raw_get(f"{raw_base}/{lang_dir}/zh_cn.json", token)
+            new_zh_text = _http.raw_get(f"{raw_head}/{lang_dir}/zh_cn.json", token) if mod_data["zh_head"] is not None else ""
+        except RuntimeError as e:
+            print(f"  警告: 模组 {resolved_mod_key} 拉取失败: {e}")
+            continue
+
+        old_en = json.loads(old_en_text) if old_en_text.strip() else {}
+        new_en = json.loads(new_en_text) if new_en_text.strip() else {}
+        old_zh = json.loads(old_zh_text) if old_zh_text.strip() else {}
+        new_zh = json.loads(new_zh_text) if new_zh_text.strip() else {}
+
+        entries, warnings = _lang.align(old_en, new_en, old_zh, new_zh)
+
+        if entries:
+            for e in entries:
+                e["namespace"] = slug
+            result_mods[resolved_mod_key] = {
+                "mod_info": mi,
+                "entries": entries,
+            }
+            all_entries.extend(entries)
+        all_warnings.extend(warnings)
+
+        time.sleep(0.1)
+
+    # Step 4.5: GuideME 文档对齐
+    guideme_entries, guideme_warnings = _guideme.align(
+        all_changed_files, raw_base, raw_head, _http.raw_get, token,
+    )
+    if guideme_entries:
+        print(f"  GuideME 文档: {len(guideme_entries)} 条变更")
+        all_entries.extend(guideme_entries)
+        all_warnings.extend(guideme_warnings)
+        result_mods["__guideme__"] = {
+            "mod_info": {"version": "", "curseforge_id": "", "slug": ""},
+            "entries": guideme_entries,
+        }
+
+    # Step 5: 过滤纯删除条目（en/zh 均为空但 old 有值）
+    deletions: dict[str, int] = defaultdict(int)
+    real_entries: list[dict[str, Any]] = []
+    for e in all_entries:
+        if e.get("en", "") == "" and e.get("zh", "") == "" and (e.get("old_en") or e.get("old_zh")):
+            ns = e.get("namespace", "__unknown__")
+            deletions[ns] += 1
+        else:
+            real_entries.append(e)
+
+    for ns, count in sorted(deletions.items()):
+        if count > 5:
+            print(f"  ⚠ [{ns}] 发现 {count} 条删除条目（key已移除），旧版本使用该模组翻译可能出现key缺失，注意兼容性")
+
+    # Step 6: 按 namespace 分组
+    ns_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in real_entries:
+        ns = e.get("namespace", "__unknown__")
+        ns_groups[ns].append(e)
+
+    # Step 7: 统计
+    en_changed_count = sum(1 for e in real_entries if "old_en" in e)
+    zh_changed_count = sum(1 for e in real_entries if "old_zh" in e)
+
+    result: dict[str, Any] = {
+        "repo": repo,
+        "pr": pr,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "mods": result_mods,
+        "all_entries": real_entries,
+        "all_warnings": all_warnings,
+        "deletions": dict(deletions),
+        "namespaces": {ns: {"count": len(entries), "entries": entries} for ns, entries in ns_groups.items()},
+        "stats": {
+            "total_changed_keys": len(real_entries),
+            "deleted_keys": sum(deletions.values()),
+            "en_changed": en_changed_count,
+            "zh_changed": zh_changed_count,
+            "zh_unchanged_warnings": len(all_warnings),
+            "guideme_entries": len(guideme_entries),
+            "namespaces": len(ns_groups),
+        },
+    }
+
+    # 保存合并文件
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    combined_path = output_dir_path / "00_pr_alignment.json"
+    with open(combined_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    # 保存按 namespace 分文件
+    ns_dir = output_dir_path / "pr_namespaces"
+    ns_dir.mkdir(parents=True, exist_ok=True)
+    for ns, entries in ns_groups.items():
+        ns_file = ns_dir / f"{ns}.json"
+        with open(ns_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "namespace": ns,
+                "entries": entries,
+                "count": len(entries),
+                "warnings": [w for w in all_warnings if any(
+                    w.get("key") == e.get("key") for e in entries
+                )],
+            }, f, ensure_ascii=False, indent=2)
+
+    print(f"[PR Aligner] 完成: {len(all_entries)} 条变更, "
+          f"EN 变更 {en_changed_count}, ZH 变更 {zh_changed_count}, "
+          f"警告 {len(all_warnings)} 条, {len(ns_groups)} 个 namespace")
+    print(f"  合并: {combined_path}")
+    if len(ns_groups) > 1:
+        print(f"  分文件: {ns_dir} ({', '.join(ns_groups.keys())})")
+
+    return str(combined_path)

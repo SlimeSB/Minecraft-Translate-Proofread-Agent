@@ -30,13 +30,55 @@
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+from typing import Any
+
+_RE_CODE_LIKE = re.compile(r"^[A-Z_]+$|^[0-9]+$|^[A-Za-z0-9_.-]+$|^§[0-9a-fA-F].*")
+_COMMENT_KEY_RE = re.compile(r"^_comment")
+
+
+def _is_code_or_proper_noun(text: str) -> bool:
+    return bool(_RE_CODE_LIKE.match(text.strip()))
 
 
 def load_json(path: str) -> dict:
     with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
+
+
+def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
+    """加载 JSON 语言文件，过滤 _comment* 键，检测重复 key。
+
+    返回: (cleaned_data, warnings)
+    """
+    with open(path, "r", encoding="utf-8-sig") as f:
+        raw = f.read()
+
+    warnings: list[str] = []
+    seen: dict[str, int] = {}
+    stripped = 0
+
+    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        nonlocal stripped
+        result: dict[str, Any] = {}
+        for key, val in pairs:
+            if _COMMENT_KEY_RE.match(key):
+                stripped += 1
+                continue
+            if key in seen:
+                warnings.append(f"重复key: {key!r}（第 {seen[key]} 次出现后又出现），JSON只保留最后一次的值")
+            else:
+                seen[key] = 1
+            seen[key] += 1
+            result[key] = val
+        return result
+
+    data = json.loads(raw, object_pairs_hook=_hook)
+    if stripped:
+        warnings.insert(0, f"过滤了 {stripped} 个 _comment* 键")
+    return data, warnings
 
 
 def align_keys(en_data: dict, zh_data: dict) -> dict:
@@ -60,6 +102,8 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
         en_val = entry["en"]
         zh_val = entry["zh"]
         if en_val == zh_val:
+            if _is_code_or_proper_noun(en_val):
+                continue
             if en_val == "":
                 reason = "均为空字符串"
             else:
@@ -85,6 +129,40 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
             "total_zh": len(zh_keys),
         },
     }
+
+
+def check_vanilla_collisions(
+    en_data: dict[str, str],
+    vanilla_keys_path: str = "data/vanilla_keys.json",
+) -> list[dict[str, Any]]:
+    """检查模组 key 是否覆盖了原版 key。
+
+    返回碰撞列表，每项: {key, mod_value, vanilla_is_known}。
+    若原版 key 文件不存在则返回空列表。
+    """
+    try:
+        with open(vanilla_keys_path, "r", encoding="utf-8") as f:
+            vanilla_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+    vanilla_set: set[str] = set(vanilla_data.get("keys", []))
+    if not vanilla_set:
+        return []
+
+    mod_keys = set(en_data.keys())
+    collisions = mod_keys & vanilla_set
+
+    if not collisions:
+        return []
+
+    return [
+        {
+            "key": k,
+            "mod_value": str(en_data[k])[:80],
+        }
+        for k in sorted(collisions)
+    ]
 
 
 def main() -> None:

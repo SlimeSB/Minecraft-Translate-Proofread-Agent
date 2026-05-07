@@ -1,25 +1,30 @@
 """
 报告生成器：合并所有 verdict来源、去重冲突解决、生成审校报告。
 
-用法（独立）:
-    python report_generator.py --alignment alignment.json \\
-        --format-verdicts format_verdicts.json \\
-        --term-verdicts term_verdicts.json \\
-        --llm-verdicts llm_verdicts.json \\
-        --output-dir ./output/
-
-用法（模块）:
+用法:
     from report_generator import ReportGenerator
     rg = ReportGenerator()
     rg.collect(format_v, term_v, llm_v)
     rg.generate(output_dir)
 """
-import argparse
 import json
 import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+
+def _print(*args, **kwargs) -> None:
+    """安全打印，应对 Windows GBK 终端无法输出 emoji 的情况。"""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        safe = [
+            str(a).encode(encoding, errors="replace").decode(encoding)
+            for a in args
+        ]
+        print(*safe, **kwargs)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -123,39 +128,38 @@ class ReportGenerator:
         failed = sum(1 for v in self.verdicts if v.get("verdict") == "❌ FAIL")
         suggest = sum(1 for v in self.verdicts if v.get("verdict") == "⚠️ SUGGEST")
         review = sum(1 for v in self.verdicts if v.get("verdict") == "🔶 REVIEW")
-        passed = total - len(self.verdicts)  # 不在 verdicts 中的即 PASS
-        # 如果有些 PASS 在 verdicts 中显式声明
-        explicit_pass = sum(1 for v in self.verdicts if v.get("verdict") == "PASS")
+        passed = total - failed - suggest - review
         self.stats = {
             "total": total,
-            "PASS": max(passed, explicit_pass),
+            "PASS": passed,
             "⚠️ SUGGEST": suggest,
             "❌ FAIL": failed,
             "🔶 REVIEW": review,
         }
         return self.stats
 
-    def generate_review_report(
+    def build_report(
         self,
-        output_path: str,
-    ) -> None:
-        """生成 review_report.json —— 按来源分组，LLM 和程序化 verdict 并存。"""
+    ) -> dict[str, Any]:
+        """构建报告 dict（不写磁盘），供调用方自行存储。"""
         if not self.stats:
             self.compute_stats()
 
-        # 构建 EN/ZH 速查表
         en_zh_map: dict[str, dict[str, str]] = {}
+        namespace_map: dict[str, str] = {}
         for entry in self.matched_entries:
-            en_zh_map[entry["key"]] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
+            key = entry["key"]
+            en_zh_map[key] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
+            ns = entry.get("namespace", "")
+            if ns:
+                namespace_map[key] = ns
 
-        # 统一规范化 verdict：统一字段名称、补齐 en_current/zh_current
-        _VERDICT_MAP = {  # LLM 可能返回不标准的值
+        _VERDICT_MAP = {
             "FAIL": "❌ FAIL", "REVIEW": "🔶 REVIEW", "SUGGEST": "⚠️ SUGGEST",
             "PASS": "PASS",
         }
 
-        def _normalize(v: dict[str, Any]) -> dict[str, Any]:
-            """统一所有 verdict 的字段结构与枚举值。"""
+        def _normalize(v: dict[str, Any]) -> dict[str, Any] | None:
             out: dict[str, Any] = {
                 "key":        v.get("key", ""),
                 "en_current": v.get("en_current", ""),
@@ -163,6 +167,8 @@ class ReportGenerator:
                 "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
                 "suggestion": v.get("suggestion", ""),
                 "reason":     v.get("reason", ""),
+                "source":     v.get("source", ""),
+                "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
             }
             if not out["en_current"] and not out["zh_current"]:
                 pair = en_zh_map.get(out["key"], {})
@@ -172,7 +178,6 @@ class ReportGenerator:
                 return None
             return out
 
-        # 按 key 合并：同名 key 取最高优先级判决，reason 合并去重
         by_key: dict[str, dict[str, Any]] = {}
         for v in self.verdicts:
             nv = _normalize(v)
@@ -183,15 +188,13 @@ class ReportGenerator:
                 by_key[key] = nv
                 continue
             existing = by_key[key]
-            # 合并 reason（去重 union）
-            reasons = set()
+            reasons: set[str] = set()
             for r in (existing["reason"], nv["reason"]):
                 for part in r.split("; "):
                     part = part.strip()
                     if part:
                         reasons.add(part)
             existing["reason"] = "; ".join(reasons)
-            # 取更高优先级的 verdict
             if VERDICT_PRIORITY.get(nv["verdict"], 0) > VERDICT_PRIORITY.get(existing["verdict"], 0):
                 existing["verdict"] = nv["verdict"]
                 existing["suggestion"] = nv["suggestion"] or existing["suggestion"]
@@ -202,11 +205,17 @@ class ReportGenerator:
             reverse=True,
         )
 
-        report = {
-            "stats": self.stats,
+        return {
+            "stats": dict(self.stats),
             "verdicts": merged,
         }
 
+    def generate_review_report(
+        self,
+        output_path: str,
+    ) -> None:
+        """生成 review_report.json（写入磁盘）。"""
+        report = self.build_report()
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -253,13 +262,44 @@ class ReportGenerator:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(annotated, f, ensure_ascii=False, indent=2)
 
+    def generate_markdown_report(self, output_path: str, namespace: str = "") -> None:
+        """生成可读的 Markdown 审校报告。"""
+        if not self.stats:
+            self.compute_stats()
+
+        lines: list[str] = []
+        lines.append(f"# 审校报告{f' — {namespace}' if namespace else ''}")
+        lines.append("")
+        lines.append("| 判定 | Key | 原文 | 译文 | 建议 | 问题 |")
+        lines.append("|------|-----|------|------|------|------|")
+
+        for v in self.verdicts:
+            verdict = v.get("verdict", "")
+            if verdict == "PASS":
+                continue
+            key = v.get("key", "")
+            en = (v.get("en_current", "") or "")[:60]
+            zh = (v.get("zh_current", "") or "")[:60]
+            suggestion = (v.get("suggestion", "") or "")[:60]
+            reason = (v.get("reason", "") or "")[:80]
+            lines.append(f"| {verdict} | `{key}` | {en} | {zh} | {suggestion} | {reason} |")
+
+        lines.append("")
+        s = self.stats
+        lines.append(f"- 总计 {s['total']} 条 | PASS {s['PASS']} | ⚠️ SUGGEST {s['⚠️ SUGGEST']} | ❌ FAIL {s['❌ FAIL']} | 🔶 REVIEW {s['🔶 REVIEW']}")
+
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
     def print_summary(self) -> None:
         """打印审校摘要。"""
         if not self.stats:
             self.compute_stats()
         s = self.stats
-        print("\n## 审校完毕")
-        print(f"- 总计: {s['total']} 条 | PASS: {s['PASS']} | ⚠️ SUGGEST: {s['⚠️ SUGGEST']} | ❌ FAIL: {s['❌ FAIL']} | 🔶 REVIEW: {s['🔶 REVIEW']}")
+        _print("\n## 审校完毕")
+        _print(f"- 总计: {s['total']} 条 | PASS: {s['PASS']} | ⚠️ SUGGEST: {s['⚠️ SUGGEST']} | ❌ FAIL: {s['❌ FAIL']} | 🔶 REVIEW: {s['🔶 REVIEW']}")
 
         # 分类统计
         by_source = defaultdict(int)
@@ -267,92 +307,23 @@ class ReportGenerator:
         for v in self.verdicts:
             by_source[v.get("source", "unknown")] += 1
         if by_source:
-            print("- 来源分布:", dict(by_source))
+            _print("- 来源分布:", dict(by_source))
 
     def print_verdict_table(self, max_rows: int = 30) -> None:
         """打印非 PASS verdict 表格。"""
         non_pass = [v for v in self.verdicts if v.get("verdict") != "PASS"]
         if not non_pass:
-            print("所有条目均 PASS ✓")
+            _print("所有条目均 PASS ✓")
             return
 
-        print(f"\n## 审校结论 ({len(non_pass)} 条)")
-        print(f"| {'判定':<10} | {'键名':<45} | {'问题':<50} |")
-        print(f"|{'-'*10}|{'-'*45}|{'-'*50}|")
+        _print(f"\n## 审校结论 ({len(non_pass)} 条)")
+        _print(f"| {'判定':<10} | {'键名':<45} | {'问题':<50} |")
+        _print(f"|{'-'*10}|{'-'*45}|{'-'*50}|")
         for v in non_pass[:max_rows]:
             key = v.get("key", "")[:42]
             reason = v.get("reason", "")[:48]
             verdict = v.get("verdict", "")
-            print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
+            _print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
         if len(non_pass) > max_rows:
-            print(f"... 还有 {len(non_pass) - max_rows} 条")
+            _print(f"... 还有 {len(non_pass) - max_rows} 条")
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="合并 verdict 并生成审校报告"
-    )
-    parser.add_argument("--alignment", required=True,
-                        help="alignment.json 路径")
-    parser.add_argument("--format-verdicts", default=None,
-                        help="format_checker 输出的 verdicts JSON")
-    parser.add_argument("--term-verdicts", default=None,
-                        help="terminology_builder 输出的 verdicts JSON")
-    parser.add_argument("--llm-verdicts", default=None,
-                        help="LLM 输出的 verdicts JSON")
-    parser.add_argument("--output-dir", required=True,
-                        help="输出目录")
-
-    args = parser.parse_args()
-
-    # 加载 alignment
-    try:
-        with open(args.alignment, "r", encoding="utf-8") as f:
-            alignment = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        sys.exit(1)
-
-    rg = ReportGenerator()
-    rg.load_alignment(alignment)
-
-    # 加载各来源 verdicts
-    verdict_lists: list[list[dict[str, Any]]] = []
-    for path, label in [
-        (args.format_verdicts, "format"),
-        (args.term_verdicts, "term"),
-        (args.llm_verdicts, "llm"),
-    ]:
-        if path:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    verdict_lists.append(data)
-                elif isinstance(data, dict) and "verdicts" in data:
-                    verdict_lists.append(data["verdicts"])
-            except (FileNotFoundError, json.JSONDecodeError) as e:
-                print(f"警告: 无法加载 {label} verdicts: {e}")
-
-    rg.collect(*verdict_lists)
-
-    # 生成报告
-    output_dir = Path(args.output_dir)
-    review_path = output_dir / "review_report.json"
-    annotated_path = output_dir / "zh_cn_annotated.json"
-
-    rg.generate_review_report(str(review_path))
-    rg.generate_annotated_json(str(annotated_path))
-
-    print(f"审校报告已写入 {review_path}")
-    print(f"可读注释版已写入 {annotated_path}")
-    rg.print_summary()
-    rg.print_verdict_table()
-
-
-if __name__ == "__main__":
-    main()

@@ -135,13 +135,16 @@ class TranslationDB:
 # ═══════════════════════════════════════════════════════════
 
 _db_instance: TranslationDB | None = None
+_db_key_set: frozenset[str] | None = None
 
 
 def _get_db(en_entries: dict[str, str], zh_entries: dict[str, str]) -> TranslationDB:
-    global _db_instance
-    if _db_instance is None:
+    global _db_instance, _db_key_set
+    current_keys = frozenset(en_entries.keys())
+    if _db_instance is None or _db_key_set != current_keys:
         _db_instance = TranslationDB()
         _db_instance.build(en_entries, zh_entries)
+        _db_key_set = current_keys
     return _db_instance
 
 

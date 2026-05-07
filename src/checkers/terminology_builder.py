@@ -3,23 +3,16 @@
 
 归并策略: 规则粗筛 → 模糊搜索聚类 → LLM 裁决同形异体
 
-用法（独立）:
-    python terminology_builder.py --en en_us.json --zh zh_cn.json \
-        --alignment alignment.json [--output glossary.json] [--verdicts term_verdicts.json]
-
-用法（模块）:
+用法:
     from terminology_builder import TerminologyBuilder
     tb = TerminologyBuilder()
     tb.load(en_data, zh_data, alignment)
     glossary = tb.merge_and_build(llm_call=my_llm_fn, min_freq=3)
     verdicts = tb.check_consistency()
 """
-import argparse
 import json
 import re
-import sys
 from collections import Counter
-from pathlib import Path
 from typing import Any, Callable
 
 from src.tools.terminology_extract import extract_terms
@@ -329,60 +322,4 @@ class TerminologyBuilder:
         self.merge_lemmas(llm_call=llm_call)
         return self.build_glossary()
 
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="从语言文件提取术语、构建术语表、检查一致性")
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("--alignment", required=True, help="alignment.json 路径")
-    parser.add_argument("--min-freq", type=int, default=3, help="术语最低频次阈值（归并后），默认3")
-    parser.add_argument("--cache-path", default=DEFAULT_CACHE_PATH,
-                        help=f"词形缓存路径，默认 {DEFAULT_CACHE_PATH}")
-    parser.add_argument("--output-glossary", default=None, help="保存术语表到文件")
-    parser.add_argument("--output-verdicts", default=None, help="保存术语一致性 verdicts 到文件")
-
-    args = parser.parse_args()
-
-    try:
-        with open(args.en, "r", encoding="utf-8") as f:
-            en_data = json.load(f)
-        with open(args.zh, "r", encoding="utf-8") as f:
-            zh_data = json.load(f)
-        with open(args.alignment, "r", encoding="utf-8") as f:
-            alignment = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        sys.exit(1)
-
-    tb = TerminologyBuilder(cache_path=args.cache_path)
-    tb.load(en_data, zh_data, alignment)
-    tb.extract(min_freq=2, max_ngram=3)
-    glossary = tb.merge_and_build()
-
-    if args.output_glossary:
-        p = Path(args.output_glossary)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(glossary, f, ensure_ascii=False, indent=2)
-
-    verdicts = tb.check_consistency()
-    if args.output_verdicts:
-        p = Path(args.output_verdicts)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(verdicts, f, ensure_ascii=False, indent=2)
-
-    result = {
-        "glossary_size": len(glossary),
-        "terminology_verdicts": verdicts,
-    }
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()
 

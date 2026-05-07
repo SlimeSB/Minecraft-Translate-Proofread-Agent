@@ -41,6 +41,17 @@ def raw_merge(extracted: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return merged
 
 
+# ═══════════════════════════════════════════════════════════
+# 归并守卫：阻止多词短语被吞入单词
+# ═══════════════════════════════════════════════════════════
+
+def _is_token_proper_subset(a: str, b: str) -> bool:
+    """判断一个术语的 token 集合是否是另一个的真子集（如 "upgrade adds" ⊃ "upgrade"）。"""
+    ta = set(a.split())
+    tb = set(b.split())
+    return ta < tb or tb < ta
+
+
 def apply_cache_merge(
     merged: dict[str, dict[str, Any]],
     cache: LemmaCache,
@@ -54,7 +65,7 @@ def apply_cache_merge(
     redirect: dict[str, str] = {}
     for raw_key in merged:
         canon = cache.lookup(raw_key)
-        if canon and canon != raw_key:
+        if canon and canon != raw_key and not _is_token_proper_subset(raw_key, canon):
             redirect[raw_key] = canon
             hits += 1
             # bump canonical freq so it stays "hot"
@@ -190,10 +201,12 @@ def apply_llm_merge(
     merged: dict[str, dict[str, Any]],
     llm_mapping: dict[str, str],
 ) -> dict[str, dict[str, Any]]:
-    """根据 LLM 裁决将 merged 桶合并。"""
+    """根据 LLM 裁决将 merged 桶合并。过滤多词→单词的非法映射。"""
     new_merged: dict[str, dict[str, Any]] = {}
     for norm, info in merged.items():
         target = llm_mapping.get(norm, norm)
+        if target != norm and _is_token_proper_subset(norm, target):
+            target = norm
         if target not in new_merged:
             new_merged[target] = {
                 "normalized": target,

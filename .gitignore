@@ -9,3 +9,5 @@ venv/
 .DS_Store
 
 lemma_cache.json
+/.commandcode
+AGENTS.md
