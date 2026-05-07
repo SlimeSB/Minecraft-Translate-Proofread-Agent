@@ -83,7 +83,7 @@ def create_openai_llm_call(
                     or "503" in err_str or "504" in err_str
                 )
                 if retryable and retries < MAX_RETRIES:
-                    delay = min(2 ** retries, 60)
+                    delay = min(5 * (1 << retries), 60)
                     retries += 1
                     _log("WARN", f"可重试错误, {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:200]}")
                     print(f"  [LLM] {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:120]}", file=sys.stderr)
