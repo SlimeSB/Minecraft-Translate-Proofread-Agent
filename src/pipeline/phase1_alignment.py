@@ -9,6 +9,7 @@ from src.models import (
     PRChangeMetaDict,
     PRWarningDict,
 )
+from src.storage.database import PipelineDB
 from src.tools.key_alignment import align_keys, load_json, load_json_clean
 
 
@@ -48,7 +49,9 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
         },
     }
 
-    _save_json(ctx.output_dir / "01_alignment.json", ctx.alignment)
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_alignment(ctx.alignment)
+    db.close()
 
     for entry in data.get("all_entries", []):
         key = entry["key"]
@@ -94,11 +97,6 @@ def _align_keys(ctx: PipelineContext) -> None:
     stats = ctx.alignment["stats"]
     print(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "
           f"⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
-    _save_json(ctx.output_dir / "01_alignment.json", ctx.alignment)
-
-
-def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"  已保存: {path}")
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_alignment(ctx.alignment)
+    db.close()

@@ -151,7 +151,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=20,
                         help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
-                        help="仅重跑 Phase 5 最终过滤（需已有 06_review_report.json）")
+                        help="仅重跑 Phase 5 最终过滤（需已有 pipeline.db）")
 
     args = parser.parse_args()
 
@@ -178,11 +178,10 @@ def main() -> None:
     if args.filter_only:
         from pathlib import Path
         output_dir = Path(args.output_dir)
-        review_path = output_dir / "06_review_report.json"
-        if not review_path.exists():
-            print(f"错误: 未找到 {review_path}，请先运行完整流水线", file=sys.stderr)
+        db_path = output_dir / "pipeline.db"
+        if not db_path.exists():
+            print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
             sys.exit(1)
-        import json as _json
         api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
         if not api_key:
             print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
@@ -192,38 +191,80 @@ def main() -> None:
         llm_call = create_openai_llm_call(api_key, model, base_url)
 
         from src.llm.bridge import LLMBridge
+        from src.storage.database import PipelineDB
+
+        db = PipelineDB(db_path)
+        verdicts = db.load_verdicts(phase="merged", filtered=0)
+
+        if not verdicts:
+            print("无待过滤 verdict")
+            db.close()
+            sys.exit(0)
+
+        # 查缓存
+        import hashlib
+        def _ck(v):
+            raw = ":".join([v.get("key",""), v.get("verdict",""),
+                           v.get("zh_current","")[:150], v.get("reason","")[:200]])
+            return hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
+
+        cached_discard: set[str] = set()
+        cached_reasons: dict[str, str] = {}
+        uncached: list[dict] = []
+        for v in verdicts:
+            r = db.lookup_filter_cache(_ck(v))
+            if r is not None:
+                a, c = r
+                if a == "DISCARD":
+                    cached_discard.add(v["key"])
+                elif c:
+                    cached_reasons[v["key"]] = c
+            else:
+                uncached.append(v)
+        print(f"[Phase 5] 缓存命中 {len(verdicts) - len(uncached)}, 需LLM {len(uncached)}")
+
         bridge = LLMBridge(llm_call)
+        if uncached:
+            fv, dc = bridge.filter_verdicts(uncached)
+            u_discard = {d["key"] for d in dc}
+            u_reasons = {}
+            for v in fv:
+                if v.get("reason") and v["key"] not in u_discard:
+                    u_reasons[v["key"]] = v["reason"]
+            for v in uncached:
+                ck = _ck(v)
+                k = v["key"]
+                if k in u_discard:
+                    db.store_filter_cache(ck, "DISCARD", "")
+                else:
+                    db.store_filter_cache(ck, "KEEP", u_reasons.get(k, ""))
+            db.commit_filter_cache()
+        else:
+            fv, dc = [], []
+            u_discard = set()
+            u_reasons = {}
 
-        with open(review_path, "r", encoding="utf-8") as f:
-            report = _json.load(f)
+        all_discard = cached_discard | u_discard
+        all_reasons = {**cached_reasons, **u_reasons}
 
-        verdicts = report.get("verdicts", [])
-        total = report.get("stats", {}).get("total", len(verdicts))
-        print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict")
+        for v in verdicts:
+            k = v["key"]
+            if k in all_discard:
+                db.set_filtered(k, "DISCARD", "")
+            else:
+                if k in all_reasons:
+                    v["reason"] = all_reasons[k]
+                db.set_filtered(k, "KEEP", v.get("reason", ""))
 
-        filtered, discard_records = bridge.filter_verdicts(verdicts)
-        removed = len(discard_records)
-        print(f"  驳回 {removed} 条, 保留 {len(filtered)} 条")
+        kept_verdicts = db.load_verdicts(phase="merged", filtered=1)
+        removed = len(all_discard)
+        print(f"  驳回 {removed} 条, 保留 {len(kept_verdicts)} 条")
 
-        # 保存驳回记录
-        discard_path = output_dir / "07_filter_discards.json"
-        with open(discard_path, "w", encoding="utf-8") as f:
-            _json.dump(discard_records, f, ensure_ascii=False, indent=2)
-        print(f"  驳回记录: {discard_path}")
+        stats = db.get_merged_stats()
+        db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
+        db.close()
 
-        if removed > 0:
-            stats = {
-                "total": total,
-                "PASS": total - len(filtered),
-                "⚠️ SUGGEST": sum(1 for v in filtered if v.get("verdict") == "⚠️ SUGGEST"),
-                "❌ FAIL": sum(1 for v in filtered if v.get("verdict") == "❌ FAIL"),
-                "🔶 REVIEW": sum(1 for v in filtered if v.get("verdict") == "🔶 REVIEW"),
-            }
-            report["stats"] = stats
-            report["verdicts"] = filtered
-            with open(review_path, "w", encoding="utf-8") as f:
-                _json.dump(report, f, ensure_ascii=False, indent=2)
-            print(f"  已更新: {review_path}")
+        print(f"  已更新: {db_path}")
         sys.exit(0)
 
     # ── PR 模式逻辑 ──
@@ -270,7 +311,7 @@ def main() -> None:
             llm_call = create_openai_llm_call(api_key, model, base_url,
                                                  system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
             filter_llm_call = create_openai_llm_call(api_key, model, base_url,
-                                                       system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                                       system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
                                                        log_dir="logs/filter")
 
     pipeline = ReviewPipeline(

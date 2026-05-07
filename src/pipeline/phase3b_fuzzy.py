@@ -1,8 +1,7 @@
 """Phase 3b: 模糊搜索相似的现有译文条目。"""
-import json
-
 from src.models import EntryDict, FuzzyResultDict, FuzzyResultsMap, PipelineContext
 from src.tools.fuzzy_search import fuzzy_search_lines
+from src.storage.database import PipelineDB
 
 
 def run_phase3b(ctx: PipelineContext, llm_entries: list[EntryDict]) -> None:
@@ -31,11 +30,7 @@ def run_phase3b(ctx: PipelineContext, llm_entries: list[EntryDict]) -> None:
             ctx.fuzzy_results_map[key] = results
 
     print(f"  模糊搜索: {len(to_search)} 条查询, {len(ctx.fuzzy_results_map)} 条有结果")
-    if ctx.fuzzy_results_map:
-        _save_json(ctx.output_dir / "04_fuzzy_results.json", ctx.fuzzy_results_map)
 
-
-def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_fuzzy_results(ctx.fuzzy_results_map)
+    db.close()

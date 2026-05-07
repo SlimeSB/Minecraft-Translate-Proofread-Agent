@@ -1,10 +1,9 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
-import json
-
 from src.models import EntryDict, PipelineContext, VerdictDict
 from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
+from src.storage.database import PipelineDB
 
 
 def run_phase3c(ctx: PipelineContext) -> None:
@@ -70,11 +69,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
         ]
 
     print(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
-    if ctx.llm_verdicts:
-        _save_json(ctx.output_dir / "05_llm_verdicts.json", ctx.llm_verdicts)
 
-
-def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_verdicts(ctx.llm_verdicts, "llm")
+    db.close()

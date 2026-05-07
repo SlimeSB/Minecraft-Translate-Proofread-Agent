@@ -132,7 +132,7 @@ class ReviewStatsDict(TypedDict):
 
 
 class ReviewReportDict(TypedDict):
-    """审校报告（06_review_report.json）。"""
+    """审校报告（pipeline.db verdicts 表 phase='merged'）。"""
     stats: ReviewStatsDict
     verdicts: list[VerdictDict]
 
@@ -144,7 +144,7 @@ class FilterDiscardRecord(TypedDict):
 
 
 class FormatVerdictsContainer(TypedDict):
-    """格式检查 verdicts 容器（03_format_verdicts.json）。"""
+    """格式检查 verdicts 容器（pipeline.db verdicts 表 phase='format'）。"""
     total_checked: int
     issues_found: int
     verdicts: list[VerdictDict]

@@ -1,8 +1,7 @@
 """Phase 3a: 全自动格式检查。"""
-import json
-
 from src.models import EntryDict, FormatVerdictsContainer, PipelineContext, VerdictDict
 from src.checkers.format_checker import FormatChecker
+from src.storage.database import PipelineDB
 
 
 def run_phase3a(ctx: PipelineContext) -> None:
@@ -31,14 +30,6 @@ def run_phase3a(ctx: PipelineContext) -> None:
     if ctx.pr_warnings:
         print(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
-    _save_json(ctx.output_dir / "03_format_verdicts.json", {
-        "total_checked": len(matched),
-        "issues_found": len(all_v),
-        "verdicts": all_v,
-    })
-
-
-def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_verdicts(all_v, "format")
+    db.close()

@@ -138,27 +138,28 @@ class ReportGenerator:
         }
         return self.stats
 
-    def generate_review_report(
+    def build_report(
         self,
-        output_path: str,
-    ) -> None:
-        """生成 review_report.json —— 按来源分组，LLM 和程序化 verdict 并存。"""
+    ) -> dict[str, Any]:
+        """构建报告 dict（不写磁盘），供调用方自行存储。"""
         if not self.stats:
             self.compute_stats()
 
-        # 构建 EN/ZH 速查表
         en_zh_map: dict[str, dict[str, str]] = {}
+        namespace_map: dict[str, str] = {}
         for entry in self.matched_entries:
-            en_zh_map[entry["key"]] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
+            key = entry["key"]
+            en_zh_map[key] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
+            ns = entry.get("namespace", "")
+            if ns:
+                namespace_map[key] = ns
 
-        # 统一规范化 verdict：统一字段名称、补齐 en_current/zh_current
-        _VERDICT_MAP = {  # LLM 可能返回不标准的值
+        _VERDICT_MAP = {
             "FAIL": "❌ FAIL", "REVIEW": "🔶 REVIEW", "SUGGEST": "⚠️ SUGGEST",
             "PASS": "PASS",
         }
 
-        def _normalize(v: dict[str, Any]) -> dict[str, Any]:
-            """统一所有 verdict 的字段结构与枚举值。"""
+        def _normalize(v: dict[str, Any]) -> dict[str, Any] | None:
             out: dict[str, Any] = {
                 "key":        v.get("key", ""),
                 "en_current": v.get("en_current", ""),
@@ -166,6 +167,8 @@ class ReportGenerator:
                 "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
                 "suggestion": v.get("suggestion", ""),
                 "reason":     v.get("reason", ""),
+                "source":     v.get("source", ""),
+                "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
             }
             if not out["en_current"] and not out["zh_current"]:
                 pair = en_zh_map.get(out["key"], {})
@@ -175,7 +178,6 @@ class ReportGenerator:
                 return None
             return out
 
-        # 按 key 合并：同名 key 取最高优先级判决，reason 合并去重
         by_key: dict[str, dict[str, Any]] = {}
         for v in self.verdicts:
             nv = _normalize(v)
@@ -186,15 +188,13 @@ class ReportGenerator:
                 by_key[key] = nv
                 continue
             existing = by_key[key]
-            # 合并 reason（去重 union）
-            reasons = set()
+            reasons: set[str] = set()
             for r in (existing["reason"], nv["reason"]):
                 for part in r.split("; "):
                     part = part.strip()
                     if part:
                         reasons.add(part)
             existing["reason"] = "; ".join(reasons)
-            # 取更高优先级的 verdict
             if VERDICT_PRIORITY.get(nv["verdict"], 0) > VERDICT_PRIORITY.get(existing["verdict"], 0):
                 existing["verdict"] = nv["verdict"]
                 existing["suggestion"] = nv["suggestion"] or existing["suggestion"]
@@ -205,11 +205,17 @@ class ReportGenerator:
             reverse=True,
         )
 
-        report = {
-            "stats": self.stats,
+        return {
+            "stats": dict(self.stats),
             "verdicts": merged,
         }
 
+    def generate_review_report(
+        self,
+        output_path: str,
+    ) -> None:
+        """生成 review_report.json（写入磁盘）。"""
+        report = self.build_report()
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

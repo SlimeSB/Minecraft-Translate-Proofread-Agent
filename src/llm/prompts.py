@@ -306,10 +306,8 @@ def build_filter_prompt(
     prompts: list[str] = []
     for i in range(0, len(verdicts), batch_size):
         batch = verdicts[i:i + batch_size]
-        header = f"""{cfg.REVIEW_HEADER_PREFIX}。
-
-## 任务
-以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断是否需要驳回（不提出）。
+        header = f"""## 任务
+以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。
 
 ## 问题列表 ({len(batch)}条)
 """

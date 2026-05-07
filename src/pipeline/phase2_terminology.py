@@ -1,8 +1,7 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
-import json
-
 from src.models import GlossaryDict, PipelineContext, VerdictDict
 from src.checkers.terminology_builder import TerminologyBuilder
+from src.storage.database import PipelineDB
 
 
 def run_phase2(ctx: PipelineContext) -> None:
@@ -22,11 +21,7 @@ def run_phase2(ctx: PipelineContext) -> None:
     print(f"  术语表: {len(ctx.glossary)} 条")
     print(f"  术语不一致 verdicts: {len(ctx.term_verdicts)} 条")
 
-    _save_json(ctx.output_dir / "02_terminology_glossary.json", ctx.glossary)
-
-
-def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"  已保存: {path}")
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_glossary(ctx.glossary)
+    db.save_verdicts(ctx.term_verdicts, "terminology")
+    db.close()

@@ -55,6 +55,26 @@ run.py --pr 5979
        └─ pr/_guideme.py       # GuideME 文档配对对齐
 ```
 
+### 存储层架构
+
+```
+┌─────────────────────────────────────────────────┐
+│                 pipeline.db                      │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
+│  │ alignment│ │ glossary │ │     verdicts     │ │
+│  │  (key,   │ │ (en, zh) │ │ (key, phase,     │ │
+│  │  en, zh, │ │          │ │  verdict, reason, │ │
+│  │  ns…)    │ │          │ │  filtered, …)     │ │
+│  └──────────┘ └──────────┘ └──────────────────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
+│  │  fuzzy   │ │  filter  │ │       meta       │ │
+│  │ _results │ │  _cache  │ │  (key, value)    │ │
+│  └──────────┘ └──────────┘ └──────────────────┘ │
+└─────────────────────────────────────────────────┘
+```
+
+`src/storage/database.py` — `PipelineDB` 类封装所有数据库操作，各 Phase 通过它读写中间结果。
+
 ## 核心模块
 
 ### 0. `src/models.py` — 领域模型
@@ -182,9 +202,9 @@ data, warnings = load_lang_text(text) # 从字符串加载
 ### 6. `src/reporting/report_generator.py` — 报告生成
 
 `ReportGenerator` 类收集各来源的 verdict，按 key 去重合并，生成：
-- `06_review_report.json` — 统一审校报告
+- `pipeline.db` verdicts 表（phase=`merged`）— 统一审校报告
 - `report.md` — Markdown 可读报告
-- `namespaces/<ns>/` — 按 namespace 拆分
+- `namespaces/<ns>/` — 按 namespace 拆分的质量报告
 
 Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PASS`(1)。
 来源优先级：`llm_review` / `interactive` > `format_check` / `terminology_check`。
@@ -228,6 +248,32 @@ src/tools/pr/
 ## 数据流
 
 ```
+JSON/Lang文件
+        │
+        ├─ load_json_clean() / load_lang()  (自动检测格式)
+        ▼
+   key_alignment ──── alignment 表
+        │                     │
+        │ matched_entries      │ missing / extra / suspicious
+        ├─ terminology_builder │
+        │  └─ glossary 表 + verdicts(terminology) 表
+        │
+        ├─ format_checker ───── verdicts(format) 表
+        │
+        ├─ fuzzy_search ─────── fuzzy_results 表
+        │
+        ├─ LLM review ───────── verdicts(llm) 表
+        │
+        ▼
+   report_generator ────────── verdicts(merged) 表 + meta 表
+        │
+        ▼
+   final_filter ────────────── verdicts.filtered 字段 + filter_cache 表
+        │
+        ▼
+   report.md / namespaces/<ns>/report.md
+```
+所有中间数据统一存在 `output/pipeline.db`（单一 SQLite 文件）。
 JSON/Lang文件
         │
         ├─ load_json_clean() / load_lang()  (自动检测格式)
