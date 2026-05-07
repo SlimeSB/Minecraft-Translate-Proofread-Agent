@@ -164,11 +164,11 @@ class PipelineDB:
         rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    def set_filtered(self, key: str, action: str, reason: str) -> None:
-        val = 1 if action == "KEEP" else -1
+    def set_filtered(self, key: str, verdict: str, reason: str) -> None:
+        """标记 verdict 为已过滤，同时更新判决（PASS 表示驳回）。"""
         self._conn.execute(
-            "UPDATE verdicts SET filtered=?, filtered_reason=? WHERE key=? AND phase='merged'",
-            (val, reason, key))
+            "UPDATE verdicts SET filtered=1, filtered_reason=?, verdict=? WHERE key=? AND phase='merged'",
+            (reason, verdict, key))
         self._conn.commit()
 
     def set_merged_reason(self, key: str, reason: str) -> None:
@@ -178,23 +178,21 @@ class PipelineDB:
         self._conn.commit()
 
     def get_merged_stats(self) -> dict[str, int]:
-        # 从唯一 key 统计（同一 key 的不同 phase 不算多次）
+        # 已过滤的 verdict（filtered=1）
         total = self._conn.execute(
-            "SELECT COUNT(*) FROM (SELECT DISTINCT key FROM verdicts)").fetchone()[0]
-        kept = self._conn.execute(
-            "SELECT COUNT(*) FROM (SELECT DISTINCT key FROM verdicts WHERE filtered>=0)").fetchone()[0]
-        discarded = self._conn.execute(
-            "SELECT COUNT(DISTINCT key) FROM verdicts WHERE filtered=-1").fetchone()[0]
+            "SELECT COUNT(DISTINCT key) FROM verdicts WHERE filtered=1").fetchone()[0]
+        issues = self._conn.execute(
+            "SELECT COUNT(DISTINCT key) FROM verdicts WHERE filtered=1 AND verdict != 'PASS'").fetchone()[0]
 
-        def _cnt(verdict_pat: str, extra: str = "") -> int:
+        def _cnt(verdict_pat: str) -> int:
             return self._conn.execute(
-                f"SELECT COUNT(DISTINCT key) FROM verdicts "
-                f"WHERE filtered>=0 AND verdict LIKE ? {extra}",
+                "SELECT COUNT(DISTINCT key) FROM verdicts "
+                "WHERE filtered=1 AND verdict LIKE ?",
                 (f"%{verdict_pat}%",)).fetchone()[0]
 
         return {
             "total": total,
-            "PASS": total - kept,
+            "PASS": total - issues,
             "⚠️ SUGGEST": _cnt("SUGGEST"),
             "❌ FAIL": _cnt("FAIL"),
             "🔶 REVIEW": _cnt("REVIEW"),

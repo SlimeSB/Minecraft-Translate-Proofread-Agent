@@ -1,7 +1,7 @@
 """Phase 4: 最终 LLM 过滤。
 
 从 pipeline.db 读取合并后的判决，查过滤缓存，对未命中条目调 LLM，
-结果写回 DB（标记 KEEP/DISCARD）。
+结果写回 DB（驳回 → 改判为 PASS；保留 → 维持原 verdict）。
 """
 import json
 
@@ -25,7 +25,7 @@ def run_phase4(ctx: PipelineContext) -> None:
         db.close()
         return
 
-    cached_discard_keys: set[str] = set()
+    cached_pass_keys: set[str] = set()
     cached_clean_reasons: dict[str, str] = {}
     uncached: list[VerdictDict] = []
 
@@ -34,8 +34,8 @@ def run_phase4(ctx: PipelineContext) -> None:
         result = db.lookup_filter_cache(ck)
         if result is not None:
             action, cleaned = result
-            if action == "DISCARD":
-                cached_discard_keys.add(v["key"])
+            if action == "PASS":
+                cached_pass_keys.add(v["key"])
             elif cleaned:
                 cached_clean_reasons[v["key"]] = cleaned
         else:
@@ -47,43 +47,43 @@ def run_phase4(ctx: PipelineContext) -> None:
     bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
 
     if uncached:
-        filtered_uncached, discards_uncached = bridge.filter_verdicts(uncached)
+        filtered_uncached, passes_uncached = bridge.filter_verdicts(uncached)
 
-        uncached_discard: set[str] = {d["key"] for d in discards_uncached}
+        uncached_pass: set[str] = {d["key"] for d in passes_uncached}
         uncached_reasons: dict[str, str] = {}
         for v in filtered_uncached:
             k = v["key"]
             r = v.get("reason", "")
-            if r and k not in uncached_discard:
+            if r and k not in uncached_pass:
                 uncached_reasons[k] = r
 
         for v in uncached:
             ck = _cache_key(v)
             k = v["key"]
-            if k in uncached_discard:
-                db.store_filter_cache(ck, "DISCARD", "")
+            if k in uncached_pass:
+                db.store_filter_cache(ck, "PASS", "")
             else:
                 db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
         db.commit_filter_cache()
     else:
-        uncached_discard = set()
+        uncached_pass = set()
         uncached_reasons = {}
 
-    all_discard = cached_discard_keys | uncached_discard
+    all_pass = cached_pass_keys | uncached_pass
     all_reasons = {**cached_clean_reasons, **uncached_reasons}
 
     for v in verdicts:
         k = v["key"]
-        if k in all_discard:
-            db.set_filtered(k, "DISCARD", "")
+        if k in all_pass:
+            db.set_filtered(k, "PASS", "")
         else:
             if k in all_reasons:
                 v["reason"] = all_reasons[k]
-            db.set_filtered(k, "KEEP", v.get("reason", ""))
+            db.set_filtered(k, v.get("verdict", ""), v.get("reason", ""))
 
-    removed = len(all_discard)
+    removed = len(all_pass)
     kept = len(verdicts) - removed
-    print(f"  驳回 {removed} 条, 保留 {kept} 条")
+    print(f"  驳回(PASS) {removed} 条, 保留 {kept} 条")
 
     stats = db.get_merged_stats()
     db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))

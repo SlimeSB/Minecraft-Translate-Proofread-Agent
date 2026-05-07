@@ -47,6 +47,8 @@ def create_openai_llm_call(
         with open(latest_path, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] [{level}] {msg}\n")
 
+    MAX_RETRIES = 5
+
     def call(prompt: str) -> str:
         call_count[0] += 1
         n = call_count[0]
@@ -69,13 +71,26 @@ def create_openai_llm_call(
                 _log("INFO", f"Response:\n{content}")
                 return content
             except Exception as e:
-                err_str = str(e).lower()
-                if "429" in err_str or "rate" in err_str:
+                err_str = str(e)
+                err_lower = err_str.lower()
+                retryable = (
+                    "429" in err_str or "rate" in err_lower
+                    or "connection" in err_lower or "timeout" in err_lower
+                    or "reset" in err_lower or "refused" in err_lower
+                    or "remote disconnect" in err_lower or "eof" in err_lower
+                    or "server disconnected" in err_lower
+                    or "500" in err_str or "502" in err_str
+                    or "503" in err_str or "504" in err_str
+                )
+                if retryable and retries < MAX_RETRIES:
                     delay = min(2 ** retries, 60)
                     retries += 1
-                    print(f"  [429] 速率限制, {delay}s 后重试 (第{retries}次)...", file=sys.stderr)
+                    _log("WARN", f"可重试错误, {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:200]}")
+                    print(f"  [LLM] {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:120]}", file=sys.stderr)
                     time.sleep(delay)
                 else:
+                    if retries >= MAX_RETRIES:
+                        _log("ERROR", f"已达最大重试次数({MAX_RETRIES}): {err_str[:200]}")
                     raise
 
     return call

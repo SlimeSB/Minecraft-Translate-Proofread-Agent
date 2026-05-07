@@ -63,12 +63,13 @@ def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> di
         ns_total = sum(1 for e in entries if
                        (e.get("namespace") or "__default__") == ns
                        or (e["key"] in {vv.get("key") for vv in vs}))
+        issues = [v for v in vs if v.get("verdict") != "PASS"]
         result[ns] = {
             "total": max(ns_total, len(vs)),
-            "issues": len(vs),
-            "fail": sum(1 for v in vs if v.get("verdict") == VERDICT_FAIL),
-            "suggest": sum(1 for v in vs if v.get("verdict") == VERDICT_SUGGEST),
-            "review": sum(1 for v in vs if v.get("verdict") == VERDICT_REVIEW),
+            "issues": len(issues),
+            "fail": sum(1 for v in issues if v.get("verdict") == VERDICT_FAIL),
+            "suggest": sum(1 for v in issues if v.get("verdict") == VERDICT_SUGGEST),
+            "review": sum(1 for v in issues if v.get("verdict") == VERDICT_REVIEW),
         }
     return result
 
@@ -96,7 +97,10 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
     for ns, vs in sorted(ns_map.items()):
         if ns == "__default__":
             continue
-        _generate_namespace_md(ns, vs, ns_groups.get(ns, {}), ns_dir)
+        issues = [v for v in vs if v.get("verdict") != "PASS"]
+        if not issues:
+            continue
+        _generate_namespace_md(ns, issues, ns_groups.get(ns, {}), ns_dir)
 
 
 def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
