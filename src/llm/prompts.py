@@ -197,6 +197,7 @@ def build_entry_block(
         if change.get("old_zh"):
             lines.append(f'old_zh: "{change["old_zh"][:300]}"')
     if auto_verdicts:
+        lines.append("")
         for v in auto_verdicts:
             lines.append(f"  自动检查: {v['verdict']} — {v['reason']}")
     if fuzzy_results:
