@@ -2,6 +2,7 @@
 
 只负责按顺序调用各 Phase，状态全部通过 PipelineContext 传递。
 """
+import shutil
 import sys
 from pathlib import Path
 
@@ -57,6 +58,11 @@ class ReviewPipeline:
 
     def run(self) -> None:
         ctx = self.ctx
+        # 清理旧输出
+        if ctx.output_dir.exists():
+            shutil.rmtree(ctx.output_dir, ignore_errors=True)
+        ctx.ensure_output_dir()
+
         print(f"{'='*60}")
         print("Minecraft 模组翻译审校流水线")
         print(f"  EN: {ctx.en_path}")

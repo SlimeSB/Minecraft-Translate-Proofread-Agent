@@ -1,7 +1,7 @@
 """Phase 5: 最终 LLM 过滤 + 报告输出。
 
 从 pipeline.db 读取合并后的判决，查过滤缓存，只对未命中条目调 LLM，
-结果写回 DB 并生成 report.md。
+结果写回 DB 并生成 report.md（摘要）和 report.json（完整数据）。
 """
 import json
 
@@ -17,6 +17,8 @@ from src.storage.database import PipelineDB
 
 def run_phase5(ctx: PipelineContext) -> None:
     if not ctx.llm_call or ctx.no_llm or ctx.dry_run:
+        # 无 LLM 时仍输出报告
+        _generate_outputs(ctx)
         return
 
     print("[Phase 5] 最终 LLM 过滤...")
@@ -26,21 +28,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     if not verdicts:
         print("  无 verdict 需要过滤")
         db.close()
-        return
-
-    # GuideME 条目不参与驳回审查
-    guideme_keys: set[str] = {
-        e["key"] for e in ctx.alignment.get("matched_entries", [])
-        if e.get("format") == "guideme"
-    }
-    guideme_verdicts = [v for v in verdicts if v["key"] in guideme_keys]
-    review_verdicts = [v for v in verdicts if v["key"] not in guideme_keys]
-    if guideme_verdicts:
-        print(f"  跳过 GuideME {len(guideme_verdicts)} 条")
-
-    if not review_verdicts:
-        print("  (仅 GuideME 条目，无需过滤)")
-        db.close()
+        _generate_outputs(ctx)
         return
 
     # ── 查过滤缓存 ──
@@ -48,7 +36,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     cached_clean_reasons: dict[str, str] = {}
     uncached: list[VerdictDict] = []
 
-    for v in review_verdicts:
+    for v in verdicts:
         ck = _cache_key(v)
         result = db.lookup_filter_cache(ck)
         if result is not None:
@@ -60,7 +48,7 @@ def run_phase5(ctx: PipelineContext) -> None:
         else:
             uncached.append(v)
 
-    cache_hits = len(review_verdicts) - len(uncached)
+    cache_hits = len(verdicts) - len(uncached)
     print(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
 
     bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
@@ -85,8 +73,6 @@ def run_phase5(ctx: PipelineContext) -> None:
                 db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
         db.commit_filter_cache()
     else:
-        filtered_uncached: list[VerdictDict] = []
-        discards_uncached: list[FilterDiscardRecord] = []
         uncached_discard = set()
         uncached_reasons = {}
 
@@ -94,7 +80,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     all_discard = cached_discard_keys | uncached_discard
     all_reasons = {**cached_clean_reasons, **uncached_reasons}
 
-    for v in review_verdicts:
+    for v in verdicts:
         k = v["key"]
         if k in all_discard:
             db.set_filtered(k, "DISCARD", "")
@@ -103,26 +89,15 @@ def run_phase5(ctx: PipelineContext) -> None:
                 v["reason"] = all_reasons[k]
             db.set_filtered(k, "KEEP", v.get("reason", ""))
 
-    # GuideME 自动保留
-    for v in guideme_verdicts:
-        db.set_filtered(v["key"], "KEEP", v.get("reason", ""))
-
-    db.set_meta("filtered_stats", json.dumps(db.get_merged_stats(), ensure_ascii=False))
-
     removed = len(all_discard)
-    kept = len(review_verdicts) - removed
+    kept = len(verdicts) - removed
     print(f"  驳回 {removed} 条, 保留 {kept} 条")
 
+    stats = db.get_merged_stats()
+    db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
     db.close()
 
-    # ── 生成 report.md（从 DB 加载过滤后数据） ──
-    db2 = PipelineDB(ctx.output_dir / "pipeline.db")
-    kept_verdicts = db2.load_verdicts(phase="merged", filtered=1)
-    _generate_markdown_report(ctx, kept_verdicts)
-    db2.close()
-
-    # ── 按 namespace 生成质量报告 ──
-    _generate_namespace_reports(ctx)
+    _generate_outputs(ctx)
 
 
 def _cache_key(v: dict) -> str:
@@ -136,115 +111,107 @@ def _cache_key(v: dict) -> str:
     return hashlib.blake2b(raw.encode("utf-8"), digest_size=8).hexdigest()
 
 
-def _generate_markdown_report(ctx: PipelineContext, verdicts: list[VerdictDict]) -> None:
-    rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)
-    rg.verdicts = verdicts
-    rg.compute_stats()
-    md_path = ctx.output_dir / "report.md"
-    rg.generate_markdown_report(str(md_path))
-    print(f"  审校报告: {md_path}")
-
-
-def _generate_namespace_reports(ctx: PipelineContext) -> None:
-    if not ctx.llm_call:
-        return
-
+def _generate_outputs(ctx: PipelineContext) -> None:
+    """生成 report.md（摘要）和 report.json（完整数据）。"""
     db = PipelineDB(ctx.output_dir / "pipeline.db")
+    # 优先取已过滤 KEEP 的，无则取未过滤的（no-llm 模式）
     kept = db.load_verdicts(phase="merged", filtered=1)
+    if not kept:
+        kept = db.load_verdicts(phase="merged", filtered=0)
     db.close()
 
+    # ── report.json ──
+    report_data = {
+        "verdicts": kept,
+        "alignment_stats": ctx.alignment.get("stats", {}),
+    }
+    # 添加按 namespace 分组
+    ns_groups = _group_by_namespace(kept, ctx)
+    report_data["by_namespace"] = ns_groups
+
+    json_path = ctx.output_dir / "report.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(report_data, f, ensure_ascii=False, indent=2)
+
+    # ── report.md（仅摘要）──
+    _generate_summary_md(ctx, kept, ns_groups)
+
+    print(f"  报告: {json_path}")
+    print(f"  摘要: {ctx.output_dir / 'report.md'}")
+
+
+def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> dict[str, dict]:
     ns_map: dict[str, list[VerdictDict]] = {}
-    for v in kept:
-        matched = next((e for e in ctx.alignment.get("matched_entries", [])
-                        if e["key"] == v.get("key")), None)
+    entries = ctx.alignment.get("matched_entries", [])
+
+    for v in verdicts:
+        k = v.get("key", "")
+        matched = next((e for e in entries if e["key"] == k), None)
         ns = (matched.get("namespace") if matched else "") or v.get("namespace", "")
-        if ns:
-            ns_map.setdefault(ns, []).append(v)
+        if not ns:
+            ns = "__default__"
+        ns_map.setdefault(ns, []).append(v)
 
-    if not ns_map:
-        return
+    result = {}
+    for ns, vs in sorted(ns_map.items()):
+        ns_total = sum(1 for e in entries if
+                       (e.get("namespace") or "__default__") == ns
+                       or (e["key"] in {vv.get("key") for vv in vs}))
+        result[ns] = {
+            "total": max(ns_total, len(vs)),
+            "issues": len(vs),
+            "fail": sum(1 for v in vs if v.get("verdict") == VERDICT_FAIL),
+            "suggest": sum(1 for v in vs if v.get("verdict") == VERDICT_SUGGEST),
+            "review": sum(1 for v in vs if v.get("verdict") == VERDICT_REVIEW),
+        }
+    return result
 
-    ns_dir = ctx.output_dir / "namespaces"
-    for ns, ns_verdicts in ns_map.items():
-        ns_path = ns_dir / ns
-        ns_path.mkdir(parents=True, exist_ok=True)
-        _generate_llm_report(ctx, ns, ns_verdicts, ns_path / "report.md")
 
-
-def _generate_llm_report(
-    ctx: PipelineContext,
-    ns: str,
-    verdicts: list[VerdictDict],
-    output_path,
-) -> None:
-    ns_entries = [e for e in ctx.alignment.get("matched_entries", [])
-                  if e.get("namespace") == ns]
-    total = len(ns_entries)
-
-    fail_count = sum(1 for v in verdicts if v.get("verdict") == VERDICT_FAIL)
-    suggest_count = sum(1 for v in verdicts if v.get("verdict") == VERDICT_SUGGEST)
-    review_count = sum(1 for v in verdicts if v.get("verdict") == VERDICT_REVIEW)
-
-    format_v = [v for v in verdicts if v.get("source") == "format_check"]
-    term_v = [v for v in verdicts if v.get("source") == "terminology_check"]
-    llm_v = [v for v in verdicts if v.get("source") == "llm_review"]
+def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
+                          ns_groups: dict[str, dict]) -> None:
+    total = len(ctx.alignment.get("matched_entries", []))
+    fail = sum(1 for v in verdicts if v.get("verdict") == VERDICT_FAIL)
+    suggest = sum(1 for v in verdicts if v.get("verdict") == VERDICT_SUGGEST)
+    review = sum(1 for v in verdicts if v.get("verdict") == VERDICT_REVIEW)
 
     lines = [
-        f"## {ns} — 翻译审校报告",
+        "# 翻译审校报告",
         "",
         f"共审校 **{total}** 条翻译，发现 **{len(verdicts)}** 处问题：",
-        f"- {fail_count} 处必须修复（❌ FAIL）",
-        f"- {suggest_count} 处建议改进（⚠️ SUGGEST）",
-        f"- {review_count} 处需人工判断（🔶 REVIEW）",
+        f"- ❌ FAIL：{fail} 处（必须修复）",
+        f"- ⚠️ SUGGEST：{suggest} 处（建议改进）",
+        f"- 🔶 REVIEW：{review} 处（需人工判断）",
+        "",
+        "## 按模组统计",
+        "",
+        "| 模组 | 总计 | 问题 | ❌ FAIL | ⚠️ SUGGEST | 🔶 REVIEW |",
+        "|------|------|------|---------|-----------|----------|",
     ]
 
-    if format_v:
-        lines.append("")
-        lines.append("### 格式问题")
-        for v in format_v[:10]:
-            lines.append(f"- `{v['key']}` — {v.get('reason', '')}")
-        if len(format_v) > 10:
-            lines.append(f"- ... 还有 {len(format_v) - 10} 条")
+    for ns, info in ns_groups.items():
+        lines.append(
+            f"| {ns} | {info['total']} | {info['issues']} | "
+            f"{info['fail']} | {info['suggest']} | {info['review']} |"
+        )
 
-    if term_v:
-        lines.append("")
-        lines.append("### 术语一致性")
-        for v in term_v[:10]:
-            lines.append(f"- `{v['key']}` — {v.get('reason', '')}")
-        if len(term_v) > 10:
-            lines.append(f"- ... 还有 {len(term_v) - 10} 条")
+    # PR 模式删除警告
+    if ctx.pr_alignment:
+        deletions = ctx.pr_alignment.get("deletions", {})
+        if deletions:
+            lines.append("")
+            lines.append("## ⚠️ 兼容性警告")
+            lines.append("")
+            lines.append("以下模组本次 PR 删除了旧 key，使用旧版模组翻译的玩家可能遇到 key 缺失：")
+            lines.append("")
+            for ns, count in sorted(deletions.items()):
+                if count > 0:
+                    lines.append(f"- **{ns}**：删除 {count} 个 key")
 
-    if llm_v:
-        lines.append("")
-        lines.append("### LLM 审校发现")
-        for v in llm_v[:10]:
-            lines.append(f"- `{v['key']}` — {v.get('reason', '')}")
-            if v.get('suggestion'):
-                lines.append(f"  建议: {v['suggestion']}")
-        if len(llm_v) > 10:
-            lines.append(f"- ... 还有 {len(llm_v) - 10} 条")
+    lines.append("")
+    lines.append(f"*生成时间：自动*")
+    lines.append("")
+    lines.append("> 完整数据见 report.json，可筛选查询所有 verdict 详情。")
 
-    del_count = ctx.pr_alignment.get("deletions", {}).get(ns, 0) if ctx.pr_alignment else 0
-    if del_count > 0:
-        lines.append("")
-        lines.append("### ⚠️ 兼容性警告")
-        lines.append(f"本次 PR 删除了 **{del_count}** 个旧 key（已从仓库移除），使用旧版模组翻译的玩家可能遇到 key 缺失。")
-
-    prompt = (
-        f"你是Minecraft模组简中翻译审校专家。以下是 {ns} 模组的翻译审校结果摘要，"
-        f"请用简洁自然的中文评价翻译质量，指出主要问题和改进方向。"
-        f"保持一段话，不要重复数据，不要用列表格式。\n\n"
-        + "\n".join(lines)
-    )
-
-    try:
-        review_text = ctx.llm_call(prompt)
-        full_report = "\n\n".join(["\n".join(lines), "## 总体评价", review_text.strip()])
-    except Exception:
-        full_report = "\n".join(lines) + "\n\n## 总体评价\n（LLM 生成失败）"
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(full_report)
-    print(f"  质量报告: {output_path}")
+    md_path = ctx.output_dir / "report.md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
