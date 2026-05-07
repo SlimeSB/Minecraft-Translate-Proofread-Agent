@@ -93,7 +93,7 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
     if len(ns_map) <= 1 and "__default__" in ns_map:
         return
 
-    ns_dir = ctx.output_dir / "namespaces"
+    ns_dir = ctx.output_dir
     ns_dir.mkdir(parents=True, exist_ok=True)
 
     for ns, vs in sorted(ns_map.items()):
@@ -185,7 +185,7 @@ def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
     for ns in sorted(ns_groups):
         if ns == "__default__":
             continue
-        lines.append(f"- [{ns}](namespaces/{ns}_report.md)")
+        lines.append(f"- [{ns}]({ns}_report.md)")
     lines.append("")
     lines.append("")
     lines.append("> 完整数据见 report.json，可筛选查询所有 verdict 详情。")

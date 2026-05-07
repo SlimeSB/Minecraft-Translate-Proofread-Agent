@@ -58,13 +58,18 @@ def main() -> None:
     if is_traditional:
         _validate_input_files(args.en, args.zh)
 
+    # ── 输出目录 ──
+    output_dir = args.output_dir
+    if is_pr:
+        output_dir = str(Path(args.output_dir) / f"pr{args.pr}")
+
     # ── filter-only 模式 ──
     if args.filter_only:
-        _run_filter_only(args)
+        _run_filter_only(args, output_dir)
         return
 
     # ── PR 对齐 ──
-    pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment)
+    pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
 
     # ── 构建 LLM ──
     llm_call, filter_llm_call = _build_llm_calls(args)
@@ -73,7 +78,7 @@ def main() -> None:
     pipeline = ReviewPipeline(
         en_path=args.en or "",
         zh_path=args.zh or "",
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         llm_call=llm_call,
         filter_llm_call=filter_llm_call,
         no_llm=args.no_llm,
@@ -114,8 +119,8 @@ def _validate_input_files(en_path: str, zh_path: str) -> None:
         sys.exit(1)
 
 
-def _run_filter_only(args) -> None:
-    output_dir = Path(args.output_dir)
+def _run_filter_only(args, output_dir_str: str) -> None:
+    output_dir = Path(output_dir_str)
     db_path = output_dir / "pipeline.db"
     if not db_path.exists():
         print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
@@ -151,7 +156,7 @@ def _run_filter_only(args) -> None:
     run_phase5(ctx)
 
 
-def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool) -> PRAlignmentWrapper | None:
+def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str) -> PRAlignmentWrapper | None:
     if is_pr_alignment:
         print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
         with open(args.pr_alignment, "r", encoding="utf-8") as f:
@@ -166,7 +171,7 @@ def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool) -> PRAlignmentW
         align_output = run_pr_aligner(
             repo=args.repo,
             pr=args.pr,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             token=github_token,
         )
         with open(align_output, "r", encoding="utf-8") as f:
