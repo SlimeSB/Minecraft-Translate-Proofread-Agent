@@ -16,6 +16,7 @@ from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
+from src.dictionary.external import ExternalDictStore
 
 
 class ReviewPipeline:
@@ -37,6 +38,7 @@ class ReviewPipeline:
         fuzzy_top: int = 5,
         batch_size: int = 20,
         pr_alignment: PRAlignmentWrapper | None = None,
+        external_dict: bool = False,
     ):
         self.ctx = PipelineContext(
             en_path=Path(en_path) if en_path else None,
@@ -54,6 +56,7 @@ class ReviewPipeline:
             pr_mode=pr_alignment is not None,
             pr_alignment=pr_alignment,
         )
+        self.ctx.external_dict_store = ExternalDictStore() if external_dict else None
         self.ctx.ensure_output_dir()
 
     def run(self) -> None:

@@ -260,6 +260,8 @@ class PipelineContext:
 
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
+    external_dict_store: object = None  # ExternalDictStore | None
+
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

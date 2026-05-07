@@ -88,6 +88,7 @@ def main() -> None:
         fuzzy_threshold=args.fuzzy_threshold,
         batch_size=args.batch_size,
         pr_alignment=pr_alignment,
+        external_dict=args.external_dict,
     )
     pipeline.run()
 
@@ -108,6 +109,8 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--batch-size", type=int, default=20, help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
                         help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
+    parser.add_argument("--external-dict", action="store_true",
+                        help="加载外部社区翻译词典（data/Dict-Sqlite.db）")
 
 
 def _validate_input_files(en_path: str, zh_path: str) -> None:

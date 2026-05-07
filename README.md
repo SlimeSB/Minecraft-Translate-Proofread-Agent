@@ -34,7 +34,19 @@ cd Minecraft-Translate-Proofread-Agent
 pip install openai
 ```
 
-### 配置
+### 外部词典（可选）
+
+可从社区翻译仓库导出 `data/Dict-Sqlite.db`（约 90 万条历史翻译记录），启用后 LLM 审校时自动注入同词条的社区翻译作为参考。  
+词典仓库：https://github.com/VM-Chinese-translate-group/i18n-Dict-Extender  
+将 Dict-Sqlite.db 放入 data/ 目录
+
+```bash
+python run.py --en en_us.json --zh zh_cn.json -o ./output/ --external-dict
+```
+
+> 加载后占用约 200MB 内存，仅在 Phase 3c LLM 审校阶段生效。
+
+## 配置
 
 ```bash
 cp .env.example .env
@@ -70,6 +82,9 @@ python run.py --en en_us.json --zh zh_cn.json -o ./output/ --interactive
 # PR 模式（--repo 可选，默认读配置）
 python run.py --pr 5979 -o ./output/
 
+# 启用外部社区翻译词典（需先下载 data/Dict-Sqlite.db）
+python run.py --en en_us.json --zh zh_cn.json -o ./output/ --external-dict
+
 # 仅重跑最终过滤（使用 pipeline.db 数据）
 python run.py --filter-only -o ./output/
 
@@ -86,7 +101,11 @@ python run.py --filter-only -o ./output/
 |------|------|
 | `pipeline.db` | **单一数据库**，包含所有中间结果（下表可查） |
 | `report.md` | 过滤后的可读审校报告 |
-| `namespaces/<ns>/report.md` | PR 模式按命名空间的质量报告 |
+| `report.json` | 完整 JSON 数据（仅非 PASS 条目） |
+| `<ns>_report.md` | 各命名空间逐条问题清单 |
+
+
+> PR 模式下所有输出文件写入 `output/pr<N>/` 子目录。
 
 **`pipeline.db` 表结构：**
 
@@ -133,7 +152,8 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 ├── review_config.json            # 审校配置
 ├── lemma_cache.json              # 词形缓存（持续学习）
 ├── data/
-│   └── vanilla_keys.json         # 原版 key 列表（碰撞检测）
+│   ├── vanilla_keys.json         # 原版 key 列表（碰撞检测）
+│   └── Dict-Sqlite.db             # 外部社区翻译词典（需单独下载）
 ├── src/
 │   ├── models.py                  # PipelineContext / Verdict 数据类
 │   ├── config.py                  # 配置加载器
@@ -154,6 +174,9 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   │   ├── terminology_builder.py # 术语提取 & 一致性检查
 │   │   ├── lemma_merge.py         # 词形归并逻辑
 │   │   └── lemma_cache.py         # 词形缓存
+│   ├── dictionary/
+│   │   ├── __init__.py
+│   │   └── external.py            # 外部词典加载与查询
 │   ├── llm/
 │   │   ├── __init__.py            # re-export 层
 │   │   ├── client.py              # OpenAI 客户端工厂 + 日志/重试

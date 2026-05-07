@@ -179,6 +179,7 @@ def build_entry_block(
     glossary_entries: list[GlossaryDict] | None = None,
     full_en: str = "",
     full_zh: str = "",
+    external_hints: str = "",
 ) -> str:
     key = entry["key"]
     en = full_en or entry.get("en", "")
@@ -212,6 +213,8 @@ def build_entry_block(
                 hints.append(f"\"{g['en']}\" → \"{g['zh']}\"")
         if hints:
             lines.append(f"  术语: {', '.join(hints[:5])}")
+    if external_hints:
+        lines.append(external_hints)
     return "\n".join(lines)
 
 
@@ -252,6 +255,7 @@ def build_review_prompt(
     fuzzy_results_map: FuzzyResultsMap | None = None,
     batch_size: int = 20,
     merged_context: MultipartContext | None = None,
+    external_dict_store: object = None,
 ) -> list[str]:
     prompts: list[str] = []
     groups = classify_entries(entries)
@@ -290,7 +294,9 @@ def build_review_prompt(
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
                 full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
-                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries, full_en, full_zh)
+                en_for_hints = full_en or entry.get("en", "")
+                external_hints = external_dict_store.lookup(en_for_hints) if external_dict_store else ""
+                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)
                 blocks.append(block)
             prompts.append("\n\n".join(blocks))
     return prompts

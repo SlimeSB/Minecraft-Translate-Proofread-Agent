@@ -43,6 +43,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
         prompts = build_review_prompt(
             llm_entries, ctx.glossary, auto_map,
             ctx.fuzzy_results_map, ctx.batch_size, merged_context=merged,
+            external_dict_store=ctx.external_dict_store,
         )
         total_chars = sum(len(p) for p in prompts)
         print(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
@@ -60,6 +61,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
         ctx.llm_verdicts = bridge.review_batch(
             llm_entries, ctx.glossary, auto_map,
             ctx.fuzzy_results_map, ctx.batch_size,
+            external_dict_store=ctx.external_dict_store,
         )
     else:
         print("  跳过 LLM 审校 (--no-llm)")
