@@ -11,7 +11,7 @@ def run_phase2(ctx: PipelineContext) -> None:
     lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith("ae2guide:")}
     lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith("ae2guide:")}
 
-    tb = TerminologyBuilder(cache_path="lemma_cache.json")
+    tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)
     tb.extract(min_freq=2, max_ngram=3)
     tb.merge_lemmas(llm_call=ctx.llm_call)
