@@ -43,8 +43,7 @@ CREATE TABLE IF NOT EXISTS verdicts (
     reason      TEXT DEFAULT '',
     source      TEXT DEFAULT '',
     namespace   TEXT DEFAULT '',
-    filtered    INTEGER DEFAULT 0,
-    filtered_reason TEXT DEFAULT ''
+    filtered    INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_verdicts_key_phase ON verdicts(key, phase);
 CREATE INDEX IF NOT EXISTS ix_verdicts_phase ON verdicts(phase);
@@ -166,9 +165,14 @@ class PipelineDB:
 
     def set_filtered(self, key: str, verdict: str, reason: str) -> None:
         """标记 verdict 为已过滤，同时更新判决（PASS 表示驳回）。"""
-        self._conn.execute(
-            "UPDATE verdicts SET filtered=1, filtered_reason=?, verdict=? WHERE key=? AND phase='merged'",
-            (reason, verdict, key))
+        if reason:
+            self._conn.execute(
+                "UPDATE verdicts SET filtered=1, verdict=?, reason=? WHERE key=? AND phase='merged'",
+                (verdict, reason, key))
+        else:
+            self._conn.execute(
+                "UPDATE verdicts SET filtered=1, verdict=? WHERE key=? AND phase='merged'",
+                (verdict, key))
         self._conn.commit()
 
     def set_merged_reason(self, key: str, reason: str) -> None:
@@ -265,6 +269,4 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         "reason": row["reason"],
         "source": row["source"],
         "namespace": row["namespace"],
-        "_filtered": row["filtered"],
-        "_filtered_reason": row["filtered_reason"],
     }

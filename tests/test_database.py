@@ -81,7 +81,14 @@ class TestPipelineDB(unittest.TestCase):
         loaded = self.db.load_verdicts(phase="merged", filtered=None)
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0]["verdict"], "PASS")
-        self.assertEqual(loaded[0]["_filtered"], 1)
+
+    def test_set_filtered_overwrites_reason(self):
+        verdicts = [{"key": "item.x", "verdict": "FAIL", "reason": "old reason"}]
+        self.db.save_verdicts(verdicts, "merged")
+        self.db.set_filtered("item.x", "PASS", "cleaned reason")
+        loaded = self.db.load_verdicts(phase="merged", filtered=None)
+        self.assertEqual(loaded[0]["verdict"], "PASS")
+        self.assertEqual(loaded[0]["reason"], "cleaned reason")
 
     def test_set_filtered_only_affects_merged_phase(self):
         verdicts_fmt = [{"key": "item.x", "verdict": "❌ FAIL", "reason": "bad"}]

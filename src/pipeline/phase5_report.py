@@ -27,8 +27,10 @@ def run_phase5(ctx: PipelineContext) -> None:
 
     # ── report.json ──
     ns_groups = _group_by_namespace(kept, ctx)
+    # 仅保留非 PASS 的 verdict（已驳回的不写入 report.json）
+    non_pass_verdicts = [v for v in kept if v.get("verdict") != "PASS"]
     report_data = {
-        "verdicts": kept,
+        "verdicts": non_pass_verdicts,
         "alignment_stats": ctx.alignment.get("stats", {}),
         "by_namespace": ns_groups,
     }
