@@ -2,7 +2,7 @@
   "_comment": "翻译审校配置文件。多行文本可用字符串数组（运行时 \\n join），修改后无需改代码。",
 
   "pipeline": {
-    "max_workers": 8,
+    "max_workers": 4,
     "filter_batch_size": 50
   },
 

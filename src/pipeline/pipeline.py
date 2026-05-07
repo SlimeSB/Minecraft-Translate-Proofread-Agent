@@ -2,6 +2,7 @@
 
 只负责按顺序调用各 Phase，状态全部通过 PipelineContext 传递。
 """
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -11,15 +12,14 @@ from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
 from src.pipeline.phase3a_format import run_phase3a
 from src.pipeline.phase3c_review import run_phase3c
-from src.pipeline.phase4_report import run_phase4
-from src.pipeline.phase5_filter import run_phase5
+from src.pipeline.phase4_filter import run_phase4
+from src.pipeline.phase5_report import run_phase5
+from src.reporting.report_generator import ReportGenerator
+from src.storage.database import PipelineDB
 
 
 class ReviewPipeline:
-    """翻译审校流水线 — 薄编排层。
-
-    所有 Phase 逻辑在独立模块中，通过 PipelineContext 传递状态。
-    """
+    """翻译审校流水线 — 薄编排层。"""
 
     def __init__(
         self,
@@ -58,7 +58,6 @@ class ReviewPipeline:
 
     def run(self) -> None:
         ctx = self.ctx
-        # 清理旧输出
         if ctx.output_dir.exists():
             shutil.rmtree(ctx.output_dir, ignore_errors=True)
         ctx.ensure_output_dir()
@@ -81,8 +80,28 @@ class ReviewPipeline:
             run_phase2(ctx)       # 术语提取与一致性检查
             run_phase3a(ctx)      # 全自动格式检查
             run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
-            run_phase4(ctx)       # 报告生成
-            run_phase5(ctx)       # 最终 LLM 过滤
+
+            # 合并 verdict 写入 DB（供 P4 过滤使用）
+            _save_merged_verdicts(ctx)
+
+            run_phase4(ctx)       # 最终 LLM 过滤
+            run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
         except Exception as e:
             print(f"\n错误: {e}", file=sys.stderr)
             raise
+
+
+def _save_merged_verdicts(ctx: PipelineContext) -> None:
+    """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
+    rg = ReportGenerator()
+    rg.load_alignment(ctx.alignment)
+    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
+
+    report = rg.build_report()
+    verdicts = report.get("verdicts", [])
+    stats = report.get("stats", {})
+
+    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    db.save_verdicts(verdicts, "merged")
+    db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
+    db.close()

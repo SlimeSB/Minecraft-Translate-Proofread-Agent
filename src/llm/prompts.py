@@ -303,30 +303,41 @@ def build_filter_prompt(
     verdicts: list[VerdictDict],
     batch_size: int = 50,
 ) -> list[str]:
+    groups: dict[str, list[VerdictDict]] = {}
+    for v in verdicts:
+        key = v.get("key", "")
+        prefix = group_prefix(key)
+        groups.setdefault(prefix, []).append(v)
+
     prompts: list[str] = []
-    for i in range(0, len(verdicts), batch_size):
-        batch = verdicts[i:i + batch_size]
-        header = f"""## 任务
-以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。
+    for prefix, group_entries in groups.items():
+        info = KEY_PREFIX_PROMPTS.get(prefix, {})
+        cat_label = info.get("label", "其他")
+        effective_batch = 1 if prefix == "ae2guide:" else batch_size
+
+        for i in range(0, len(group_entries), effective_batch):
+            batch = group_entries[i:i + effective_batch]
+            header = f"""## 任务
+以下是自动检查和LLM审校后汇总的翻译问题列表（{cat_label}）。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。
 
 ## 问题列表 ({len(batch)}条)
 """
-        lines: list[str] = []
-        for j, v in enumerate(batch):
-            key = v.get("key", "")
-            en = v.get("en_current", "")
-            zh = v.get("zh_current", "")
-            verdict = v.get("verdict", "")
-            reason = v.get("reason", "")
-            suggestion = v.get("suggestion", "")
-            block = f"### 条目 {j+1}\n"
-            block += f"key: `{key}`\n"
-            block += f'EN: "{en[:200]}"\n'
-            block += f'ZH: "{zh[:200]}"\n'
-            block += f"判定: {verdict}\n"
-            block += f"问题: {reason}\n"
-            if suggestion:
-                block += f"建议: {suggestion}\n"
-            lines.append(block)
-        prompts.append(header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines))
+            lines: list[str] = []
+            for j, v in enumerate(batch):
+                key = v.get("key", "")
+                en = v.get("en_current", "")
+                zh = v.get("zh_current", "")
+                verdict = v.get("verdict", "")
+                reason = v.get("reason", "")
+                suggestion = v.get("suggestion", "")
+                block = f"### 条目 {j+1}\n"
+                block += f"key: `{key}`\n"
+                block += f'EN: "{en[:200]}"\n'
+                block += f'ZH: "{zh[:200]}"\n'
+                block += f"判定: {verdict}\n"
+                block += f"问题: {reason}\n"
+                if suggestion:
+                    block += f"建议: {suggestion}\n"
+                lines.append(block)
+            prompts.append(header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines))
     return prompts

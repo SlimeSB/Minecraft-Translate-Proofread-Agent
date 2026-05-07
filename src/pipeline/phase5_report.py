@@ -1,142 +1,48 @@
-"""Phase 5: 最终 LLM 过滤 + 报告输出。
-
-从 pipeline.db 读取合并后的判决，查过滤缓存，只对未命中条目调 LLM，
-结果写回 DB 并生成 report.md（摘要）和 report.json（完整数据）。
-"""
+"""Phase 5: 报告生成 —— 从 DB 加载已过滤判决，生成 report.md + report.json。"""
 import json
 
 from src.models import (
-    EntryDict, FilterDiscardRecord, PipelineContext,
-    VerdictDict,
+    PipelineContext, VerdictDict,
     VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
 )
-from src.llm.bridge import LLMBridge
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 
 
 def run_phase5(ctx: PipelineContext) -> None:
-    if not ctx.llm_call or ctx.no_llm or ctx.dry_run:
-        # 无 LLM 时仍输出报告
-        _generate_outputs(ctx)
-        return
-
-    print("[Phase 5] 最终 LLM 过滤...")
+    print("[Phase 5] 报告生成...")
     db = PipelineDB(ctx.output_dir / "pipeline.db")
 
-    verdicts = db.load_verdicts(phase="merged", filtered=0)
-    if not verdicts:
-        print("  无 verdict 需要过滤")
-        db.close()
-        _generate_outputs(ctx)
-        return
-
-    # ── 查过滤缓存 ──
-    cached_discard_keys: set[str] = set()
-    cached_clean_reasons: dict[str, str] = {}
-    uncached: list[VerdictDict] = []
-
-    for v in verdicts:
-        ck = _cache_key(v)
-        result = db.lookup_filter_cache(ck)
-        if result is not None:
-            action, cleaned = result
-            if action == "DISCARD":
-                cached_discard_keys.add(v["key"])
-            elif cleaned:
-                cached_clean_reasons[v["key"]] = cleaned
-        else:
-            uncached.append(v)
-
-    cache_hits = len(verdicts) - len(uncached)
-    print(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
-
-    bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
-
-    if uncached:
-        filtered_uncached, discards_uncached = bridge.filter_verdicts(uncached)
-
-        uncached_discard: set[str] = {d["key"] for d in discards_uncached}
-        uncached_reasons: dict[str, str] = {}
-        for v in filtered_uncached:
-            k = v["key"]
-            r = v.get("reason", "")
-            if r and k not in uncached_discard:
-                uncached_reasons[k] = r
-
-        for v in uncached:
-            ck = _cache_key(v)
-            k = v["key"]
-            if k in uncached_discard:
-                db.store_filter_cache(ck, "DISCARD", "")
-            else:
-                db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
-        db.commit_filter_cache()
-    else:
-        uncached_discard = set()
-        uncached_reasons = {}
-
-    # ── 合并缓存 + LLM 结果 ──
-    all_discard = cached_discard_keys | uncached_discard
-    all_reasons = {**cached_clean_reasons, **uncached_reasons}
-
-    for v in verdicts:
-        k = v["key"]
-        if k in all_discard:
-            db.set_filtered(k, "DISCARD", "")
-        else:
-            if k in all_reasons:
-                v["reason"] = all_reasons[k]
-            db.set_filtered(k, "KEEP", v.get("reason", ""))
-
-    removed = len(all_discard)
-    kept = len(verdicts) - removed
-    print(f"  驳回 {removed} 条, 保留 {kept} 条")
-
-    stats = db.get_merged_stats()
-    db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
-    db.close()
-
-    _generate_outputs(ctx)
-
-
-def _cache_key(v: dict) -> str:
-    import hashlib
-    raw = ":".join([
-        v.get("key", ""),
-        v.get("verdict", ""),
-        (v.get("zh_current") or v.get("zh_current", ""))[:150],
-        v.get("reason", "")[:200],
-    ])
-    return hashlib.blake2b(raw.encode("utf-8"), digest_size=8).hexdigest()
-
-
-def _generate_outputs(ctx: PipelineContext) -> None:
-    """生成 report.md（摘要）和 report.json（完整数据）。"""
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    # 优先取已过滤 KEEP 的，无则取未过滤的（no-llm 模式）
     kept = db.load_verdicts(phase="merged", filtered=1)
     if not kept:
         kept = db.load_verdicts(phase="merged", filtered=0)
     db.close()
 
+    # ── console 摘要 + 表格 ──
+    rg = ReportGenerator()
+    rg.load_alignment(ctx.alignment)
+    rg.verdicts = kept
+    rg.print_summary()
+    rg.print_verdict_table()
+
     # ── report.json ──
+    ns_groups = _group_by_namespace(kept, ctx)
     report_data = {
         "verdicts": kept,
         "alignment_stats": ctx.alignment.get("stats", {}),
+        "by_namespace": ns_groups,
     }
-    # 添加按 namespace 分组
-    ns_groups = _group_by_namespace(kept, ctx)
-    report_data["by_namespace"] = ns_groups
-
     json_path = ctx.output_dir / "report.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, ensure_ascii=False, indent=2)
 
-    # ── report.md（仅摘要）──
+    # ── report.md（整体 PR 摘要）──
     _generate_summary_md(ctx, kept, ns_groups)
 
-    print(f"  报告: {json_path}")
+    # ── 按 namespace 分报告（含逐条 verdict 详情）──
+    _generate_namespace_reports(ctx, kept, ns_groups)
+
+    print(f"  总报告: {json_path}")
     print(f"  摘要: {ctx.output_dir / 'report.md'}")
 
 
@@ -167,6 +73,67 @@ def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> di
     return result
 
 
+def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict],
+                                 ns_groups: dict[str, dict]) -> None:
+    """为每个 namespace 生成独立报告，包含逐条 verdict 详情。"""
+    entries = ctx.alignment.get("matched_entries", [])
+    ns_map: dict[str, list[VerdictDict]] = {}
+
+    for v in verdicts:
+        k = v.get("key", "")
+        matched = next((e for e in entries if e["key"] == k), None)
+        ns = (matched.get("namespace") if matched else "") or v.get("namespace", "")
+        if not ns:
+            ns = "__default__"
+        ns_map.setdefault(ns, []).append(v)
+
+    if len(ns_map) <= 1 and "__default__" in ns_map:
+        return
+
+    ns_dir = ctx.output_dir / "namespaces"
+    ns_dir.mkdir(parents=True, exist_ok=True)
+
+    for ns, vs in sorted(ns_map.items()):
+        if ns == "__default__":
+            continue
+        _generate_namespace_md(ns, vs, ns_groups.get(ns, {}), ns_dir)
+
+
+def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
+                            info: dict, ns_dir) -> None:
+    lines = [
+        f"# {ns} — 翻译审校报告",
+        "",
+        f"- 条目总数：{info.get('total', '?')}",
+        f"- 问题：{info.get('issues', len(verdicts))} 处",
+        f"- ❌ FAIL：{info.get('fail', 0)}",
+        f"- ⚠️ SUGGEST：{info.get('suggest', 0)}",
+        f"- 🔶 REVIEW：{info.get('review', 0)}",
+        "",
+        "## 问题清单",
+        "",
+        "| 判定 | 键名 | 问题 |",
+        "|------|------|------|",
+    ]
+
+    # FAIL 在前，SUGGEST/REVIEW 在后
+    sorted_vs = sorted(verdicts, key=lambda v: (
+        0 if v.get("verdict") == VERDICT_FAIL else 1,
+        v.get("key", ""),
+    ))
+
+    for v in sorted_vs:
+        key = v.get("key", "")
+        verdict = v.get("verdict", "")
+        reason = v.get("reason", "")
+        lines.append(f"| {verdict} | `{key}` | {reason} |")
+
+    md_path = ns_dir / f"{ns}_report.md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  {ns}: {md_path}")
+
+
 def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
                           ns_groups: dict[str, dict]) -> None:
     total = len(ctx.alignment.get("matched_entries", []))
@@ -194,7 +161,6 @@ def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
             f"{info['fail']} | {info['suggest']} | {info['review']} |"
         )
 
-    # PR 模式删除警告
     if ctx.pr_alignment:
         deletions = ctx.pr_alignment.get("deletions", {})
         if deletions:
@@ -208,7 +174,13 @@ def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
                     lines.append(f"- **{ns}**：删除 {count} 个 key")
 
     lines.append("")
-    lines.append(f"*生成时间：自动*")
+    lines.append("## 各模组详细报告")
+    lines.append("")
+    for ns in sorted(ns_groups):
+        if ns == "__default__":
+            continue
+        lines.append(f"- [{ns}](namespaces/{ns}_report.md)")
+    lines.append("")
     lines.append("")
     lines.append("> 完整数据见 report.json，可筛选查询所有 verdict 详情。")
 

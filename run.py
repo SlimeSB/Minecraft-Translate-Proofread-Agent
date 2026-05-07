@@ -22,7 +22,8 @@ from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_he
 from src.llm.client import create_openai_llm_call
 from src.models import PipelineContext, PRAlignmentWrapper
 from src.pipeline.pipeline import ReviewPipeline
-from src.pipeline.phase5_filter import run_phase5
+from src.pipeline.phase4_filter import run_phase4
+from src.pipeline.phase5_report import run_phase5
 from src.storage.database import PipelineDB
 from src import config as cfg
 
@@ -101,7 +102,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fuzzy-threshold", type=float, default=60.0, help="模糊搜索相似度阈值")
     parser.add_argument("--batch-size", type=int, default=20, help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
-                        help="仅重跑 Phase 5 最终过滤（需已有 pipeline.db）")
+                        help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
 
 
 def _validate_input_files(en_path: str, zh_path: str) -> None:
@@ -130,7 +131,6 @@ def _run_filter_only(args) -> None:
     llm_call = create_openai_llm_call(api_key, model, base_url)
     filter_llm_call = create_openai_llm_call(api_key, model, base_url, log_dir="logs/filter")
 
-    # 从 DB 加载已有数据，构建最小 PipelineContext 调用 run_phase5
     db = PipelineDB(db_path)
     verdicts = db.load_verdicts(phase="merged", filtered=0)
     alignment = db.load_alignment()
@@ -147,6 +147,7 @@ def _run_filter_only(args) -> None:
     )
     ctx.alignment = alignment
 
+    run_phase4(ctx)
     run_phase5(ctx)
 
 
