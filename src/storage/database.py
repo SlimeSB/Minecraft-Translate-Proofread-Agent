@@ -44,9 +44,9 @@ CREATE TABLE IF NOT EXISTS verdicts (
     source      TEXT DEFAULT '',
     namespace   TEXT DEFAULT '',
     filtered    INTEGER DEFAULT 0,
-    filtered_reason TEXT DEFAULT '',
-    PRIMARY KEY (key, phase)
+    filtered_reason TEXT DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS ix_verdicts_key_phase ON verdicts(key, phase);
 CREATE INDEX IF NOT EXISTS ix_verdicts_phase ON verdicts(phase);
 CREATE INDEX IF NOT EXISTS ix_verdicts_ns ON verdicts(namespace);
 CREATE INDEX IF NOT EXISTS ix_verdicts_filtered ON verdicts(filtered);

@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CACHE_PATH = "lemma_cache.json"
+DEFAULT_CACHE_PATH = "data/lemma_cache.json"
 
 
 class LemmaCache:

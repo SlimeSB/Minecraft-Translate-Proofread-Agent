@@ -16,146 +16,34 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
-# 加载 .env 文件（若存在）
-_ENV_PATH = ".env"
-if os.path.exists(_ENV_PATH):
-    with open(_ENV_PATH, "r", encoding="utf-8") as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if not _line or _line.startswith("#"):
-                continue
-            if "=" in _line:
-                _k, _v = _line.split("=", 1)
-                _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
-                if _k and _k not in os.environ:
-                    os.environ[_k] = _v
-
-# 强制 UTF-8 输出（兼容 Windows GBK 终端）。
-# 仅在 stdout 是终端时 reconfigure（管道场景会破坏 PowerShell 的 OutputEncoding）。
-if sys.stdout.encoding != "utf-8" and sys.stdout.isatty():
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-from src.pipeline.pipeline import ReviewPipeline
+from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_health
 from src.llm.client import create_openai_llm_call
-from src.models import PRAlignmentWrapper
+from src.models import PipelineContext, PRAlignmentWrapper
+from src.pipeline.pipeline import ReviewPipeline
+from src.pipeline.phase5_filter import run_phase5
+from src.storage.database import PipelineDB
 from src import config as cfg
 
-
-def _safe_print(*args, **kwargs) -> None:
-    """GBK 安全打印。"""
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        enc = sys.stdout.encoding or "utf-8"
-        for a in args:
-            print(str(a).encode(enc, errors="replace").decode(enc), **kwargs)
-
-
-def _check_api(base_url: str, api_key: str) -> bool:
-    """启动前检查 API 可用性。成功返回 True。"""
-    import urllib.error
-    import urllib.request
-
-    # OpenAI SDK 会自动追加 /chat/completions，不要把路径写在 base_url 里
-    base_url = base_url.rstrip("/")
-    if base_url.endswith("/chat/completions"):
-        base_url = base_url[: -len("/chat/completions")]
-
-    models_url = base_url + "/models"
-    headers = {"User-Agent": "MinecraftTranslateProofreadAgent/1.0"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        req = urllib.request.Request(models_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status == 200:
-                _safe_print(f"  [OK] API 连接正常: {base_url}")
-                return True
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            _safe_print(f"  [FAIL] API Key 无效 (401): {base_url}")
-            return False
-        elif e.code == 403:
-            _safe_print(f"  [FAIL] API 访问被拒绝 (403): {base_url}")
-            return False
-    except Exception as e:
-        _safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
-        return False
-
-    # /models 不可用时用 chat/completions 做一个最小请求验证连通性
-    chat_url = base_url + "/chat/completions"
-    body = json.dumps({
-        "model": os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash"),
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-    }).encode("utf-8")
-    headers["Content-Type"] = "application/json"
-    try:
-        req = urllib.request.Request(chat_url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status in (200, 201):
-                _safe_print(f"  [OK] API 可用: {base_url}")
-                return True
-            body_text = resp.read().decode("utf-8", errors="replace")
-            if "invalid" in body_text.lower():
-                _safe_print(f"  [FAIL] API Key 无效: {base_url}")
-                return False
-            _safe_print(f"  [OK] API 连接正常: {base_url}")
-            return True
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")[:200]
-        _safe_print(f"  [FAIL] API 请求失败 ({e.code}): {body_text}")
-        return False
-    except Exception as e:
-        _safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
-        return False
+load_dotenv()
+configure_utf8_output()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Minecraft 模组翻译审校流水线 — 自动检查 + LLM 启发式审校",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""示例:
-  python run.py --en en_us.json --zh zh_cn.json -o ./output/
-  python run.py --en en_us.json --zh zh_cn.json -o ./output/ --no-llm
-  python run.py --en en_us.json --zh zh_cn.json -o ./output/ --dry-run
-        """,
+        epilog="示例:\n"
+               "  python run.py --en en_us.json --zh zh_cn.json -o ./output/\n"
+               "  python run.py --en en_us.json --zh zh_cn.json -o ./output/ --no-llm\n"
+               "  python run.py --en en_us.json --zh zh_cn.json -o ./output/ --dry-run",
     )
 
-    parser.add_argument("--en", default=None, help="en_us.json 路径（传统模式必需）")
-    parser.add_argument("--zh", default=None, help="zh_cn.json 路径（传统模式必需）")
-    parser.add_argument("-o", "--output-dir", default="./output", help="输出目录")
-
-    # PR 模式参数
-    parser.add_argument("--pr", type=int, default=None,
-                        help="PR 编号（PR 模式，--repo 可省略默认读配置）")
-    parser.add_argument("--repo", default=None,
-                        help="GitHub 仓库名，默认从配置读取")
-    parser.add_argument("--token", default=None,
-                        help="GitHub Token，默认从 GITHUB_TOKEN 环境变量读取")
-    parser.add_argument("--pr-alignment", default=None,
-                        help="已保存的 PR 对齐 JSON 文件路径（跳过拉取步骤）")
-
-    parser.add_argument("--no-llm", action="store_true",
-                        help="跳过 LLM 审校")
-    parser.add_argument("--interactive", action="store_true",
-                        help="交互模式：逐条手动判定")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="干运行：显示统计不调 LLM")
-    parser.add_argument("--min-term-freq", type=int, default=3,
-                        help="术语最低频次阈值")
-    parser.add_argument("--fuzzy-threshold", type=float, default=60.0,
-                        help="模糊搜索相似度阈值")
-    parser.add_argument("--batch-size", type=int, default=20,
-                        help="LLM 每批条目数")
-    parser.add_argument("--filter-only", action="store_true",
-                        help="仅重跑 Phase 5 最终过滤（需已有 pipeline.db）")
-
+    _add_arguments(parser)
     args = parser.parse_args()
 
-    # 参数互斥：传统模式 vs PR 模式
+    # ── 模式验证 ──
     is_traditional = bool(args.en and args.zh)
     is_pr = bool(args.pr)
     is_pr_alignment = bool(args.pr_alignment)
@@ -167,153 +55,20 @@ def main() -> None:
         args.repo = args.repo or cfg.DEFAULT_PR_REPO
 
     if is_traditional:
-        if not os.path.exists(args.en):
-            print(f"错误: EN 文件不存在: {args.en}", file=sys.stderr)
-            sys.exit(1)
-        if not os.path.exists(args.zh):
-            print(f"错误: ZH 文件不存在: {args.zh}", file=sys.stderr)
-            sys.exit(1)
+        _validate_input_files(args.en, args.zh)
 
-    # ── filter-only 模式：仅重跑 Phase 5 ──
+    # ── filter-only 模式 ──
     if args.filter_only:
-        from pathlib import Path
-        output_dir = Path(args.output_dir)
-        db_path = output_dir / "pipeline.db"
-        if not db_path.exists():
-            print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
-            sys.exit(1)
-        api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
-        if not api_key:
-            print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
-            sys.exit(1)
-        base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
-        model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-        llm_call = create_openai_llm_call(api_key, model, base_url)
+        _run_filter_only(args)
+        return
 
-        from src.llm.bridge import LLMBridge
-        from src.storage.database import PipelineDB
+    # ── PR 对齐 ──
+    pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment)
 
-        db = PipelineDB(db_path)
-        verdicts = db.load_verdicts(phase="merged", filtered=0)
+    # ── 构建 LLM ──
+    llm_call, filter_llm_call = _build_llm_calls(args)
 
-        if not verdicts:
-            print("无待过滤 verdict")
-            db.close()
-            sys.exit(0)
-
-        # 查缓存
-        import hashlib
-        def _ck(v):
-            raw = ":".join([v.get("key",""), v.get("verdict",""),
-                           v.get("zh_current","")[:150], v.get("reason","")[:200]])
-            return hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
-
-        cached_discard: set[str] = set()
-        cached_reasons: dict[str, str] = {}
-        uncached: list[dict] = []
-        for v in verdicts:
-            r = db.lookup_filter_cache(_ck(v))
-            if r is not None:
-                a, c = r
-                if a == "DISCARD":
-                    cached_discard.add(v["key"])
-                elif c:
-                    cached_reasons[v["key"]] = c
-            else:
-                uncached.append(v)
-        print(f"[Phase 5] 缓存命中 {len(verdicts) - len(uncached)}, 需LLM {len(uncached)}")
-
-        bridge = LLMBridge(llm_call)
-        if uncached:
-            fv, dc = bridge.filter_verdicts(uncached)
-            u_discard = {d["key"] for d in dc}
-            u_reasons = {}
-            for v in fv:
-                if v.get("reason") and v["key"] not in u_discard:
-                    u_reasons[v["key"]] = v["reason"]
-            for v in uncached:
-                ck = _ck(v)
-                k = v["key"]
-                if k in u_discard:
-                    db.store_filter_cache(ck, "DISCARD", "")
-                else:
-                    db.store_filter_cache(ck, "KEEP", u_reasons.get(k, ""))
-            db.commit_filter_cache()
-        else:
-            fv, dc = [], []
-            u_discard = set()
-            u_reasons = {}
-
-        all_discard = cached_discard | u_discard
-        all_reasons = {**cached_reasons, **u_reasons}
-
-        for v in verdicts:
-            k = v["key"]
-            if k in all_discard:
-                db.set_filtered(k, "DISCARD", "")
-            else:
-                if k in all_reasons:
-                    v["reason"] = all_reasons[k]
-                db.set_filtered(k, "KEEP", v.get("reason", ""))
-
-        kept_verdicts = db.load_verdicts(phase="merged", filtered=1)
-        removed = len(all_discard)
-        print(f"  驳回 {removed} 条, 保留 {len(kept_verdicts)} 条")
-
-        stats = db.get_merged_stats()
-        db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
-        db.close()
-
-        print(f"  已更新: {db_path}")
-        sys.exit(0)
-
-    # ── PR 模式逻辑 ──
-    pr_alignment: PRAlignmentWrapper | None = None
-
-    if is_pr_alignment:
-        # 从文件加载已有的 PR 对齐数据
-        print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
-        import json as _json_al
-        with open(args.pr_alignment, "r", encoding="utf-8") as _f:
-            pr_alignment = _json_al.load(_f)
-        print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
-              f"{len(pr_alignment.get('all_warnings', []))} 条警告")
-
-    elif is_pr:
-        # 调用 PR 对齐器
-        from src.tools.pr import run_pr_aligner
-        github_token = args.token or os.environ.get("GITHUB_TOKEN", "")
-        align_output = run_pr_aligner(
-            repo=args.repo,
-            pr=args.pr,
-            output_dir=args.output_dir,
-            token=github_token,
-        )
-        import json as _json_al2
-        with open(align_output, "r", encoding="utf-8") as _f:
-            pr_alignment = _json_al2.load(_f)
-
-    # ── 构建 LLM 调用 ──
-    llm_call = None
-    filter_llm_call = None
-    if not args.no_llm and not args.interactive and not args.dry_run:
-        api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
-        base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
-        model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-
-        if not api_key:
-            print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
-        else:
-            print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
-            if not _check_api(base_url, api_key):
-                print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
-                print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
-            llm_call = create_openai_llm_call(api_key, model, base_url,
-                                                 system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
-            filter_llm_call = create_openai_llm_call(api_key, model, base_url,
-                                                       system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
-                                                       log_dir="logs/filter")
-
+    # ── 运行流水线 ──
     pipeline = ReviewPipeline(
         en_path=args.en or "",
         zh_path=args.zh or "",
@@ -329,6 +84,122 @@ def main() -> None:
         pr_alignment=pr_alignment,
     )
     pipeline.run()
+
+
+def _add_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--en", default=None, help="en_us.json 路径（传统模式必需）")
+    parser.add_argument("--zh", default=None, help="zh_cn.json 路径（传统模式必需）")
+    parser.add_argument("-o", "--output-dir", default="./output", help="输出目录")
+    parser.add_argument("--pr", type=int, default=None, help="PR 编号（PR 模式）")
+    parser.add_argument("--repo", default=None, help="GitHub 仓库名，默认从配置读取")
+    parser.add_argument("--token", default=None, help="GitHub Token")
+    parser.add_argument("--pr-alignment", default=None, help="已保存的 PR 对齐 JSON 路径")
+    parser.add_argument("--no-llm", action="store_true", help="跳过 LLM 审校")
+    parser.add_argument("--interactive", action="store_true", help="交互模式：逐条手动判定")
+    parser.add_argument("--dry-run", action="store_true", help="干运行：显示统计不调 LLM")
+    parser.add_argument("--min-term-freq", type=int, default=3, help="术语最低频次阈值")
+    parser.add_argument("--fuzzy-threshold", type=float, default=60.0, help="模糊搜索相似度阈值")
+    parser.add_argument("--batch-size", type=int, default=20, help="LLM 每批条目数")
+    parser.add_argument("--filter-only", action="store_true",
+                        help="仅重跑 Phase 5 最终过滤（需已有 pipeline.db）")
+
+
+def _validate_input_files(en_path: str, zh_path: str) -> None:
+    if not os.path.exists(en_path):
+        print(f"错误: EN 文件不存在: {en_path}", file=sys.stderr)
+        sys.exit(1)
+    if not os.path.exists(zh_path):
+        print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_filter_only(args) -> None:
+    output_dir = Path(args.output_dir)
+    db_path = output_dir / "pipeline.db"
+    if not db_path.exists():
+        print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
+        sys.exit(1)
+
+    api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
+    if not api_key:
+        print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
+        sys.exit(1)
+
+    base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
+    model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+    llm_call = create_openai_llm_call(api_key, model, base_url)
+    filter_llm_call = create_openai_llm_call(api_key, model, base_url, log_dir="logs/filter")
+
+    # 从 DB 加载已有数据，构建最小 PipelineContext 调用 run_phase5
+    db = PipelineDB(db_path)
+    verdicts = db.load_verdicts(phase="merged", filtered=0)
+    alignment = db.load_alignment()
+    db.close()
+
+    if not verdicts:
+        print("无待过滤 verdict")
+        sys.exit(0)
+
+    ctx = PipelineContext(
+        output_dir=output_dir,
+        llm_call=llm_call,
+        filter_llm_call=filter_llm_call,
+    )
+    ctx.alignment = alignment
+
+    run_phase5(ctx)
+
+
+def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool) -> PRAlignmentWrapper | None:
+    if is_pr_alignment:
+        print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
+        with open(args.pr_alignment, "r", encoding="utf-8") as f:
+            pr_alignment = json.load(f)
+        print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
+              f"{len(pr_alignment.get('all_warnings', []))} 条警告")
+        return pr_alignment
+
+    if is_pr:
+        from src.tools.pr import run_pr_aligner
+        github_token = args.token or os.environ.get("GITHUB_TOKEN", "")
+        align_output = run_pr_aligner(
+            repo=args.repo,
+            pr=args.pr,
+            output_dir=args.output_dir,
+            token=github_token,
+        )
+        with open(align_output, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    return None
+
+
+def _build_llm_calls(args) -> tuple:
+    llm_call = None
+    filter_llm_call = None
+
+    if args.no_llm or args.interactive or args.dry_run:
+        return llm_call, filter_llm_call
+
+    api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
+    base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
+    model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+
+    if not api_key:
+        print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
+        return llm_call, filter_llm_call
+
+    print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
+    if not check_api_health(base_url, api_key):
+        print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
+        print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
+
+    llm_call = create_openai_llm_call(api_key, model, base_url,
+                                      system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
+    filter_llm_call = create_openai_llm_call(api_key, model, base_url,
+                                              system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
+                                              log_dir="logs/filter")
+    return llm_call, filter_llm_call
 
 
 if __name__ == "__main__":
