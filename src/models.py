@@ -143,24 +143,11 @@ class FilterDiscardRecord(TypedDict):
     reason: str
 
 
-class FormatVerdictsContainer(TypedDict):
-    """格式检查 verdicts 容器（pipeline.db verdicts 表 phase='format'）。"""
-    total_checked: int
-    issues_found: int
-    verdicts: list[VerdictDict]
-
-
 class KeyPrefixConfig(TypedDict, total=False):
     """key_prefixes 中每个前缀的配置。"""
     label: str
     focus: str
     llm_required: bool
-
-
-class EnZhPair(TypedDict):
-    """EN/ZH 速查条目。"""
-    en: str
-    zh: str
 
 
 # ═══════════════════════════════════════════════════════════
@@ -178,9 +165,6 @@ AutoVerdictsMap = dict[str, list[VerdictDict]]
 
 # {key: [fuzzy results]}
 FuzzyResultsMap = dict[str, list[FuzzyResultDict]]
-
-# {key: {en, zh}}
-EnZhLookup = dict[str, EnZhPair]
 
 # {key: str}
 StrDict = dict[str, str]

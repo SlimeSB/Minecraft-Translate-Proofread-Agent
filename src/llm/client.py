@@ -74,7 +74,7 @@ def create_openai_llm_call(
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=4096,
+                    max_tokens=32768,
                 )
                 if reasoning_effort:
                     kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}

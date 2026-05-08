@@ -93,8 +93,6 @@ LLM_REQUIRED_PREFIXES: set[str] = cfg.LLM_REQUIRED_PREFIXES
 LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 _RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
 
-STYLE_REFERENCE = ""  # 暂无风格参考，可通过 llm.style_reference 配置
-
 
 def needs_llm_review(entry: EntryDict) -> bool:
     key = entry["key"]
@@ -276,7 +274,6 @@ def build_review_prompt(
                 cat_label=cat_label,
                 prefix=prefix,
                 focus_notes=focus_notes,
-                style_reference=STYLE_REFERENCE,
                 review_principles=cfg.REVIEW_PRINCIPLES,
             )
             has_change = any(

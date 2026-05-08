@@ -1,5 +1,5 @@
 """Phase 3a: 全自动格式检查。"""
-from src.models import EntryDict, FormatVerdictsContainer, PipelineContext, VerdictDict
+from src.models import EntryDict, PipelineContext, VerdictDict
 from src.checkers.format_checker import FormatChecker
 from src.storage.database import PipelineDB
 

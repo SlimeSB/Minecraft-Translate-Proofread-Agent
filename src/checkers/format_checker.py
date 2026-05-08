@@ -48,16 +48,11 @@ RE_NEWLINE = re.compile(r"\\n|\n")
 # 能量/体积单位（\b 需 re.ASCII，否则中文被当作 \w 导致边界失效）
 RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b", re.ASCII)
 
-# 中文全角标点
-RE_CHINESE_PUNCT = re.compile(r"[，。；：？！、‘’“”【】《》（）—…]")
-
 # 中文内容检测（含中文字符）
 RE_CHINESE_CHAR = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 
 # 省略号检测
 RE_ELLIPSIS_WRONG = re.compile(r"\.{3}")  # 三个英文句号 ...
-RE_ELLIPSIS_BOTTOM = re.compile(r"……")    # 偏下省略号
-RE_ELLIPSIS_CENTER = re.compile(r"⋯⋯")    # 居中省略号（正确）
 
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
@@ -104,16 +99,8 @@ def is_chinese_text(text: str) -> bool:
 class FormatChecker:
     """对单条翻译条目执行所有格式检查。"""
 
-    def __init__(self, tree_terms: set[str] | None = None):
-        """
-        :param tree_terms: 木材/树木相关术语集合，用于树名检查
-        """
-        self.tree_terms = tree_terms or {
-            "log", "wood", "planks", "sapling", "leaves",
-            "stairs", "slab", "fence", "fence_gate", "door",
-            "sign", "boat", "chest_boat", "button", "pressure_plate",
-            "trapdoor", "stripped_log", "stripped_wood",
-        }
+    def __init__(self):
+        """初始化格式检查器。"""
 
     def check_all(self, entry: dict[str, str]) -> list[dict[str, Any]]:
         """对单条 entry 执行所有格式检查，返回 verdict 列表。"""
@@ -132,7 +119,6 @@ class FormatChecker:
             self._check_energy_units,
             self._check_ellipsis,
             self._check_sound_subtitle_format,
-            self._check_tree_terms,
         ]
 
         verdicts: list[dict[str, Any]] = []
@@ -406,19 +392,6 @@ class FormatChecker:
                 return self._verdict(key, en, zh, "⚠️ SUGGEST",
                     reason="声音字幕建议使用'主体：声音'格式（全角冒号）",
                 )
-
-    def _check_tree_terms(
-        self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查树木相关术语命名一致性。"""
-        key_lower = key.lower()
-        # 检查 key 是否包含树木相关词
-        for term in self.tree_terms:
-            if term in key_lower:
-                # 树木命名模式检查交给术语表和 LLM
-                # 此处仅做基本检查
-                return None
-        return None
 
     # ── 工具方法 ──────────────────────────────────────────
 

@@ -41,6 +41,18 @@ def _normalize_verdict(v: VerdictDict) -> None:
         v[field] = val
 
 
+def _is_truncated_json(response: str) -> bool:
+    """检测 JSON 响应是否被截断。"""
+    stripped = response.strip()
+    if not stripped:
+        return False
+    if stripped.count("{") != stripped.count("}"):
+        return True
+    if stripped.count("[") != stripped.count("]"):
+        return True
+    return False
+
+
 def parse_review_response(response: str) -> list[VerdictDict]:
     # 直接解析整个响应
     try:
@@ -114,26 +126,32 @@ class LLMBridge:
 
             async def _process(i: int, prompt: str) -> list[VerdictDict]:
                 async with sem:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        response = await loop.run_in_executor(None, self.llm_call, prompt)
-                        # 检测非 JSON 响应（如 HTML 404 页面）
-                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
-                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
-                        parsed = parse_review_response(response)
-                        print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
-                              file=sys.stderr)
-                        for v in parsed:
-                            _normalize_verdict(v)
-                            v.setdefault("source", "llm_review")
-                        return parsed
-                    except Exception as e:
-                        print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                        return [{
-                            "key": "__llm_error__", "en_current": "", "zh_current": "",
-                            "verdict": "🔶 REVIEW", "suggestion": "",
-                            "reason": f"LLM调用失败 (批次{i+1}): {e}", "source": "llm_error",
-                        }]
+                    for attempt in (1, 2):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            response = await loop.run_in_executor(None, self.llm_call, prompt)
+                            if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                                raise RuntimeError(f"非 JSON 响应: {response[:100]}")
+                            parsed = parse_review_response(response)
+                            if _is_truncated_json(response) and not parsed:
+                                print(f"  [LLM] 批次 {i+1} JSON 截断, 重试第 {attempt} 次", file=sys.stderr)
+                                continue
+                            print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
+                                  file=sys.stderr)
+                            for v in parsed:
+                                _normalize_verdict(v)
+                                v.setdefault("source", "llm_review")
+                            return parsed
+                        except Exception as e:
+                            if attempt == 2:
+                                print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                                return [{
+                                    "key": "__llm_error__", "en_current": "", "zh_current": "",
+                                    "verdict": "🔶 REVIEW", "suggestion": "",
+                                    "reason": f"LLM调用失败 (批次{i+1}): {e}", "source": "llm_error",
+                                }]
+                            print(f"  [LLM] 批次 {i+1} 异常, 重试第 {attempt} 次: {e}", file=sys.stderr)
+                    return []
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             results: list[VerdictDict] = []
@@ -163,21 +181,28 @@ class LLMBridge:
 
             async def _process(i: int, prompt: str) -> list[VerdictDict]:
                 async with sem:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        response = await loop.run_in_executor(None, self.llm_call, prompt)
-                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
-                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
-                        parsed = parse_review_response(response)
-                        print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
-                              file=sys.stderr)
-                        for v in parsed:
-                            _normalize_verdict(v)
-                            v.setdefault("source", "untranslated_review")
-                        return parsed
-                    except Exception as e:
-                        print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                        return []
+                    for attempt in (1, 2):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            response = await loop.run_in_executor(None, self.llm_call, prompt)
+                            if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                                raise RuntimeError(f"非 JSON 响应: {response[:100]}")
+                            parsed = parse_review_response(response)
+                            if _is_truncated_json(response) and not parsed:
+                                print(f"  [未翻译] 批次 {i+1} JSON 截断, 重试第 {attempt} 次", file=sys.stderr)
+                                continue
+                            print(f"  [未翻译] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
+                                  file=sys.stderr)
+                            for v in parsed:
+                                _normalize_verdict(v)
+                                v.setdefault("source", "untranslated_review")
+                            return parsed
+                        except Exception as e:
+                            if attempt == 2:
+                                print(f"  [未翻译] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                                return []
+                            print(f"  [未翻译] 批次 {i+1} 异常, 重试第 {attempt} 次: {e}", file=sys.stderr)
+                    return []
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             results: list[VerdictDict] = []
@@ -215,36 +240,43 @@ class LLMBridge:
 
             async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
                 async with sem:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        response = await loop.run_in_executor(None, _call, prompt)
-                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
-                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
-                        parsed = parse_review_response(response)
-                        local_keys: set[str] = set()
-                        local_records: list[FilterDiscardRecord] = []
-                        local_reasons: dict[str, str] = {}
-                        local_responded: set[str] = set()
-                        for item in parsed:
-                            k = item.get("key", "").strip()
-                            if not k:
+                    for attempt in (1, 2):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            response = await loop.run_in_executor(None, _call, prompt)
+                            if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                                raise RuntimeError(f"非 JSON 响应: {response[:100]}")
+                            parsed = parse_review_response(response)
+                            if _is_truncated_json(response) and not parsed:
+                                print(f"  [Filter] 批次 {i+1} JSON 截断, 重试第 {attempt} 次", file=sys.stderr)
                                 continue
-                            local_responded.add(k)
-                            vd = item.get("verdict", "").strip()
-                            if vd == "PASS":
-                                local_keys.add(k)
-                                local_records.append({"key": k, "reason": item.get("reason", "").strip()})
-                                print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
-                            elif vd != "PASS":
-                                r = item.get("reason", "").strip()
-                                if r:
-                                    local_reasons[k] = r
-                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条",
-                              file=sys.stderr)
-                        return local_keys, local_records, local_reasons, local_responded
-                    except Exception as e:
-                        print(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                        return set(), [], {}, set()
+                            local_keys: set[str] = set()
+                            local_records: list[FilterDiscardRecord] = []
+                            local_reasons: dict[str, str] = {}
+                            local_responded: set[str] = set()
+                            for item in parsed:
+                                k = item.get("key", "").strip()
+                                if not k:
+                                    continue
+                                local_responded.add(k)
+                                vd = item.get("verdict", "").strip()
+                                if vd == "PASS":
+                                    local_keys.add(k)
+                                    local_records.append({"key": k, "reason": item.get("reason", "").strip()})
+                                    print(f"  [Filter] 驳回: {k} — {item.get('reason', '')}", file=sys.stderr)
+                                elif vd != "PASS":
+                                    r = item.get("reason", "").strip()
+                                    if r:
+                                        local_reasons[k] = r
+                            print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条",
+                                  file=sys.stderr)
+                            return local_keys, local_records, local_reasons, local_responded
+                        except Exception as e:
+                            if attempt == 2:
+                                print(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                                return set(), [], {}, set()
+                            print(f"  [Filter] 批次 {i+1} 异常, 重试第 {attempt} 次: {e}", file=sys.stderr)
+                    return set(), [], {}, set()
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             for coro in asyncio.as_completed(tasks):
