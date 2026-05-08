@@ -345,13 +345,10 @@ class FormatChecker:
     def _check_trailing_whitespace(
         self, key: str, en: str, zh: str
     ) -> dict[str, Any] | None:
-        """检查尾部空格/标点功能差异。"""
-        # 检查中英文尾部空格差异是否可能导致功能问题
-        en_trailing = bool(en != en.rstrip())
-        zh_trailing = bool(zh != zh.rstrip())
-        if en_trailing != zh_trailing and is_chinese_text(zh):
+        """中文译文尾部有多余空格时提示。"""
+        if zh != zh.rstrip() and is_chinese_text(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason=f"尾部空格不一致（EN有={en_trailing}, ZH有={zh_trailing}），可能影响显示",
+                reason="中文译文尾部有多余空格",
             )
         return None
 
