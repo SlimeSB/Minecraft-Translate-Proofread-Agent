@@ -133,14 +133,21 @@ class PipelineDB:
         """按 phase 保存判决（'format' / 'terminology' / 'llm' / 'merged'）。"""
         self._conn.execute("DELETE FROM verdicts WHERE phase=?", (phase,))
         for v in verdicts:
+            def _s(key: str, default: str = "") -> str:
+                val = v.get(key, default)
+                if isinstance(val, str):
+                    return val
+                if isinstance(val, dict):
+                    return val.get("zh", "") or val.get("text", "") or val.get("value", "") or str(val)
+                return str(val) if val else default
             self._conn.execute(
                 "INSERT INTO verdicts (key,phase,en_current,zh_current,verdict,suggestion,reason,source,namespace) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                (v.get("key", ""), phase,
-                 v.get("en_current", ""), v.get("zh_current", ""),
-                 v.get("verdict", ""), v.get("suggestion", ""),
-                 v.get("reason", ""), v.get("source", ""),
-                 v.get("namespace", "")))
+                (_s("key"), phase,
+                 _s("en_current"), _s("zh_current"),
+                 _s("verdict"), _s("suggestion"),
+                 _s("reason"), _s("source"),
+                 _s("namespace")))
         self._conn.commit()
 
     def load_verdicts(self, phase: str | None = None,

@@ -27,6 +27,20 @@ from src.llm.prompts import (
 # 响应解析器
 # ═══════════════════════════════════════════════════════════
 
+def _normalize_verdict(v: VerdictDict) -> None:
+    for field in ("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"):
+        val = v.get(field, "")
+        if isinstance(val, dict):
+            zh_val = val.get("zh", "") or val.get("text", "") or val.get("value", "")
+            if zh_val:
+                val = zh_val
+            else:
+                val = json.dumps(val, ensure_ascii=False)
+        elif not isinstance(val, str):
+            val = str(val)
+        v[field] = val
+
+
 def parse_review_response(response: str) -> list[VerdictDict]:
     # 直接解析整个响应
     try:
@@ -110,11 +124,8 @@ class LLMBridge:
                         print(f"  [LLM] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
                               file=sys.stderr)
                         for v in parsed:
+                            _normalize_verdict(v)
                             v.setdefault("source", "llm_review")
-                            v.setdefault("en_current", "")
-                            v.setdefault("zh_current", "")
-                            v.setdefault("suggestion", "")
-                            v.setdefault("reason", "")
                         return parsed
                     except Exception as e:
                         print(f"  [LLM] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
@@ -161,11 +172,8 @@ class LLMBridge:
                         print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
                               file=sys.stderr)
                         for v in parsed:
+                            _normalize_verdict(v)
                             v.setdefault("source", "untranslated_review")
-                            v.setdefault("en_current", "")
-                            v.setdefault("zh_current", "")
-                            v.setdefault("suggestion", "")
-                            v.setdefault("reason", "")
                         return parsed
                     except Exception as e:
                         print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)

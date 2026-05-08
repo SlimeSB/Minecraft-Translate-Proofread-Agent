@@ -70,6 +70,13 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["filter_system_prompt"] = filt.get("system_prompt")
     flat["filter_instruction"] = filt.get("instruction", [])
 
+    # ── prompt_templates ──
+    pt = l.get("prompt_templates", {})
+    for key in ("review_header", "review_pr_section", "review_items_section",
+                 "review_input_device_section", "filter_header", "filter_entry_block",
+                 "filter_entry_suggestion", "untranslated_prompt"):
+        flat[f"prompt_{key}"] = pt.get(key, [])
+
     # ── terminology ──
     t = raw.get("terminology", {})
     flat["term_min_freq"] = t.get("min_freq", 5)
@@ -143,5 +150,15 @@ MOUSE_GUIDANCE: str = get("mouse_guidance")
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
 FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
+
+# prompt 模板
+PROMPT_REVIEW_HEADER: str = _as_text(get("prompt_review_header"))
+PROMPT_REVIEW_PR_SECTION: str = _as_text(get("prompt_review_pr_section"))
+PROMPT_REVIEW_ITEMS_SECTION: str = _as_text(get("prompt_review_items_section"))
+PROMPT_REVIEW_INPUT_DEVICE_SECTION: str = _as_text(get("prompt_review_input_device_section"))
+PROMPT_FILTER_HEADER: str = _as_text(get("prompt_filter_header"))
+PROMPT_FILTER_ENTRY_BLOCK: str = _as_text(get("prompt_filter_entry_block"))
+PROMPT_FILTER_ENTRY_SUGGESTION: str = _as_text(get("prompt_filter_entry_suggestion"))
+PROMPT_UNTRANSLATED: str = _as_text(get("prompt_untranslated_prompt"))
 
 DEFAULT_PR_REPO: str = get("default_pr_repo", "CFPAOrg/Minecraft-Mod-Language-Package")

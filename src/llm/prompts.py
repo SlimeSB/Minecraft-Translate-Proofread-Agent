@@ -271,28 +271,31 @@ def build_review_prompt(
         effective_batch = 1 if prefix == "ae2guide:" else batch_size
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
-            header = f"""{cfg.REVIEW_HEADER_PREFIX}。当前类型: {cat_label}（{prefix}*）。
-
-## 审查重点
-{focus_notes}
-
-## 风格参考
-{STYLE_REFERENCE}
-
-## 普适原则
-{cfg.REVIEW_PRINCIPLES}
-"""
+            header = cfg.PROMPT_REVIEW_HEADER.format(
+                header_prefix=cfg.REVIEW_HEADER_PREFIX,
+                cat_label=cat_label,
+                prefix=prefix,
+                focus_notes=focus_notes,
+                style_reference=STYLE_REFERENCE,
+                review_principles=cfg.REVIEW_PRINCIPLES,
+            )
             has_change = any(
                 entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
                 for entry in batch
             )
-            if has_change:
-                header += f"\n## PR 模式审校指南\n{cfg.get('pr_change_context_prompt', '')}\n"
-            header += f"\n## 待审条目 ({len(batch)}条)\n"
-            header += cfg.REVIEW_INSTRUCTION + "\n"
+            if has_change and cfg.PROMPT_REVIEW_PR_SECTION:
+                header += cfg.PROMPT_REVIEW_PR_SECTION.format(
+                    change_context=cfg.get("pr_change_context_prompt", "")
+                )
+            header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
+                count=len(batch),
+                review_instruction=cfg.REVIEW_INSTRUCTION,
+            )
             input_guidance = detect_input_guidance(batch)
-            if input_guidance:
-                header += f"\n## 输入设备翻译专项指南\n{input_guidance}\n"
+            if input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
+                header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
+                    input_guidance=input_guidance,
+                )
             blocks = [header]
             for j, entry in enumerate(batch):
                 key = entry["key"]
@@ -329,11 +332,10 @@ def build_filter_prompt(
 
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
-            header = f"""## 任务
-以下是自动检查和LLM审校后汇总的翻译问题列表（{cat_label}）。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。
-
-## 问题列表 ({len(batch)}条)
-"""
+            header = cfg.PROMPT_FILTER_HEADER.format(
+                cat_label=cat_label,
+                count=len(batch),
+            )
             lines: list[str] = []
             for j, v in enumerate(batch):
                 key = v.get("key", "")
@@ -343,14 +345,16 @@ def build_filter_prompt(
                 reason = v.get("reason", "")
                 suggestion = v.get("suggestion", "")
                 is_guideme = key.startswith("ae2guide:")
-                block = f"### 条目 {j+1}\n"
-                block += f"key: `{key}`\n"
-                block += f'EN: "{en if is_guideme else en[:200]}"\n'
-                block += f'ZH: "{zh if is_guideme else zh[:200]}"\n'
-                block += f"判定: {verdict}\n"
-                block += f"问题: {reason}\n"
+                block = cfg.PROMPT_FILTER_ENTRY_BLOCK.format(
+                    index=j + 1,
+                    key=key,
+                    en=en if is_guideme else en[:200],
+                    zh=zh if is_guideme else zh[:200],
+                    verdict=verdict,
+                    reason=reason,
+                )
                 if suggestion:
-                    block += f"建议: {suggestion}\n"
+                    block += "\n" + cfg.PROMPT_FILTER_ENTRY_SUGGESTION.format(suggestion=suggestion)
                 lines.append(block)
             prompts.append(header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines))
     return prompts
@@ -366,23 +370,12 @@ def build_untranslated_prompt(entries: list[EntryDict], batch_size: int = 1) -> 
     for i in range(0, len(entries), batch_size):
         batch = entries[i:i + batch_size]
         blocks: list[str] = []
-        for j, entry in enumerate(batch):
+        for entry in batch:
             key = entry["key"]
             en = entry.get("en", "")
             zh = entry.get("zh", "")
             blocks.append(f"key: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"\n")
-        prompt = f"""你是Minecraft模组翻译审校专家。以下条目的英文和中文值相同（或高度相似），请判断是否确实为未翻译，还是合法的不需翻译的内容。
-
-## 判定标准
-- 原文为自然语言文本（单词、短语、句子），中文本应翻译但没有翻译 → 确实未翻译，判定 ❌ FAIL 并给出建议译文
-- 原文为代码、版本号、数字、URL路径、占位符、专有名词、色彩代码、命令参数等，中英一致是合理的 → 合法不需翻译，判定 PASS
-
-## 输出格式
-对每条输出: {{"key": "条目的key值", "verdict": "PASS/❌ FAIL", "suggestion": "建议译文或空字符串", "reason": "判定理由"}}
-PASS条目不输出。仅输出JSON数组。
-
-## 条目 ({len(batch)}条)
-
-""" + "\n".join(blocks) + "\n仅输出JSON数组。"
+        prompt = cfg.PROMPT_UNTRANSLATED.format(count=len(batch))
+        prompt += "\n\n" + "\n".join(blocks) + "\n仅输出JSON数组。"
         prompts.append(prompt)
     return prompts

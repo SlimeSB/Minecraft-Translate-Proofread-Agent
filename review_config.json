@@ -72,6 +72,63 @@
         "- 简洁准确：一段话讲清楚，不重复、不自相矛盾",
         "- 去除自动检查套话（如「值相同」「疑似未翻译」），改写为自然语言"
       ]
+    },
+    "prompt_templates": {
+      "review_header": [
+        "{header_prefix}。当前类型: {cat_label}（{prefix}*）。",
+        "",
+        "## 审查重点",
+        "{focus_notes}",
+        "",
+        "## 风格参考",
+        "{style_reference}",
+        "",
+        "## 普适原则",
+        "{review_principles}"
+      ],
+      "review_pr_section": [
+        "",
+        "## PR 模式审校指南",
+        "{change_context}"
+      ],
+      "review_items_section": [
+        "",
+        "## 待审条目 ({count}条)",
+        "{review_instruction}"
+      ],
+      "review_input_device_section": [
+        "",
+        "## 输入设备翻译专项指南",
+        "{input_guidance}"
+      ],
+      "filter_header": [
+        "## 任务",
+        "以下是自动检查和LLM审校后汇总的翻译问题列表（{cat_label}）。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。",
+        "",
+        "## 问题列表 ({count}条)"
+      ],
+      "filter_entry_block": [
+        "### 条目 {index}",
+        "key: `{key}`",
+        "EN: \"{en}\"",
+        "ZH: \"{zh}\"",
+        "判定: {verdict}",
+        "问题: {reason}"
+      ],
+      "filter_entry_suggestion": "建议: {suggestion}",
+      "untranslated_prompt": [
+        "你是Minecraft模组翻译审校专家。以下条目的英文和中文值相同（或高度相似），请判断是否确实为未翻译，还是合法的不需翻译的内容。",
+        "",
+        "## 判定标准",
+        "- 原文为自然语言文本（单词、短语、句子），中文本应翻译但没有翻译 → 确实未翻译，判定 ❌ FAIL 并给出建议译文",
+        "- 原文为代码、版本号、数字、URL路径、占位符、专有名词、色彩代码、命令参数等，中英一致是合理的 → 合法不需翻译，判定 PASS",
+        "",
+        "## 输出格式",
+        "对每条输出: {{\"key\": \"条目的key值\", \"verdict\": \"PASS/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"判定理由\"}}",
+        "PASS条目不输出。仅输出JSON数组。",
+        "",
+        "## 条目 ({count}条)"
+      ]
     }
   },
 
