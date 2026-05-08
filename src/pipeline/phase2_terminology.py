@@ -8,8 +8,12 @@ def run_phase2(ctx: PipelineContext) -> None:
     print("[Phase 2] 术语提取与一致性检查...")
 
     # GuideME 条目不参与术语提取
-    lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith("ae2guide:")}
-    lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith("ae2guide:")}
+    if ctx.pr_mode and ctx.pr_full_en_data:
+        lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not k.startswith("ae2guide:")}
+        lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not k.startswith("ae2guide:")}
+    else:
+        lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith("ae2guide:")}
+        lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith("ae2guide:")}
 
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)

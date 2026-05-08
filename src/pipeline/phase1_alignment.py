@@ -67,6 +67,15 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
             ctx.zh_only_entries.append(entry)
 
     ctx.pr_warnings = data.get("all_warnings", [])
+
+    mods = data.get("mods", {})
+    for mod_data in mods.values():
+        full_en = mod_data.get("full_en", {})
+        full_zh = mod_data.get("full_zh", {})
+        ctx.pr_full_en_data.update(full_en)
+        ctx.pr_full_zh_data.update(full_zh)
+    if ctx.pr_full_en_data:
+        print(f"  全量数据: {len(ctx.pr_full_en_data)} 个唯一 key")
     print(f"  已加载: {len(matched)} 条变更, {len(ctx.pr_warnings)} 条警告, "
           f"{len(ctx.zh_only_entries)} 条 ZH-only 变更")
 
