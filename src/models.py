@@ -262,6 +262,8 @@ class PipelineContext:
 
     external_dict_store: object = None  # ExternalDictStore | None
 
+    config: dict = field(default_factory=dict)
+
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

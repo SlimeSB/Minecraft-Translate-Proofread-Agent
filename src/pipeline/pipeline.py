@@ -17,6 +17,7 @@ from src.pipeline.phase5_report import run_phase5
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 from src.dictionary.external import ExternalDictStore
+from src import config as cfg
 
 
 class ReviewPipeline:
@@ -44,6 +45,7 @@ class ReviewPipeline:
             en_path=Path(en_path) if en_path else None,
             zh_path=Path(zh_path) if zh_path else None,
             output_dir=Path(output_dir),
+            config=cfg._load(),
             llm_call=llm_call,
             filter_llm_call=filter_llm_call,
             no_llm=no_llm,
