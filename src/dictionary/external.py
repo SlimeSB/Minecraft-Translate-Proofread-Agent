@@ -13,6 +13,20 @@ DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 _RE_WORD = re.compile(r"[A-Za-z]+")
 
+_STOP_WORDS: set[str] = set()
+
+
+def _load_stop_words() -> set[str]:
+    global _STOP_WORDS
+    if _STOP_WORDS:
+        return _STOP_WORDS
+    try:
+        from src import config as cfg
+        _STOP_WORDS = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
+    except Exception:
+        pass
+    return _STOP_WORDS
+
 
 class ExternalDictStore:
     """按需查询外部 SQLite 词典，避免全量内存加载（~200-300MB）。"""
@@ -87,11 +101,14 @@ class ExternalDictStore:
         if not words:
             return ""
 
-        groups: dict[str, set[str]] = {}
-        seen_zh: set[str] = set()
+        stop_words = _load_stop_words()
+        pairs: dict[tuple[str, str], set[str]] = {}  # (en_word, zh) -> {modids}
+        seen: set[tuple[str, str]] = set()
 
         for w in words:
             w_lower = w.lower()
+            if w_lower in stop_words:
+                continue
             candidates = self._query_word(w_lower)
             if not candidates:
                 canon = self._lemma_map.get(w_lower)
@@ -103,23 +120,24 @@ class ExternalDictStore:
                 continue
 
             for zh, modid in candidates:
-                if zh in seen_zh:
-                    groups[zh].add(modid)
+                pair_key = (w, zh)
+                if pair_key in seen:
+                    pairs[pair_key].add(modid)
                 else:
-                    seen_zh.add(zh)
-                    groups[zh] = {modid}
+                    seen.add(pair_key)
+                    pairs[pair_key] = {modid}
 
-        if not groups:
+        if not pairs:
             return ""
 
-        sorted_groups = sorted(groups.items(), key=lambda x: -len(x[1]))
+        sorted_pairs = sorted(pairs.items(), key=lambda x: -len(x[1]))
         lines: list[str] = []
-        for zh, modids in sorted_groups[:max_groups]:
+        for (en_word, zh), modids in sorted_pairs[:max_groups]:
             modid_list = sorted(modids)[:max_modids]
             modid_str = ", ".join(modid_list)
             if len(modids) > max_modids:
                 modid_str += f" +{len(modids) - max_modids}"
-            lines.append(f"\"{zh}\" 来源Mod: [{modid_str}]")
+            lines.append(f"\"{en_word}\" -> \"{zh}\" 来源Mod: [{modid_str}]")
 
         if not lines:
             return ""
