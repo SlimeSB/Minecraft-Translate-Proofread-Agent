@@ -98,4 +98,4 @@ def _cache_key(v: dict) -> str:
         (v.get("zh_current") or v.get("zh_current", ""))[:150],
         v.get("reason", "")[:200],
     ])
-    return hashlib.blake2b(raw.encode("utf-8"), digest_size=8).hexdigest()
+    return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()
