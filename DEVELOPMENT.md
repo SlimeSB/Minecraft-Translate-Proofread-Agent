@@ -143,7 +143,7 @@ class ReviewPipeline:
 
 所有 LLM 功能从 `src.llm` 包导入（`__init__.py` 统一重导出）。
 
-### 3. `src/tools/key_alignment.py` — 键对齐 & 碰撞检测
+### 3. `src/tools/key_alignment.py` — 键对齐
 
 核心函数：
 

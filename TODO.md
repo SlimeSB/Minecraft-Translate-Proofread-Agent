@@ -4,20 +4,36 @@
 
 > 记录需要改进但未实施的工程问题。共 184 个单元测试（14 个模块），全部通过。
 
-## 已完成 ✓
-
-- ✅ Windows 终端 GBK 编码 — configure_utf8_output 已处理
-- ✅ 原版 key 提取脚本 — scripts/extract_vanilla_keys.py
-- ✅ Pipeline 级别集成测试 — tests/test_pipeline_integration.py (10 个测试)
-- ✅ Config 可注入 — PipelineContext.config 字段
-- ✅ src/__init__.py 版本信息 — __version__ = "2.0.0"
-- ✅ 过滤缓存 hash 碰撞修复 — blake2b digest_size 8→16 (128-bit)
-- ✅ 类型检查配置 — pyrightconfig.json
-- ✅ 外部词典下载脚本 — scripts/download_external_dict.py
-- ✅ CI/CD Pipeline — .github/workflows/test.yml (test + typecheck)
-- ✅ 外部词典内存优化 — 按需 SQLite 查询替代全量加载 (~200MB→~10MB)
-
 ## 待办
 
 ### 5. PACKER-INFO.md 规范未实现（独立项目）
 `PACKER-INFO.md`（315 行）描述了一个独立的 **Packer 工具**，将 `projects/assets/` 下模组翻译打包为 Minecraft 资源包 ZIP。包含四策略分发（direct/indirect/composition/singleton）、命名空间配置合并、字符/路径替换等复杂打包逻辑。建议作为独立仓库/分支实现。
+
+### 12. pr模式的术语逻辑
+pr模式下不要只从diff生成术语，应当从pr内的，完整的en和zh文件生成术语，这样更严谨。
+交给大模型校对的时候才只给diff的词条，这样可以减少劳动。
+
+### 13. 术语表生成优化
+程序自动生成的术语表有时候会有些问题，试试术语+1-5个包含术语的上下文交给llm判断并修改一次。用1个最长的+4个最短的原文。
+有的术语是“使……能够”这样的带省略号的格式，实现起来似乎有些复杂先不弄了，但是这个问题记一下先。
+
+### 1.minecraftdb格式修改
+现在写了一个minecraft.db用于存放对齐后的文件，可以直接读key
+db格式需要改一下：
+
+attribute.name.generic.armor	Armor	盔甲	1.12.2	lang	新增
+attribute.name.generic.armor	Armor	盔甲	1.16.5	lang	未变
+attribute.name.generic.armor	Armor	护甲值	1.18.2	lang	变更
+attribute.name.generic.armor	Armor	护甲值	1.19.2	lang	未变
+attribute.name.generic.armor	Armor	护甲值	1.19.4	lang	未变
+attribute.name.generic.armor	Armor	护甲值	1.20.1	lang	未变
+attribute.name.generic.armor	Armor	护甲值	1.20.4	lang	未变
+attribute.name.generic.armor	Armor	护甲值	1.21.1	lang	未变
+attribute.name.generic.armor	Armor	护甲值	26.1.2	lang	未变
+
+改成
+
+attribute.name.generic.armor	Armor	盔甲	1.12.2（开始版本）  1.16.5（结束版本）	lang	有变
+attribute.name.generic.armor	Armor	护甲值	1.18.2  26.1.2	lang	有变
+
+未变的就是“未变”，没有新增了。有变这个字段是为了提醒这些翻译要区分minecraft版本。未来可能做原版的术语表
