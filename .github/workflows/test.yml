@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install pyright
-        run: pip install pyright
+        run: pip install pyright openai
 
       - name: Type check
         run: pyright

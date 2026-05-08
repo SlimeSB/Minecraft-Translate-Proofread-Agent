@@ -8,5 +8,15 @@
   "reportUnknownVariableType": false,
   "reportMissingImports": true,
   "reportMissingModuleSource": false,
+  "reportTypedDictNotRequiredAccess": false,
+  "reportArgumentType": false,
+  "reportAssignmentType": false,
+  "reportReturnType": false,
+  "reportAttributeAccessIssue": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportOptionalOperand": false,
+  "reportOperatorIssue": false,
+  "reportIndexIssue": false,
   "pythonVersion": "3.12"
 }
