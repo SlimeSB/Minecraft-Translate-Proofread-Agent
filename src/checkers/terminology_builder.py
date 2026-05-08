@@ -129,7 +129,7 @@ class TerminologyBuilder:
     ) -> dict[str, dict[str, Any]]:
         if not self.extracted:
             self.extract()
-        fuzzy_threshold = fuzzy_threshold if fuzzy_threshold is not None else cfg.get("fuzzy_cluster_threshold", 65.0)
+        fuzzy_threshold = fuzzy_threshold if fuzzy_threshold is not None else float(cfg.get("fuzzy_cluster_threshold", 65.0))  # type: ignore[arg-type]
 
         self.cache.load()
 
@@ -188,6 +188,7 @@ class TerminologyBuilder:
 
         min_freq = min_freq if min_freq is not None else cfg.get("term_min_freq", 5)
         min_consensus = min_consensus if min_consensus is not None else cfg.get("term_min_consensus", 0.6)
+        assert isinstance(min_consensus, (int, float))
         max_zh_len = cfg.get("term_max_zh_len", 40)
         max_en_len = cfg.get("term_max_en_len", 60)
         min_total = cfg.get("term_consensus_min_total", 3)
