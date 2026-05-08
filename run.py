@@ -68,11 +68,11 @@ def main() -> None:
         _run_filter_only(args, output_dir)
         return
 
+    # ── 构建 LLM（API 健康检查提前）──
+    llm_call, filter_llm_call = _build_llm_calls(args)
+
     # ── PR 对齐 ──
     pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
-
-    # ── 构建 LLM ──
-    llm_call, filter_llm_call = _build_llm_calls(args)
 
     # ── 运行流水线 ──
     pipeline = ReviewPipeline(

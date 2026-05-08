@@ -2,6 +2,8 @@
 
 快速运行：`python run.py --en tests/fixtures/en_us.json --zh tests/fixtures/zh_cn.json -o ./output/`
 
+`python run.py --pr 5979 -o ./output/ --external-dict`
+
 > 记录需要改进但未实施的工程问题。共 184 个单元测试（14 个模块），全部通过。
 
 ## 待办
