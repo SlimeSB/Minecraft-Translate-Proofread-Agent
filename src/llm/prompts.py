@@ -370,7 +370,7 @@ def build_untranslated_prompt(entries: list[EntryDict], batch_size: int = 1) -> 
             key = entry["key"]
             en = entry.get("en", "")
             zh = entry.get("zh", "")
-            blocks.append(f"### 条目 {j+1}\nkey: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"\n")
+            blocks.append(f"key: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"\n")
         prompt = f"""你是Minecraft模组翻译审校专家。以下条目的英文和中文值相同（或高度相似），请判断是否确实为未翻译，还是合法的不需翻译的内容。
 
 ## 判定标准
