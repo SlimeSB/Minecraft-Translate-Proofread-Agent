@@ -75,6 +75,10 @@ def main() -> None:
     pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
 
     # ── 运行流水线 ──
+    import time as _time
+    _start = _time.time()
+    print(f"\n⏱ 开始: {_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
     pipeline = ReviewPipeline(
         en_path=args.en or "",
         zh_path=args.zh or "",
@@ -91,6 +95,9 @@ def main() -> None:
         external_dict=args.external_dict,
     )
     pipeline.run()
+
+    _elapsed = _time.time() - _start
+    print(f"\n⏱ 结束: {_time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
 
     _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
 
