@@ -197,9 +197,10 @@ class TerminologyBuilder:
         def _is_useful_term(norm: str, info: dict) -> bool:
             if norm.lower() in STOP_WORDS:
                 return False
-            if len(norm) <= 2 and norm.isalpha():
+            if len(norm) <= 2:
                 return False
-            # 排除纯数字/短标识符
+            if re.search(r"\d", norm):
+                return False
             if re.fullmatch(r"[0-9._-]+", norm):
                 return False
             return True
