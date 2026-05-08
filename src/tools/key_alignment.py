@@ -138,7 +138,7 @@ def check_vanilla_collisions(
 ) -> list[dict[str, Any]]:
     """从 MInecraft.db 读取原版 key 并检测模组覆盖。
 
-    返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, status}。
+    返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
     """
     import sqlite3
     try:
@@ -149,7 +149,7 @@ def check_vanilla_collisions(
 
     try:
         rows = conn.execute(
-            "SELECT key, zh_cn, version_start, version_end, status FROM vanilla_keys"
+            "SELECT key, zh_cn, version_start, version_end, changes FROM vanilla_keys"
         ).fetchall()
     except sqlite3.OperationalError:
         conn.close()
@@ -165,7 +165,7 @@ def check_vanilla_collisions(
             "zh_cn": r["zh_cn"],
             "version_start": r["version_start"],
             "version_end": r["version_end"],
-            "status": r["status"],
+            "changes": r["changes"],
         }
     conn.close()
 
@@ -182,7 +182,7 @@ def check_vanilla_collisions(
             "vanilla_zh": vanilla_map[k]["zh_cn"],
             "version_start": vanilla_map[k]["version_start"],
             "version_end": vanilla_map[k]["version_end"],
-            "status": vanilla_map[k]["status"],
+            "changes": vanilla_map[k]["changes"],
         }
         for k in sorted(collisions)
     ]
