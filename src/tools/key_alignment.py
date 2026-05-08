@@ -132,6 +132,62 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
 
 
 
+def check_vanilla_collisions(
+    en_data: dict[str, str],
+    db_path: str = "data/MInecraft.db",
+) -> list[dict[str, Any]]:
+    """从 MInecraft.db 读取原版 key 并检测模组覆盖。
+
+    返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, status}。
+    """
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.OperationalError:
+        return []
+
+    try:
+        rows = conn.execute(
+            "SELECT key, zh_cn, version_start, version_end, status FROM vanilla_keys"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        conn.close()
+        return []
+
+    if not rows:
+        conn.close()
+        return []
+
+    vanilla_map: dict[str, dict] = {}
+    for r in rows:
+        vanilla_map[r["key"]] = {
+            "zh_cn": r["zh_cn"],
+            "version_start": r["version_start"],
+            "version_end": r["version_end"],
+            "status": r["status"],
+        }
+    conn.close()
+
+    mod_keys = set(en_data.keys())
+    collisions = mod_keys & set(vanilla_map.keys())
+
+    if not collisions:
+        return []
+
+    return [
+        {
+            "key": k,
+            "mod_value": str(en_data[k])[:80],
+            "vanilla_zh": vanilla_map[k]["zh_cn"],
+            "version_start": vanilla_map[k]["version_start"],
+            "version_end": vanilla_map[k]["version_end"],
+            "status": vanilla_map[k]["status"],
+        }
+        for k in sorted(collisions)
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="比较 en_us.json 和 zh_cn.json 的键对齐情况"
