@@ -225,7 +225,7 @@ def build_entry_block(
 # 多段条目合并
 # ═══════════════════════════════════════════════════════════
 
-_RE_MULTIPART = re.compile(r"^(.*)\.(\d+)$")
+_RE_MULTIPART = re.compile(r"^(.*?)(?:\.|\[)(\d+)\]?$")
 
 
 def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
