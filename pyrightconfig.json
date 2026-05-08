@@ -1,0 +1,12 @@
+{
+  "include": ["src", "tests", "run.py", "scripts"],
+  "exclude": ["venv", ".venv", "__pycache__", ".pytest_cache", "output", "logs"],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownVariableType": false,
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false,
+  "pythonVersion": "3.12"
+}
