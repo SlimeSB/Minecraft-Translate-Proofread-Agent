@@ -33,6 +33,14 @@ def create_openai_llm_call(
     client = OpenAI(api_key=api_key, base_url=base_url)
     call_count = [0]
 
+    # token 用量统计
+    usage = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "calls": 0,
+    }
+
     log_dir_path = Path(log_dir)
     log_dir_path.mkdir(parents=True, exist_ok=True)
     latest_path = log_dir_path / "latest.log"
@@ -69,6 +77,11 @@ def create_openai_llm_call(
                 )
                 content = resp.choices[0].message.content or ""
                 _log("INFO", f"Response:\n{content}")
+                if resp.usage:
+                    usage["prompt_tokens"] += resp.usage.prompt_tokens or 0
+                    usage["completion_tokens"] += resp.usage.completion_tokens or 0
+                    usage["total_tokens"] += resp.usage.total_tokens or 0
+                    usage["calls"] += 1
                 return content
             except Exception as e:
                 err_str = str(e)
@@ -93,6 +106,7 @@ def create_openai_llm_call(
                         _log("ERROR", f"已达最大重试次数({MAX_RETRIES}): {err_str[:200]}")
                     raise
 
+    call.usage = usage  # type: ignore[attr-defined]
     return call
 
 

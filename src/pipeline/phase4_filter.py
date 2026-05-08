@@ -43,6 +43,8 @@ def run_phase4(ctx: PipelineContext) -> None:
 
     cache_hits = len(verdicts) - len(uncached)
     print(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
+    ctx.filter_cache_hits = cache_hits
+    ctx.filter_cache_total = len(verdicts)
 
     bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
 

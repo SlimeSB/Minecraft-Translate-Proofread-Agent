@@ -92,6 +92,48 @@ def main() -> None:
     )
     pipeline.run()
 
+    _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
+
+
+def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
+    review_u = getattr(llm_call, "usage", {}) if llm_call else {}
+    filter_u = getattr(filter_llm_call, "usage", {}) if filter_llm_call else {}
+
+    total_prompt = review_u.get("prompt_tokens", 0) + filter_u.get("prompt_tokens", 0)
+    total_completion = review_u.get("completion_tokens", 0) + filter_u.get("completion_tokens", 0)
+    total_tokens = review_u.get("total_tokens", 0) + filter_u.get("total_tokens", 0)
+    total_calls = review_u.get("calls", 0) + filter_u.get("calls", 0)
+
+    if total_calls == 0:
+        return
+
+    print(f"\n{'='*40}")
+    print("Token 用量")
+    print(f"{'='*40}")
+    if review_u.get("calls", 0):
+        print(f"  LLM 审校 (Phase 3c):         {review_u['calls']} 次调用, "
+              f"{review_u['total_tokens']:,} tokens "
+              f"(prompt: {review_u['prompt_tokens']:,}, completion: {review_u['completion_tokens']:,})")
+    if filter_u.get("calls", 0):
+        print(f"  最终过滤 (Phase 4):           {filter_u['calls']} 次调用, "
+              f"{filter_u['total_tokens']:,} tokens "
+              f"(prompt: {filter_u['prompt_tokens']:,}, completion: {filter_u['completion_tokens']:,})")
+
+    # 缓存估算
+    cache_hits = getattr(ctx, "filter_cache_hits", 0)
+    cache_total = getattr(ctx, "filter_cache_total", 0)
+    if cache_hits and filter_u.get("calls", 0):
+        avg_per_call = filter_u["total_tokens"] / filter_u["calls"]
+        cached_verdicts_per_call = (cache_total - cache_hits) / filter_u["calls"] if filter_u["calls"] else 1
+        if cached_verdicts_per_call > 0:
+            saved = int(cache_hits / cached_verdicts_per_call * avg_per_call)
+            print(f"  缓存命中 (Phase 4):            {cache_hits}/{cache_total} 条, 节省约 {saved:,} tokens")
+
+    print(f"  {'─' * 38}")
+    print(f"  实际消耗:                     {total_calls} 次调用, {total_tokens:,} tokens "
+          f"(prompt: {total_prompt:,}, completion: {total_completion:,})")
+    print(f"{'='*40}")
+
 
 def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--en", default=None, help="en_us.json 路径（传统模式必需）")

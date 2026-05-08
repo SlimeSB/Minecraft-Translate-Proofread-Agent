@@ -266,6 +266,9 @@ class PipelineContext:
 
     config: dict = field(default_factory=dict)
 
+    filter_cache_hits: int = 0
+    filter_cache_total: int = 0
+
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
