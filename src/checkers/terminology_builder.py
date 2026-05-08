@@ -195,7 +195,9 @@ class TerminologyBuilder:
         from src.tools.terminology_extract import STOP_WORDS
 
         def _is_useful_term(norm: str, info: dict) -> bool:
-            if norm.lower() in STOP_WORDS:
+            stop_lower = {w.lower() for w in STOP_WORDS}
+            norm_lower = norm.lower()
+            if norm_lower in stop_lower:
                 return False
             if len(norm) <= 2:
                 return False
@@ -203,6 +205,9 @@ class TerminologyBuilder:
                 return False
             if re.fullmatch(r"[0-9._-]+", norm):
                 return False
+            for word in norm_lower.split():
+                if word in stop_lower:
+                    return False
             return True
 
         glossary: list[dict[str, str]] = []

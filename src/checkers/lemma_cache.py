@@ -17,13 +17,30 @@ DEFAULT_CACHE_PATH = "data/lemma_cache.json"
 
 
 def _is_valid_term(term: str) -> bool:
-    """≤2 字符或含数字的不视为术语。"""
+    """≤2 字符、含数字、或含停用词的不视为术语。"""
     t = term.strip()
     if len(t) <= 2:
         return False
     if any(c.isdigit() for c in t):
         return False
-    return True
+    return _not_stop(t)
+
+
+def _not_stop(term: str) -> bool:
+    try:
+        from src import config as _cfg
+        stop = {w.lower() for w in _cfg.get("term_blacklist", []) if isinstance(w, str)}
+        lower = term.lower()
+        # 精确匹配
+        if lower in stop:
+            return False
+        # 多词术语中任一成分是停用词
+        for word in lower.split():
+            if word in stop:
+                return False
+        return True
+    except Exception:
+        return True
 
 
 class LemmaCache:
