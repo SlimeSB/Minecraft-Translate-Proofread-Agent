@@ -15,6 +15,7 @@ def create_openai_llm_call(
     *,
     system_prompt: str | None = None,
     log_dir: str = "logs",
+    reasoning_effort: str | None = None,
 ) -> LLMCallable:
     if system_prompt is None:
         from src import config as _cfg
@@ -66,7 +67,7 @@ def create_openai_llm_call(
         retries = 0
         while True:
             try:
-                resp = client.chat.completions.create(
+                kwargs: dict = dict(
                     model=model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -75,6 +76,9 @@ def create_openai_llm_call(
                     temperature=0.1,
                     max_tokens=4096,
                 )
+                if reasoning_effort:
+                    kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
+                resp = client.chat.completions.create(**kwargs)
                 content = resp.choices[0].message.content or ""
                 _log("INFO", f"Response:\n{content}")
                 if resp.usage:

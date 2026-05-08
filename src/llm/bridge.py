@@ -205,13 +205,15 @@ class LLMBridge:
         prompts = build_filter_prompt(verdicts, batch_size)
         print(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批", file=sys.stderr)
 
-        async def _run_all() -> tuple[set[str], list[FilterDiscardRecord], dict[str, str]]:
+        async def _run_all() -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
             sem = asyncio.Semaphore(max_workers)
             discarded_keys: set[str] = set()
             discard_records: list[FilterDiscardRecord] = []
             cleaned_reasons: dict[str, str] = {}
+            all_responded: set[str] = set()
+            all_input_keys: set[str] = {v.get("key", "") for v in verdicts}
 
-            async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str]]:
+            async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
                 async with sem:
                     try:
                         loop = asyncio.get_running_loop()
@@ -222,10 +224,12 @@ class LLMBridge:
                         local_keys: set[str] = set()
                         local_records: list[FilterDiscardRecord] = []
                         local_reasons: dict[str, str] = {}
+                        local_responded: set[str] = set()
                         for item in parsed:
                             k = item.get("key", "").strip()
                             if not k:
                                 continue
+                            local_responded.add(k)
                             vd = item.get("verdict", "").strip()
                             if vd == "PASS":
                                 local_keys.add(k)
@@ -237,20 +241,25 @@ class LLMBridge:
                                     local_reasons[k] = r
                         print(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条",
                               file=sys.stderr)
-                        return local_keys, local_records, local_reasons
+                        return local_keys, local_records, local_reasons, local_responded
                     except Exception as e:
                         print(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
-                        return set(), [], {}
+                        return set(), [], {}, set()
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             for coro in asyncio.as_completed(tasks):
-                keys, records, reasons = await coro
+                keys, records, reasons, responded = await coro
                 discarded_keys.update(keys)
                 discard_records.extend(records)
                 cleaned_reasons.update(reasons)
-            return discarded_keys, discard_records, cleaned_reasons
+                all_responded.update(responded)
+            missing = all_input_keys - all_responded
+            if missing:
+                print(f"  [Filter] ⚠ LLM 遗漏 {len(missing)} 条, 保留原判: {', '.join(sorted(missing))}",
+                      file=sys.stderr)
+            return discarded_keys, discard_records, cleaned_reasons, missing
 
-        discarded, discard_records, cleaned_reasons = asyncio.run(_run_all())
+        discarded, discard_records, cleaned_reasons, _ = asyncio.run(_run_all())
         print(f"  最终驳回: {len(discarded)} 条, 清洗 reason: {len(cleaned_reasons)} 条", file=sys.stderr)
         filtered = [v for v in verdicts if v.get("key") not in discarded]
         for v in filtered:

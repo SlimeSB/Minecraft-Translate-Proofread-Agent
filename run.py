@@ -179,7 +179,10 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
     model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
     llm_call = create_openai_llm_call(api_key, model, base_url)
-    filter_llm_call = create_openai_llm_call(api_key, model, base_url, log_dir="logs/filter")
+    filter_llm_call = create_openai_llm_call(api_key, model, base_url,
+                                              system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                              log_dir="logs/filter",
+                                              reasoning_effort="high")
 
     db = PipelineDB(db_path)
     verdicts = db.load_verdicts(phase="merged", filtered=0)
@@ -248,8 +251,9 @@ def _build_llm_calls(args) -> tuple:
     llm_call = create_openai_llm_call(api_key, model, base_url,
                                       system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
     filter_llm_call = create_openai_llm_call(api_key, model, base_url,
-                                              system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
-                                              log_dir="logs/filter")
+                                              system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                              log_dir="logs/filter",
+                                              reasoning_effort="high")
     return llm_call, filter_llm_call
 
 
