@@ -92,6 +92,8 @@ def run_pr_aligner(
             result_mods[resolved_mod_key] = {
                 "mod_info": mi,
                 "entries": entries,
+                "full_en": new_en,
+                "full_zh": new_zh,
             }
             all_entries.extend(entries)
         all_warnings.extend(warnings)

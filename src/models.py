@@ -246,6 +246,8 @@ class PipelineContext:
     pr_change_meta: dict[str, PRChangeMetaDict] = field(default_factory=dict)
     pr_warnings: list[PRWarningDict] = field(default_factory=list)
     zh_only_entries: list[PRAlignmentEntryDict] = field(default_factory=list)
+    pr_full_en_data: StrDict = field(default_factory=dict)
+    pr_full_zh_data: StrDict = field(default_factory=dict)
 
     # ── 中间结果 ──
     en_data: StrDict = field(default_factory=dict)
