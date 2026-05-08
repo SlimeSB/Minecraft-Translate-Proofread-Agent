@@ -20,6 +20,8 @@ def run_phase2(ctx: PipelineContext) -> None:
     tb.extract(min_freq=2, max_ngram=3)
     tb.merge_lemmas(llm_call=ctx.llm_call)
     ctx.glossary = tb.build_glossary()
+    if ctx.llm_call and not ctx.no_llm:
+        ctx.glossary = tb.llm_verify_glossary(ctx.llm_call)
     ctx.term_verdicts = tb.check_consistency()
 
     print(f"  术语表: {len(ctx.glossary)} 条")

@@ -64,6 +64,32 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
 # 术语表构建器
 # ═══════════════════════════════════════════════════════════
 
+def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
+    """解析 LLM 返回的术语修正 JSON 数组。"""
+    import json
+    import re
+    jt = response.strip()
+    if "```" in jt:
+        m = re.search(r"```(?:json)?\\s*\\n?(.*?)```", jt, re.DOTALL)
+        if m:
+            jt = m.group(1).strip()
+    try:
+        arr = json.loads(jt)
+    except json.JSONDecodeError:
+        arr = []
+    if not isinstance(arr, list):
+        return {}
+    result = {}
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        en = (item.get("en") or "").lower().strip()
+        new_zh = item.get("new_zh", "").strip()
+        if en and new_zh:
+            result[en] = {"new_zh": new_zh}
+    return result
+
+
 class TerminologyBuilder:
     """术语提取、归并、匹配的完整流水线。"""
 
@@ -260,6 +286,65 @@ class TerminologyBuilder:
         self.glossary = glossary
         print(f"  [术语表] {len(glossary)} 条术语（纯程序提取, freq≥{min_freq}, 共识≥{int(min_consensus*100)}%）")
         return glossary
+
+    def llm_verify_glossary(self, llm_call) -> list:
+        """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。"""
+        if not self.glossary or not llm_call:
+            return self.glossary
+        import re
+        term_sources = {}
+        for g in self.glossary:
+            en_lower = g["en"].lower()
+            term_sources[en_lower] = []
+            for en_val in self.en_data.values():
+                if not isinstance(en_val, str):
+                    continue
+                if re.search(r"\b" + re.escape(en_lower) + r"\b", en_val, re.IGNORECASE):
+                    term_sources[en_lower].append(en_val)
+        lines = []
+        verify_items = []
+        for g in self.glossary:
+            en_lower = g["en"].lower()
+            sources = term_sources.get(en_lower, [])
+            if not sources:
+                continue
+            unique = list(dict.fromkeys(sources))
+            if len(unique) < 2:
+                continue
+            sorted_len = sorted(unique, key=len)
+            ctx = [sorted_len[-1]] + sorted_len[:4]
+            block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
+            for j, txt in enumerate(ctx):
+                block += '  [' + str(j + 1) + '] "' + txt + '"\n'
+            lines.append(block)
+            verify_items.append(g)
+        if not verify_items:
+            return self.glossary
+        prompt = (
+            '你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。\n'
+            '自动术语表从多个模组统计提取，可能存在错误。\n'
+            '判断每条术语译文是否合适，不合适给出修正。\n'
+            '输出JSON: [{"en":"原文","old_zh":"原中文","new_zh":"修正或原中文","reason":"理由"}]\n'
+            '仅输出需要修正的。仅输出JSON数组。\n\n'
+            + "\n\n".join(lines)
+        )
+        try:
+            response = llm_call(prompt)
+            corrections = _parse_glossary_corrections(response)
+        except Exception:
+            return self.glossary
+        if not corrections:
+            return self.glossary
+        corrected = 0
+        for g in self.glossary:
+            corr = corrections.get(g["en"].lower())
+            if corr:
+                g["zh"] = corr["new_zh"]
+                corrected += 1
+        if corrected:
+            print(f"  [术语表] LLM校验: 修正 {corrected}/{len(verify_items)} 条术语")
+        return self.glossary
+
 
     def check_consistency(self) -> list[dict[str, Any]]:
         """
