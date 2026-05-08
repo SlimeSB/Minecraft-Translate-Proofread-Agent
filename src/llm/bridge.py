@@ -17,6 +17,7 @@ from src.models import (
 from src.llm.prompts import (
     build_filter_prompt,
     build_review_prompt,
+    build_untranslated_prompt,
     classify_key,
     merge_multipart_entries,
 )
@@ -122,6 +123,53 @@ class LLMBridge:
                             "verdict": "🔶 REVIEW", "suggestion": "",
                             "reason": f"LLM调用失败 (批次{i+1}): {e}", "source": "llm_error",
                         }]
+
+            tasks = [_process(i, p) for i, p in enumerate(prompts)]
+            results: list[VerdictDict] = []
+            for coro in asyncio.as_completed(tasks):
+                results.extend(await coro)
+            return results
+
+        return asyncio.run(_run_all())
+
+    # ── 未翻译审校 ────────────────────────────────────
+
+    def review_untranslated(
+        self,
+        entries: list[EntryDict],
+        batch_size: int = 1,
+        max_workers: int | None = None,
+    ) -> list[VerdictDict]:
+        """对疑似未翻译条目（en == zh）逐批发 LLM 判断是否确需翻译。"""
+        if not self.llm_call:
+            raise RuntimeError("LLMBridge 未配置 llm_call 函数")
+        if max_workers is None:
+            max_workers = cfg.MAX_WORKERS
+        prompts = build_untranslated_prompt(entries, batch_size)
+
+        async def _run_all() -> list[VerdictDict]:
+            sem = asyncio.Semaphore(max_workers)
+
+            async def _process(i: int, prompt: str) -> list[VerdictDict]:
+                async with sem:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        response = await loop.run_in_executor(None, self.llm_call, prompt)
+                        if response.strip().startswith("<!") or response.strip().startswith("<html"):
+                            raise RuntimeError(f"非 JSON 响应: {response[:100]}")
+                        parsed = parse_review_response(response)
+                        print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts",
+                              file=sys.stderr)
+                        for v in parsed:
+                            v.setdefault("source", "untranslated_review")
+                            v.setdefault("en_current", "")
+                            v.setdefault("zh_current", "")
+                            v.setdefault("suggestion", "")
+                            v.setdefault("reason", "")
+                        return parsed
+                    except Exception as e:
+                        print(f"  [未翻译] 条目 {i+1}/{len(prompts)} ✗ {e}", file=sys.stderr)
+                        return []
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
             results: list[VerdictDict] = []

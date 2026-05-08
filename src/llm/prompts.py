@@ -185,12 +185,17 @@ def build_entry_block(
     en = full_en or entry.get("en", "")
     zh = full_zh or entry.get("zh", "")
     lines = [f"key: `{key}`"]
+    is_guideme = key.startswith("ae2guide:")
     if full_en:
-        lines.append(f'EN (完整上下文): "{en[:600]}"')
-        lines.append(f'ZH (完整上下文): "{zh[:600]}"')
+        en_s = en if is_guideme else en[:600]
+        zh_s = zh if is_guideme else zh[:600]
+        lines.append(f'EN (完整上下文): "{en_s}"')
+        lines.append(f'ZH (完整上下文): "{zh_s}"')
     else:
-        lines.append(f'EN: "{en[:300]}"')
-        lines.append(f'ZH: "{zh[:300]}"')
+        en_s = en if is_guideme else en[:300]
+        zh_s = zh if is_guideme else zh[:300]
+        lines.append(f'EN: "{en_s}"')
+        lines.append(f'ZH: "{zh_s}"')
     change = entry.get("_change")
     if change:
         if change.get("old_en"):
@@ -337,14 +342,47 @@ def build_filter_prompt(
                 verdict = v.get("verdict", "")
                 reason = v.get("reason", "")
                 suggestion = v.get("suggestion", "")
+                is_guideme = key.startswith("ae2guide:")
                 block = f"### 条目 {j+1}\n"
                 block += f"key: `{key}`\n"
-                block += f'EN: "{en[:200]}"\n'
-                block += f'ZH: "{zh[:200]}"\n'
+                block += f'EN: "{en if is_guideme else en[:200]}"\n'
+                block += f'ZH: "{zh if is_guideme else zh[:200]}"\n'
                 block += f"判定: {verdict}\n"
                 block += f"问题: {reason}\n"
                 if suggestion:
                     block += f"建议: {suggestion}\n"
                 lines.append(block)
             prompts.append(header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines))
+    return prompts
+
+
+# ═══════════════════════════════════════════════════════════
+# 未翻译条目审校 Prompt
+# ═══════════════════════════════════════════════════════════
+
+def build_untranslated_prompt(entries: list[EntryDict], batch_size: int = 1) -> list[str]:
+    """为疑似未翻译条目（en == zh）构建审校 prompt 列表。按 batch_size 分组。"""
+    prompts: list[str] = []
+    for i in range(0, len(entries), batch_size):
+        batch = entries[i:i + batch_size]
+        blocks: list[str] = []
+        for j, entry in enumerate(batch):
+            key = entry["key"]
+            en = entry.get("en", "")
+            zh = entry.get("zh", "")
+            blocks.append(f"### 条目 {j+1}\nkey: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"\n")
+        prompt = f"""你是Minecraft模组翻译审校专家。以下条目的英文和中文值相同（或高度相似），请判断是否确实为未翻译，还是合法的不需翻译的内容。
+
+## 判定标准
+- 原文为自然语言文本（单词、短语、句子），中文本应翻译但没有翻译 → 确实未翻译，判定 ❌ FAIL 并给出建议译文
+- 原文为代码、版本号、数字、URL路径、占位符、专有名词、色彩代码、命令参数等，中英一致是合理的 → 合法不需翻译，判定 PASS
+
+## 输出格式
+对每条输出: {{"key": "条目的key值", "verdict": "PASS/❌ FAIL", "suggestion": "建议译文或空字符串", "reason": "判定理由"}}
+PASS条目不输出。仅输出JSON数组。
+
+## 条目 ({len(batch)}条)
+
+""" + "\n".join(blocks) + "\n仅输出JSON数组。"
+        prompts.append(prompt)
     return prompts
