@@ -63,14 +63,14 @@ def parse_review_response(response: str) -> list[VerdictDict]:
             return data
         if isinstance(data, dict) and "verdicts" in data:
             return data["verdicts"]
-    except json.JSONDecodeError:
+    except json.JSONDecodeError:  # Acceptable — three-tier parse chain (direct→regex→line-by-line)
         pass
     # 提取 JSON 数组
     json_match = re.search(r"\[.*\]", response, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group())
-        except json.JSONDecodeError:
+        except json.JSONDecodeError:  # Acceptable fallback
             pass
     # 逐行解析 JSON 对象
     results: list[dict[str, Any]] = []

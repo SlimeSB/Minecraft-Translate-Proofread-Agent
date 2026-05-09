@@ -188,7 +188,7 @@ def _write_pr_output(
         json.dump(result, f, ensure_ascii=False, indent=2)
 
     ns_dir = output_dir_path / "pr_namespaces"
-    ns_dir.mkdir(parents=True, exist_ok=True)
+    ns_dir.mkdir(parents=True, exist_ok=True)  # parents=True is redundant (parent created at line 185) but harmless
     for ns, entries in ns_groups.items():
         ns_file = ns_dir / f"{ns}.json"
         with open(ns_file, "w", encoding="utf-8") as f:

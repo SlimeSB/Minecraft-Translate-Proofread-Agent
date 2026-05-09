@@ -23,6 +23,7 @@ from src import config as cfg
 class ReviewPipeline:
     """翻译审校流水线 — 薄编排层。"""
 
+    # NOTE: 14 keyword-only params with defaults, single construction point — no value in builder pattern
     def __init__(
         self,
         en_path: str = "",

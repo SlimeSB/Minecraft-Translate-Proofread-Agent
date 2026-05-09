@@ -66,7 +66,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
 
     # ── 主线审校 ──
     if llm_entries:
-        review_batch_size = ctx.batch_size or cfg.get("review_batch_size", 25)
+        review_batch_size = ctx.batch_size or cfg.get("review_batch_size", 25)  # Double fallback; ctx.batch_size already carries PipelineContext default
         if ctx.dry_run:
             merged = merge_multipart_entries(llm_entries)
             prompts = build_review_prompt(

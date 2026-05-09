@@ -194,7 +194,7 @@ def parse_merge_response(response: str) -> dict[str, str]:
                             mapping[mb] = canon
                         if canon not in mapping:
                             mapping[canon] = canon
-            except json.JSONDecodeError:
+            except json.JSONDecodeError:  # Acceptable fallback — direct parse already tried, this is regex rescue
                 pass
     return mapping
 

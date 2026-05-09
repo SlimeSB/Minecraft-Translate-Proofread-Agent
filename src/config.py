@@ -9,6 +9,7 @@ from typing import Any
 
 CONFIG_PATH = "review_config.json"
 
+# Module-level cache — loaded once at startup, never mutated at runtime
 _cfg_cache: dict[str, Any] | None = None
 
 # 顶层分组键
@@ -123,6 +124,7 @@ def get(key: str, default: Any = None) -> Any:
 # 常用配置项（保持与旧版完全相同的 API）
 # ═══════════════════════════════════════════════════════════
 
+# Computed at import time; config doesn't change at runtime so this is fine
 DESC_KEY_SUFFIXES: tuple[str, ...] = tuple(
     get("desc_key_suffixes", [".desc", ".description", ".lore", ".tooltip",
                                ".flavor", ".info", ".message", ".text"])

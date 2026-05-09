@@ -39,10 +39,10 @@ def create_openai_llm_call(
         raise ImportError("请安装 openai: pip install openai")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    call_count = [0]
+    call_count = [0]  # Mutable list in closure — intentional design
 
     # token 用量统计
-    usage = {
+    usage = {  # Mutable dict in closure — intentional design
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,

@@ -15,6 +15,7 @@ DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 _RE_WORD = re.compile(r"[A-Za-z]+")
 
+# Module-level mutable set — loaded once from config, used read-only thereafter
 _STOP_WORDS: set[str] = set()
 
 

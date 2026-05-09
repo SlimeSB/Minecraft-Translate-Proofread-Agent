@@ -5,8 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-_USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"
-_TOKEN_WARNED = False
+_USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"  # Hardcoded; acceptable for GitHub API
+_TOKEN_WARNED = False  # Module-level flag prevents repeated warnings; acceptable
 
 
 def _token_warning():

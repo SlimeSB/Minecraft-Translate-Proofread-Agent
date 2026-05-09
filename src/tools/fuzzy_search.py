@@ -138,6 +138,7 @@ class TranslationDB:
 # 单例（复用 FTS 索引，避免每次查询重建）
 # ═══════════════════════════════════════════════════════════
 
+# Module-level singleton — intentional: caches SQLite DB by key set to avoid rebuild on repeated calls
 _db_instance: TranslationDB | None = None
 _db_key_set: frozenset[str] | None = None
 
