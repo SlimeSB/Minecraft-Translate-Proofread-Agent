@@ -21,13 +21,7 @@ from collections import defaultdict
 
 # ── stop words ────────────────────────────────────────────
 from ..config import get as _cfg_get
-
-def _load_blacklist() -> set[str]:
-    """从 review_config.json 的 term_blacklist 加载黑名单词。"""
-    words = _cfg_get("term_blacklist", [])
-    return set(w.lower().strip() for w in words if isinstance(w, str))
-
-STOP_WORDS: set[str] = _load_blacklist()
+from src.tools.term_validation import STOP_WORDS
 
 
 def tokenize(text: str) -> list[str]:

@@ -15,32 +15,7 @@ from typing import Any
 
 DEFAULT_CACHE_PATH = "data/lemma_cache.json"
 
-
-def _is_valid_term(term: str) -> bool:
-    """≤2 字符、含数字、或含停用词的不视为术语。"""
-    t = term.strip()
-    if len(t) <= 2:
-        return False
-    if any(c.isdigit() for c in t):
-        return False
-    return _not_stop(t)
-
-
-def _not_stop(term: str) -> bool:
-    try:
-        from src import config as _cfg
-        stop = {w.lower() for w in _cfg.get("term_blacklist", []) if isinstance(w, str)}
-        lower = term.lower()
-        # 精确匹配
-        if lower in stop:
-            return False
-        # 多词术语中任一成分是停用词
-        for word in lower.split():
-            if word in stop:
-                return False
-        return True
-    except ImportError:
-        return True
+from src.tools.term_validation import is_valid_term
 
 
 class LemmaCache:
@@ -63,7 +38,7 @@ class LemmaCache:
                 self.map.clear()
                 self._freq.clear()
                 for canonical, entry in data.items():
-                    if not _is_valid_term(canonical):
+                    if not is_valid_term(canonical):
                         continue
                     canon_lower = canonical.lower().strip()
                     freq = entry.get("freq", 0)
@@ -71,7 +46,7 @@ class LemmaCache:
                     variants = entry.get("variants", [canonical])
                     for v in variants:
                         vk = v.lower().strip()
-                        if vk not in self.map and _is_valid_term(v):
+                        if vk not in self.map and is_valid_term(v):
                             self.map[vk] = canonical
             except (json.JSONDecodeError, IOError) as e:
                 from src.logging import warn; warn(f"[LemmaCache] 缓存加载失败: {e}")
@@ -121,7 +96,7 @@ class LemmaCache:
 
     def record(self, canonical: str, members: list[str], source: str = "llm") -> None:
         """写入一批映射并保存。"""
-        if not _is_valid_term(canonical):
+        if not is_valid_term(canonical):
             return
         canon_key = canonical.lower().strip()
         self.map[canon_key] = canonical
@@ -129,7 +104,7 @@ class LemmaCache:
         self._contrib[canon_key] = self._contrib.get(canon_key, 0) + 1
 
         for m in members:
-            if not _is_valid_term(m):
+            if not is_valid_term(m):
                 continue
             mk = m.lower().strip()
             if mk == canon_key:

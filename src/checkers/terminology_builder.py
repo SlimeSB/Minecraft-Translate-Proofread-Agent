@@ -30,6 +30,7 @@ from .lemma_merge import (
     apply_llm_merge,
     try_rescue_short_term,
 )
+from src.tools.term_validation import is_valid_term
 
 
 # ═══════════════════════════════════════════════════════════
@@ -99,25 +100,6 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
 # ═══════════════════════════════════════════════════════════
 
 
-def _is_useful_term(norm: str) -> bool:
-    """筛选有用的术语：过滤停用词、过短、含数字、纯符号。"""
-    from src.tools.terminology_extract import STOP_WORDS
-    stop_lower = {w.lower() for w in STOP_WORDS}
-    norm_lower = norm.lower()
-    if norm_lower in stop_lower:
-        return False
-    if len(norm) <= 2:
-        return False
-    if re.search(r"\d", norm):
-        return False
-    if re.fullmatch(r"[0-9._-]+", norm):
-        return False
-    for word in norm_lower.split():
-        if word in stop_lower:
-            return False
-    return True
-
-
 def _collect_zh_translations(
     merged: dict[str, dict[str, Any]],
     matched_entries: list[dict[str, str]],
@@ -130,7 +112,7 @@ def _collect_zh_translations(
     """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
     glossary: list[dict[str, str]] = []
     for norm, info in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
-        if len(info["keys"]) < min_freq or not _is_useful_term(norm):
+        if len(info["keys"]) < min_freq or not is_valid_term(norm):
             continue
 
         zh_counter: Counter = Counter()

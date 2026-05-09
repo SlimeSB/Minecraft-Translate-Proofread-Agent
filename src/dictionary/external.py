@@ -15,20 +15,7 @@ DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 _RE_WORD = re.compile(r"[A-Za-z]+")
 
-# Module-level mutable set — loaded once from config, used read-only thereafter
-_STOP_WORDS: set[str] = set()
-
-
-def _load_stop_words() -> set[str]:
-    global _STOP_WORDS
-    if _STOP_WORDS:
-        return _STOP_WORDS
-    try:
-        from src import config as cfg
-        _STOP_WORDS = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
-    except Exception as e:
-        warn(f"[停用词] 加载停用词失败: {type(e).__name__}: {e}")
-    return _STOP_WORDS
+from src.tools.term_validation import STOP_WORDS
 
 
 class ExternalDictStore:
@@ -105,7 +92,7 @@ class ExternalDictStore:
         if not words:
             return ""
 
-        stop_words = _load_stop_words()
+        stop_words = STOP_WORDS
         pairs: dict[tuple[str, str], set[str]] = {}  # (en_word, zh) -> {modids}
         seen: set[tuple[str, str]] = set()
 

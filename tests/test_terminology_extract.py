@@ -1,7 +1,8 @@
 """测试术语提取模块。"""
 import unittest
 
-from src.tools.terminology_extract import extract_terms, tokenize, STOP_WORDS
+from src.tools.terminology_extract import extract_terms, tokenize
+from src.tools.term_validation import STOP_WORDS
 
 
 class TestTokenize(unittest.TestCase):
