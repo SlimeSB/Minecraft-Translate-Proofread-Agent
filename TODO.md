@@ -8,22 +8,15 @@
 
 ---
 
-## 刚修复
-
-- ~~LLM 日志加 call_id 对齐 request/response，filter 不再单开日志~~
-- ~~DEVELOPMENT.md/AGENTS.md/README.md 三文件同步代码现状~~
-
----
-
 ## Critical（3 项）
 
-- **`lemma_merge.py:198` — `parse_merge_response()` silent `except: pass`** — JSON 解析失败静默吞错，LLM 归并结果直接被丢弃。
+- **`lemma_merge.py:197-198` — `parse_merge_response()` silent `except: pass`** — JSON 解析失败静默吞错，LLM 归并结果直接被丢弃。
 - **`pipeline.py:26-43` — `ReviewPipeline.__init__()` 14 个参数** — 应改用 config 对象或 builder 模式。
-- **`phase4_filter.py:98` — 冗余 `get` 调用 bug**: `v.get("zh_current") or v.get("zh_current", "")` — 两个调用完全一样。
+- **`phase4_filter.py:98` — 冗余 `get` 调用 bug**: `v.get("zh_current") or v.get("zh_current", "")` — 两个调用完全一样，第二个 `get` 死代码。
 
 ---
 
-## High（24 项）
+## High（按类别分组）
 
 ### 函数过长
 - `phase3c_review.py:27-131` — `run_phase3c()` 105 行，干/交互/LLM/no-LLM 四条路径交织
@@ -40,7 +33,7 @@
 ### 重复代码
 - `phase5_report.py:50-75 vs 78-104` — `_group_by_namespace` / `_generate_namespace_reports` namespace 提取 ~15 行一致
 - `bridge.py:127-167 vs 253-301` — `_batch_process` vs `_run_all` 重复实现 Semaphore + as_completed 模式
-- `phase3c_review.py:70-93 vs 98-115` — 主条目/未翻译 两条分支的 4 路径选择逻辑重复
+- `phase3c_review.py:70-93 vs 98-115` — 主条目/未翻译两条分支的 4 路径选择逻辑重复
 - `pr/_lang.py:13-23` vs `pr/_guideme.py:13-24` — `match()` 正则路径匹配几乎一样
 - `terminology_builder.py:101-117` vs `lemma_cache.py:19-43` — `_is_useful_term` / `_is_valid_term` 词法 check 逻辑重复
 
@@ -58,16 +51,18 @@
 
 ### 全局状态/单例
 - `fuzzy_search.py:141-152` — `_db_instance` 模块级单例，不可测试
-- `pr/_http.py:9` — `_TOKEN_WARNED` 模块级可変 flag
+- `pr/_http.py:9` — `_TOKEN_WARNED` 模块级可变 flag
 - `external.py:18` — `_STOP_WORDS` 模块级可变 set
 - `client.py:36,39-44` — `call_count`, `usage` 闭包内 mutable 对象
 
 ### 类型系统被绕过
-- 10+ 文件用 `dict[str, Any]` 而非 TypedDict（`VerdictDict` 等形同虚设）+ pyright 关闭 `reportArgumentType` / `reportReturnType`
+- 10+ 文件用 `dict[str, Any]` 而非 TypedDict（`VerdictDict` 等形同虚设）
+- **pyright 关闭 13 项核心检查** (`pyrightconfig.json`): `reportAssignmentType`, `reportReturnType`, `reportAttributeAccessIssue`, `reportOptionalMemberAccess` 等。`reportArgumentType` ✅ 已修。TypedDict 约束形同虚设。
+- **目标**: 逐步启用关键检查项，清理类型标注
 
 ---
 
-## Medium（19 项）
+## Medium（按类别分组）
 
 ### Silent error swallowing
 - `config.py:24` — 配置加载失败静默返回空 dict
@@ -95,7 +90,7 @@
 - `config.py:126-175` — 模块级常量 `DESC_KEY_SUFFIXES` 等在 import 时定死，运行时改配置不生效
 
 ### God class
-- `terminology_builder.py:360-478` — `TerminologyBuilder` 118 行 10 方法（提取+归并+表构建+一致性）
+- `terminology_builder.py:360-478` — `TerminologyBuilder` 118 行 6 方法 + 2 模块级函数（提取+归并+表构建+一致性）
 - `format_checker.py:111-401` — `FormatChecker` 290 行 11 方法（10 项检查全在类里）
 - `database.py:79-286` — `PipelineDB` 207 行 18 方法（6 张表 CRUD）
 - `report_generator.py:101-240` — `ReportGenerator` 140 行（报告构建 + 控制台打印混在一起）
@@ -106,6 +101,34 @@
 - 同模块内 silent vs noisy 行为不一致（`config.py` 静默恢复 vs `pr/_http.py` 抛异常）
 - 失败时返回值不统一：`pr/_http.py:73` 404 返回空串，同文件 :53 其他 HTTP 错误抛 `RuntimeError`
 - `run.py:168,171,179,184` — `_validate_input_files()` 内直接 `sys.exit(1)`，属于库函数风格不应 exit
+
+### Token 真子集守卫位置不统一
+- `apply_cache_merge()` (lemma_merge.py:98): 在 redirect 构建时预过滤
+- `apply_llm_merge()` (lemma_merge.py:207): 在 `_apply_merge_map` 内过滤
+- 差异化合理但守卫点不统一
+
+### FTS recall 配置化不完善
+- `fuzzy_search.py:112-113`: 已配置化但依赖 `fts_recall_multiplier`(10) 和 `fts_recall_min`(50) 配合调节
+- **目标**: 简化配置模型
+
+### LLM 模块测试质量有限
+- `test_llm_bridge.py`(362行), `test_llm_client.py`(126行), `test_llm_prompts.py`(329行)
+- 多为 mock 测试，未覆盖真实 API 交互
+- **目标**: 补充集成测试 / 契约测试
+
+### 9 个模块缺乏独立测试
+| 模块 | 行数 | 备注 |
+|------|------|------|
+| `src/dictionary/external.py` | 151 | 仅在集成测试间接触及 |
+| `src/pipeline/phase1_alignment.py` | 110 | 同上 |
+| `src/pipeline/phase2_terminology.py` | 33 | 同上 |
+| `src/pipeline/phase3a_format.py` | 35 | 同上 |
+| `src/pipeline/phase3b_fuzzy.py` | 37 | 同上 |
+| `src/pipeline/phase3c_review.py` | 131 | 同上 |
+| `src/pipeline/phase5_report.py` | 194 | 完全无测试 |
+| `src/cli.py` | 106 | 完全无测试 |
+| `src/tools/pr/__init__.py` | 259 | 完全无测试 |
+- **备注**: `phase4_filter.py`(101行) 已有 `test_phase4_filter.py`，已覆盖
 
 ### 其他
 - `config.py:12` — `_cfg_cache` 模块级全局缓存
@@ -132,19 +155,10 @@
 - `bridge.py:344` — 交互模式 `input("> ")` 提示符硬编码
 - `run.py:80,100` — 日期格式 `%Y-%m-%d %H:%M:%S` 两处 `print()` 硬编码
 
-### Critical — 功能影响
-- **`shutil.rmtree()` 每次运行清空 output 目录** (`pipeline.py:67`): 设计如此，勿在 `-o` 目录放其他文件
+---
 
-### High — 代码质量
-- **pyright 配置了大量 `=false`** (`pyrightconfig.json`): 14 项核心类型检查关闭 (`reportArgumentType`, `reportReturnType` 等)，TypedDict 约束形同虚设
-- **LLM 模块无独立测试**: `bridge.py`, `prompts.py`, `client.py` 共约 800+ 行零单元测试覆盖，仅在集成测试间接触及
+## 已丢弃（无需处理）
 
-### Medium — 代码结构
-- **`apply_cache_merge()` 和 `apply_llm_merge()` token 子集守卫位置不一致**: 前者在 redirect 构建时预过滤，后者在 `_apply_merge_map` 内过滤。两者均已委托给 `_apply_merge_map`，差异化合理但守卫点不统一
-
-### Low — 风格/一致性
-- **模块级全局单例**: `fuzzy_search.py` 的 `_db_instance`、`config.py` 的 `_cfg_cache`，非线程安全但单进程够用
-- **`TerminologyBuilder` 类承担过多职责**: 术语提取 + 词形归并 + 表构建 + LLM校验 + 一致性检查，约 441 行 10 方法
-
-### 未测模块（无独立测试文件）
-`dictionary/external.py`, `pipeline/phase1-5*.py`, `cli.py`, `tools/pr/__init__.py`
+| 项目 | 原因 |
+|------|------|
+| `shutil.rmtree()` 清空 output 目录 (`pipeline.py:67`) | 设计如此，勿在 `-o` 目录放其他文件即可 |
