@@ -178,8 +178,7 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   │   ├── phase3b_fuzzy.py       # Phase 3b 模糊搜索
 │   │   ├── phase3c_review.py      # Phase 3c LLM 审校
 │   │   ├── phase4_filter.py       # Phase 4 最终 LLM 过滤（写回 DB）
-│   │   ├── phase5_report.py      # Phase 5 报告生成（从 DB 加载）
-│   │   └── filter_cache.py        # 过滤缓存兼容层（委托 PipelineDB）
+│   │   └── phase5_report.py      # Phase 5 报告生成（从 DB 加载）
 │   ├── checkers/
 │   │   ├── format_checker.py      # 全自动格式验证
 │   │   ├── terminology_builder.py # 术语提取 & 一致性检查
@@ -214,6 +213,9 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── test_key_alignment.py
 │   ├── test_lang_parser.py
 │   ├── test_lemma_merge.py
+│   ├── test_llm_bridge.py
+│   ├── test_llm_client.py
+│   ├── test_llm_prompts.py
 │   ├── test_phase4_filter.py
 │   ├── test_pipeline_integration.py
 │   ├── test_pr_guideme.py
