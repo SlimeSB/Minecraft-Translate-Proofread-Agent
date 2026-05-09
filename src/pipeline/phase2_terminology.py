@@ -1,4 +1,5 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
+from src import config as cfg
 from src.logging import info
 from src.models import GlossaryDict, PipelineContext, VerdictDict
 from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
@@ -18,7 +19,7 @@ def run_phase2(ctx: PipelineContext) -> None:
 
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)  # type: ignore[arg-type]
-    tb.extract(min_freq=2, max_ngram=3)
+    tb.extract(min_freq=cfg.TERM_MIN_FREQ, max_ngram=cfg.TERM_MAX_NGRAM)
     tb.merge_lemmas(llm_call=ctx.llm_call)
     ctx.glossary = tb.build_glossary()
     if ctx.llm_call and not ctx.no_llm:

@@ -132,8 +132,8 @@ def migrate(db_path: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="迁移 MInecraft.db 格式")
-    parser.add_argument("--db", default="data/MInecraft.db", help="数据库路径")
+    parser = argparse.ArgumentParser(description="迁移 Minecraft.db 格式")
+    parser.add_argument("--db", default="data/Minecraft.db", help="数据库路径")
     args = parser.parse_args()
     migrate(args.db)
 

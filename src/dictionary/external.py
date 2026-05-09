@@ -80,7 +80,8 @@ class ExternalDictStore:
                         vk = v.lower().strip()
                         if vk not in self._lemma_map:
                             self._lemma_map[vk] = canonical
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
+                warn(f"[ExternalDict] lemma 缓存加载失败: {e}")
                 self._lemma_map = {}
 
     def _query_word(self, word_lower: str) -> list[tuple[str, str]]:

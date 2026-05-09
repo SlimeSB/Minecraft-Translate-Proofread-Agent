@@ -145,6 +145,7 @@
     "consensus_min_total": 3,
     "fuzzy_cluster_threshold": 65.0,
     "fuzzy_cluster_top_n": 200,
+    "max_ngram": 3,
     "max_keys_per_term": 20,
     "max_keys_raw": 5,
     "blacklist": [

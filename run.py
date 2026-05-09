@@ -153,9 +153,9 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-llm", action="store_true", help="跳过 LLM 审校")
     parser.add_argument("--interactive", action="store_true", help="交互模式：逐条手动判定")
     parser.add_argument("--dry-run", action="store_true", help="干运行：显示统计不调 LLM")
-    parser.add_argument("--min-term-freq", type=int, default=3, help="术语最低频次阈值")
+    parser.add_argument("--min-term-freq", type=int, default=5, help="术语最低频次阈值")
     parser.add_argument("--fuzzy-threshold", type=float, default=60.0, help="模糊搜索相似度阈值")
-    parser.add_argument("--batch-size", type=int, default=20, help="LLM 每批条目数")
+    parser.add_argument("--batch-size", type=int, default=25, help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
                         help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
     parser.add_argument("--external-dict", action="store_true",

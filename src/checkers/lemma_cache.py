@@ -73,7 +73,8 @@ class LemmaCache:
                         vk = v.lower().strip()
                         if vk not in self.map and _is_valid_term(v):
                             self.map[vk] = canonical
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
+                from src.logging import warn; warn(f"[LemmaCache] 缓存加载失败: {e}")
                 self.map = {}
                 self._freq = {}
         self._loaded = True

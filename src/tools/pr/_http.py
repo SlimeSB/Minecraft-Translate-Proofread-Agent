@@ -69,8 +69,6 @@ def raw_get(url: str, token: str = "", retries: int = 3) -> str:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return resp.read().decode("utf-8")
             except urllib.error.HTTPError as e:
-                if e.code == 404:
-                    return ""
                 body = e.read().decode("utf-8", errors="replace")
                 raise RuntimeError(f"Raw 文件错误 {e.code}: {body}") from e
             except (TimeoutError, urllib.error.URLError) as e:

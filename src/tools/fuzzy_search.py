@@ -8,12 +8,9 @@
 输出:
     JSON: { "similar_lines": [{ "similarity": 85.5, "key": "...", "en": "...", "zh": "..." }, ...] }
 """
-import argparse
 import json
-import os
 import sqlite3
 import sys
-import tempfile
 from typing import Any
 
 from src import config as cfg

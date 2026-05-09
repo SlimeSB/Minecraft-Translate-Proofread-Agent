@@ -28,10 +28,8 @@
         }
     }
 """
-import argparse
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -131,9 +129,9 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
 
 def check_vanilla_collisions(
     en_data: dict[str, str],
-    db_path: str = "data/MInecraft.db",
+    db_path: str = "data/Minecraft.db",
 ) -> list[dict[str, Any]]:
-    """从 MInecraft.db 读取原版 key 并检测模组覆盖。
+    """从 Minecraft.db 读取原版 key 并检测模组覆盖。
 
     返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
     """

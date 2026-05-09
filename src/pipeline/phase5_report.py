@@ -20,7 +20,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
     rg.load_alignment(ctx.alignment)  # type: ignore[arg-type]
-    rg.verdicts = kept
+    rg.collect(kept)
     rg.print_summary()
     rg.print_verdict_table()
 
@@ -47,10 +47,8 @@ def run_phase5(ctx: PipelineContext) -> None:
     info(f"  摘要: {ctx.output_dir / 'report.md'}")
 
 
-def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> dict[str, dict]:
+def _build_ns_map(verdicts: list[VerdictDict], entries: list[dict[str, str]]) -> dict[str, list[VerdictDict]]:
     ns_map: dict[str, list[VerdictDict]] = {}
-    entries = ctx.alignment.get("matched_entries", [])
-
     for v in verdicts:
         k = v.get("key", "")
         matched = next((e for e in entries if e["key"] == k), None)
@@ -58,6 +56,12 @@ def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> di
         if not ns:
             ns = "__default__"
         ns_map.setdefault(ns, []).append(v)
+    return ns_map
+
+
+def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> dict[str, dict]:
+    entries = ctx.alignment.get("matched_entries", [])
+    ns_map = _build_ns_map(verdicts, entries)
 
     result = {}
     for ns, vs in sorted(ns_map.items()):
@@ -79,15 +83,7 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
                                  ns_groups: dict[str, dict]) -> None:
     """为每个 namespace 生成独立报告，包含逐条 verdict 详情。"""
     entries = ctx.alignment.get("matched_entries", [])
-    ns_map: dict[str, list[VerdictDict]] = {}
-
-    for v in verdicts:
-        k = v.get("key", "")
-        matched = next((e for e in entries if e["key"] == k), None)
-        ns = (matched.get("namespace") if matched else "") or v.get("namespace", "")
-        if not ns:
-            ns = "__default__"
-        ns_map.setdefault(ns, []).append(v)
+    ns_map = _build_ns_map(verdicts, entries)
 
     if len(ns_map) <= 1 and "__default__" in ns_map:
         return

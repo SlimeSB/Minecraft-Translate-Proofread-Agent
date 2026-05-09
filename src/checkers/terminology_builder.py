@@ -78,7 +78,8 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
             jt = m.group(1).strip()
     try:
         arr = json.loads(jt)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        from src.logging import warn; warn(f"[TerminologyBuilder] LLM 响应 JSON 解析失败: {e}")
         arr = []
     if not isinstance(arr, list):
         return {}

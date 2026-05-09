@@ -95,7 +95,7 @@ def _cache_key(v: dict) -> str:
     raw = ":".join([
         v.get("key", ""),
         v.get("verdict", ""),
-        (v.get("zh_current") or v.get("zh_current", ""))[:150],
+        v.get("zh_current", "")[:150],
         v.get("reason", "")[:200],
     ])
     return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()

@@ -22,7 +22,8 @@ def _load() -> dict[str, Any]:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"[config] 配置加载失败: {e}", file=sys.stderr)
             raw = {}
         _validate(raw)
         _cfg_cache = _flatten(raw)
@@ -98,6 +99,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["term_blacklist"] = t.get("blacklist", [])
     flat["max_keys_per_term"] = t.get("max_keys_per_term", 20)
     flat["max_keys_raw"] = t.get("max_keys_raw", 5)
+    flat["term_max_ngram"] = t.get("max_ngram", 3)
 
     # ── format ──
     fmt = raw.get("format", {})
@@ -141,6 +143,7 @@ TERM_MAX_EN_LEN: int = get("term_max_en_len", 60)
 TERM_CONSENSUS_MIN_TOTAL: int = get("term_consensus_min_total", 3)
 FUZZY_CLUSTER_THRESHOLD: float = get("fuzzy_cluster_threshold", 65.0)
 FUZZY_CLUSTER_TOP_N: int = get("fuzzy_cluster_top_n", 200)
+TERM_MAX_NGRAM: int = get("term_max_ngram", 3)
 MAX_WORKERS: int = get("max_workers", 4)
 
 KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
