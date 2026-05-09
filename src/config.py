@@ -47,6 +47,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["filter_batch_size"] = p.get("filter_batch_size", 50)
     flat["review_batch_size"] = p.get("review_batch_size", 25)
     flat["fts_recall_multiplier"] = p.get("fts_recall_multiplier", 10)
+    flat["fts_recall_min"] = p.get("fts_recall_min", 50)
     flat["fuzzy_trigger_patterns"] = p.get("fuzzy_trigger_patterns", [".desc", "death.attack.", "advancements."])
 
     # ── key_prefixes ──

@@ -110,9 +110,10 @@ class TranslationDB:
 
         try:
             recall_mult = cfg.get("fts_recall_multiplier", 10)
+            recall_min = cfg.get("fts_recall_min", 50)
             cur = self.conn.execute(
                 f"SELECT key, en, zh FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fts_query, max(top_n * recall_mult, 50)),
+                (fts_query, max(top_n * recall_mult, recall_min)),
             )
             candidates = [(row[0], row[1], row[2]) for row in cur.fetchall()]
         except sqlite3.OperationalError:

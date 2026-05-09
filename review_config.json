@@ -6,6 +6,7 @@
     "filter_batch_size": 25,
     "review_batch_size": 25,
     "fts_recall_multiplier": 10,
+    "fts_recall_min": 50,
     "fuzzy_trigger_patterns": [".desc", "death.attack.", "advancements."]
   },
 
