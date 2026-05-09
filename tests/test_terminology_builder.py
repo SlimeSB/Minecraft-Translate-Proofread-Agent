@@ -16,6 +16,7 @@ class TestExtractCommonZh(unittest.TestCase):
         c = Counter({"方铅岩砖": 2, "方铅岩台阶": 1, "方铅岩": 1, "方前言": 1})
         result = _extract_common_zh(c, 0.6)
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertIn("方铅岩", result)
 
     def test_no_common_substring(self):

@@ -124,12 +124,13 @@ def extract_terms(
         freq_map: dict, keys_map: dict, min_f: int
     ) -> list[dict]:
         results = []
+        max_keys = _cfg_get("max_keys_raw", 5)
         for term, freq in freq_map.items():
             if freq >= min_f:
                 results.append({
                     "term": ngram_key(term) if isinstance(term, tuple) else term,
                     "freq": freq,
-                    "keys": keys_map[term][:5],  # 限制 key 数量避免过长
+                    "keys": keys_map[term][:max_keys],
                 })
         results.sort(key=lambda x: (-x["freq"], x["term"]))
         return results

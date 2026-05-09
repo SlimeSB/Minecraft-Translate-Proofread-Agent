@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_health
@@ -75,9 +76,8 @@ def main() -> None:
     pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
 
     # ── 运行流水线 ──
-    import time as _time
-    _start = _time.time()
-    print(f"\n⏱ 开始: {_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    _start = time.time()
+    print(f"\n⏱ 开始: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     pipeline = ReviewPipeline(
         en_path=args.en or "",
@@ -96,8 +96,8 @@ def main() -> None:
     )
     pipeline.run()
 
-    _elapsed = _time.time() - _start
-    print(f"\n⏱ 结束: {_time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
+    _elapsed = time.time() - _start
+    print(f"\n⏱ 结束: {time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
 
     _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
 

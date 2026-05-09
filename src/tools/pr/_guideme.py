@@ -36,7 +36,7 @@ def align(
     warnings: list[dict[str, Any]] = []
 
     # 按 rel_path 分组：{rel_path: {en_base, en_head, zh_base, zh_head}}
-    groups: dict[str, dict[str, str | None]] = {}
+    groups: dict[str, Any] = {}
     for f in changed_files:
         filename = f.get("filename", "")
         info = match(filename)

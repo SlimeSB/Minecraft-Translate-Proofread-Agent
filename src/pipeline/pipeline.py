@@ -4,9 +4,9 @@
 """
 import json
 import shutil
-import sys
 from pathlib import Path
 
+from src.logging import info, warn
 from src.models import LLMCallable, PipelineContext, PRAlignmentWrapper
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
@@ -67,18 +67,18 @@ class ReviewPipeline:
             shutil.rmtree(ctx.output_dir, ignore_errors=True)
         ctx.ensure_output_dir()
 
-        print(f"{'='*60}")
-        print("Minecraft 模组翻译审校流水线")
-        print(f"  EN: {ctx.en_path}")
-        print(f"  ZH: {ctx.zh_path}")
-        print(f"  输出: {ctx.output_dir}")
+        info(f"{'='*60}")
+        info("Minecraft 模组翻译审校流水线")
+        info(f"  EN: {ctx.en_path}")
+        info(f"  ZH: {ctx.zh_path}")
+        info(f"  输出: {ctx.output_dir}")
         if ctx.dry_run:
-            print("  模式: 干运行")
+            info("  模式: 干运行")
         elif ctx.interactive:
-            print("  模式: 交互审校")
+            info("  模式: 交互审校")
         elif ctx.no_llm:
-            print("  模式: 仅自动检查")
-        print(f"{'='*60}")
+            info("  模式: 仅自动检查")
+        info(f"{'='*60}")
 
         try:
             run_phase1(ctx)       # 键对齐 / PR 数据加载
@@ -92,15 +92,15 @@ class ReviewPipeline:
             run_phase4(ctx)       # 最终 LLM 过滤
             run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
         except Exception as e:
-            print(f"\n错误: {e}", file=sys.stderr)
+            warn(f"\n错误: {e}")
             raise
 
 
 def _save_merged_verdicts(ctx: PipelineContext) -> None:
     """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
     rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)
-    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
+    rg.load_alignment(ctx.alignment)  # type: ignore[arg-type]
+    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)  # type: ignore[arg-type]
 
     report = rg.build_report()
     verdicts = report.get("verdicts", [])
@@ -109,4 +109,3 @@ def _save_merged_verdicts(ctx: PipelineContext) -> None:
     db = PipelineDB(ctx.output_dir / "pipeline.db")
     db.save_verdicts(verdicts, "merged")
     db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
-    db.close()

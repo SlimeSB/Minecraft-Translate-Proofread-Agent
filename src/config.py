@@ -45,6 +45,9 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     p = raw.get("pipeline", {})
     flat["max_workers"] = p.get("max_workers", 4)
     flat["filter_batch_size"] = p.get("filter_batch_size", 50)
+    flat["review_batch_size"] = p.get("review_batch_size", 25)
+    flat["fts_recall_multiplier"] = p.get("fts_recall_multiplier", 10)
+    flat["fuzzy_trigger_patterns"] = p.get("fuzzy_trigger_patterns", [".desc", "death.attack.", "advancements."])
 
     # ── key_prefixes ──
     # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
@@ -57,6 +60,10 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
 
     # ── llm ──
     l = raw.get("llm", {})
+    flat["llm_max_retries"] = l.get("max_retries", 5)
+    flat["llm_temperature"] = l.get("temperature", 0.1)
+    flat["llm_max_tokens"] = l.get("max_tokens", 32768)
+    flat["llm_review_retries"] = l.get("review_retries", 2)
     flat["review_system_prompt"] = l.get("system_prompt")
     flat["review_header_prefix"] = l.get("header_prefix")
     flat["default_review_focus"] = l.get("default_review_focus")
@@ -87,11 +94,14 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["fuzzy_cluster_threshold"] = t.get("fuzzy_cluster_threshold", 65.0)
     flat["fuzzy_cluster_top_n"] = t.get("fuzzy_cluster_top_n", 200)
     flat["term_blacklist"] = t.get("blacklist", [])
+    flat["max_keys_per_term"] = t.get("max_keys_per_term", 20)
+    flat["max_keys_raw"] = t.get("max_keys_raw", 5)
 
     # ── format ──
     fmt = raw.get("format", {})
     flat["desc_key_suffixes"] = fmt.get("desc_key_suffixes", [])
     flat["punctuation_spacing_whitelist"] = fmt.get("punctuation_spacing_whitelist", [])
+    flat["en_preview_len"] = fmt.get("en_preview_len", 60)
 
     # ── pr ──
     pr = raw.get("pr", {})

@@ -1,9 +1,11 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
+from src.logging import info
 from src.models import EntryDict, PipelineContext, VerdictDict
 from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
 from src.storage.database import PipelineDB
+from src import config as cfg
 
 
 def _collect_status_verdicts(untranslated_entries: list[EntryDict]) -> list[VerdictDict]:
@@ -48,7 +50,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
         if untranslated_llm:
             llm_entries = keep
 
-    print(f"[Phase 3c] LLM审校: 总{len(matched)}条 → 自动通过{len(auto_pass)}条, "
+    info(f"[Phase 3c] LLM审校: 总{len(matched)}条 → 自动通过{len(auto_pass)}条, "
           f"需审校{len(llm_entries)}条, 未翻译队列{len(untranslated_llm)}条")
 
     if not llm_entries and not untranslated_llm:
@@ -64,20 +66,21 @@ def run_phase3c(ctx: PipelineContext) -> None:
 
     # ── 主线审校 ──
     if llm_entries:
+        review_batch_size = ctx.batch_size or cfg.get("review_batch_size", 25)
         if ctx.dry_run:
             merged = merge_multipart_entries(llm_entries)
             prompts = build_review_prompt(
                 llm_entries, ctx.glossary, auto_map,
-                ctx.fuzzy_results_map, ctx.batch_size, merged_context=merged,
+                ctx.fuzzy_results_map, review_batch_size, merged_context=merged,
                 external_dict_store=ctx.external_dict_store,
             )
             total_chars = sum(len(p) for p in prompts)
-            print(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
+            info(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
             groups = classify_entries(llm_entries)
             for cat, entries in sorted(groups.items()):
-                print(f"    {cat}: {len(entries)} 条")
+                info(f"    {cat}: {len(entries)} 条")
         elif ctx.interactive:
-            print("  进入交互审校模式...")
+            info("  进入交互审校模式...")
             ctx.llm_verdicts = interactive_entry_review(
                 llm_entries, auto_map, ctx.fuzzy_results_map,
             )
@@ -85,7 +88,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
             bridge = LLMBridge(ctx.llm_call)
             ctx.llm_verdicts = bridge.review_batch(
                 llm_entries, ctx.glossary, auto_map,
-                ctx.fuzzy_results_map, ctx.batch_size,
+                ctx.fuzzy_results_map, review_batch_size,
                 external_dict_store=ctx.external_dict_store,
             )
 
@@ -99,20 +102,20 @@ def run_phase3c(ctx: PipelineContext) -> None:
                 external_dict_store=ctx.external_dict_store,
             )
             total_chars = sum(len(p) for p in prompts)
-            print(f"  [未翻译-干运行] {len(untranslated_llm)} 条, ~{total_chars//4} tokens")
+            info(f"  [未翻译-干运行] {len(untranslated_llm)} 条, ~{total_chars//4} tokens")
         elif ctx.interactive:
-            print("  [未翻译] 进入交互审校模式...")
+            info("  [未翻译] 进入交互审校模式...")
             untranslated_verdicts = interactive_entry_review(
                 untranslated_llm, auto_map, ctx.fuzzy_results_map,
             )
         elif ctx.llm_call and not ctx.no_llm:
             bridge = LLMBridge(ctx.llm_call)
-            untranslated_verdicts = bridge.review_untranslated(untranslated_llm, batch_size=25)
+            untranslated_verdicts = bridge.review_untranslated(untranslated_llm, batch_size=review_batch_size)
         else:
             untranslated_verdicts = _collect_status_verdicts(untranslated_llm)
 
         if untranslated_verdicts:
-            print(f"  [未翻译] {len(untranslated_verdicts)} 条 verdicts")
+            info(f"  [未翻译] {len(untranslated_verdicts)} 条 verdicts")
         ctx.llm_verdicts.extend(untranslated_verdicts)
 
     # ── --no-llm 降级 ──
@@ -122,8 +125,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
             if v.get("verdict") != "PASS"
         ]
 
-    print(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
+    info(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_verdicts(ctx.llm_verdicts, "llm")
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_verdicts(ctx.llm_verdicts, "llm")  # type: ignore[arg-type]

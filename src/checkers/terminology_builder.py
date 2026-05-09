@@ -15,6 +15,7 @@ import re
 from collections import Counter
 from typing import Any, Callable
 
+from src.logging import info, warn
 from src.tools.terminology_extract import extract_terms
 from src import config as cfg
 from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
@@ -90,6 +91,122 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
     return result
 
 
+# ═══════════════════════════════════════════════════════════
+# build_glossary() 拆分出的三个子函数
+# ═══════════════════════════════════════════════════════════
+
+
+def _is_useful_term(norm: str) -> bool:
+    """筛选有用的术语：过滤停用词、过短、含数字、纯符号。"""
+    from src.tools.terminology_extract import STOP_WORDS
+    stop_lower = {w.lower() for w in STOP_WORDS}
+    norm_lower = norm.lower()
+    if norm_lower in stop_lower:
+        return False
+    if len(norm) <= 2:
+        return False
+    if re.search(r"\d", norm):
+        return False
+    if re.fullmatch(r"[0-9._-]+", norm):
+        return False
+    for word in norm_lower.split():
+        if word in stop_lower:
+            return False
+    return True
+
+
+def _collect_zh_translations(
+    merged: dict[str, dict[str, Any]],
+    matched_entries: list[dict[str, str]],
+    min_freq: int,
+    min_consensus: float,
+    min_total: int,
+    max_zh_len: int,
+    max_en_len: int,
+) -> list[dict[str, str]]:
+    """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
+    glossary: list[dict[str, str]] = []
+    for norm, info in sorted(merged.items(), key=lambda x: -x[1]["freq"]):
+        if info["freq"] < min_freq or not _is_useful_term(norm):
+            continue
+
+        zh_counter: Counter = Counter()
+        for k in info["keys"]:
+            entry = next((e for e in matched_entries if e["key"] == k), None)
+            if not entry:
+                continue
+            if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
+                continue
+            zh_val = entry.get("zh", "").strip()
+            en_val = entry.get("en", "")
+            if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
+                continue
+            variants = info["variants"]
+            if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
+                continue
+            zh_counter[zh_val[:120]] += 1
+
+        if not zh_counter:
+            continue
+
+        best_zh, best_count = zh_counter.most_common(1)[0]
+        total = sum(zh_counter.values())
+        variants = sorted(info["variants"], key=len)
+        en_term = variants[0] if variants else norm
+        if total >= min_total and best_count / total >= min_consensus:
+            glossary.append({"en": en_term, "zh": best_zh})
+        elif total >= min_total:
+            common = _extract_common_zh(zh_counter, min_consensus)
+            if common:
+                glossary.append({"en": en_term, "zh": common})
+
+    return glossary
+
+
+def _dedup_zh_conflicts(
+    glossary: list[dict[str, str]],
+    merged: dict[str, dict[str, Any]],
+    matched_entries: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """中文互斥去重：同一中文对应多个英文术语时，给短术语第二次机会。"""
+    before_dedup = len(glossary)
+    zh_to_entries: dict[str, list[dict[str, str]]] = {}
+    for item in glossary:
+        zh_to_entries.setdefault(item["zh"], []).append(item)
+    glossary = []
+    removed_count = 0
+    rescued_count = 0
+    for zh_val, items in zh_to_entries.items():
+        if len(items) == 1:
+            glossary.append(items[0])
+            continue
+        sorted_items = sorted(items, key=lambda x: len(x["en"]), reverse=True)
+        to_remove: list[dict[str, str]] = []
+        for i, item_a in enumerate(sorted_items):
+            en_a_l = item_a["en"].lower()
+            for j in range(i + 1, len(sorted_items)):
+                item_b = sorted_items[j]
+                en_b_l = item_b["en"].lower()
+                if en_b_l in en_a_l and item_b not in to_remove:
+                    rescued = try_rescue_short_term(item_b, item_a, merged, matched_entries)
+                    if rescued:
+                        glossary.append(rescued)
+                        rescued_count += 1
+                    else:
+                        to_remove.append(item_b)
+                        removed_count += 1
+        for item in sorted_items:
+            if item not in to_remove:
+                glossary.append(item)
+    if removed_count or rescued_count:
+        msg = f"  [术语表] 中文互斥: {before_dedup} → {len(glossary)} 条（移除 {removed_count} 条子串冲突"
+        if rescued_count:
+            msg += f", 救回 {rescued_count} 条（剔除长术语key后指向不同中文）"
+        msg += "）"
+        info(msg)
+    return glossary
+
+
 class TerminologyBuilder:
     """术语提取、归并、匹配的完整流水线。"""
 
@@ -135,12 +252,12 @@ class TerminologyBuilder:
 
         # Step 1: 原始分桶
         self.merged = raw_merge(self.extracted)
-        print(f"  [术语归并] 原始分桶: {len(self.merged)} 个")
+        info(f"  [术语归并] 原始分桶: {len(self.merged)} 个")
 
         # Step 2: 缓存查表
         if self.cache.map:
             self.merged, self._cache_hits = apply_cache_merge(self.merged, self.cache)
-            print(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
+            info(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
 
         # Step 3: 模糊聚类（纯算法，不需要 LLM）
         if not self.merged:
@@ -150,7 +267,7 @@ class TerminologyBuilder:
         if not clusters:
             return self.merged
 
-        print(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
+        info(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
 
         # Step 4: LLM 裁决 + 写回缓存（仅在有 llm_call 时）
         if llm_call is not None:
@@ -166,9 +283,9 @@ class TerminologyBuilder:
                         self.cache.record(canon, members, source="llm")
 
                     self.merged = apply_llm_merge(self.merged, mapping)
-                    print(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
-            except Exception:
-                pass
+                    info(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
+            except Exception as e:
+                warn(f"[术语归并] LLM 归并调用异常: {type(e).__name__}: {e}")
 
         return self.merged
 
@@ -179,119 +296,25 @@ class TerminologyBuilder:
     def build_glossary(self, min_freq: int | None = None, min_consensus: float | None = None) -> list[dict[str, str]]:
         """
         纯程序化构建术语表：从 matched_entries 中统计每组术语的已有中文译文。
-
-        :param min_freq: 最少出现次数（归并后），默认从配置取 term_min_freq
-        :param min_consensus: 最常用译文占比阈值，默认从配置取 term_min_consensus
         """
         if not self.merged:
             self.merge_lemmas()
 
         min_freq = min_freq if min_freq is not None else cfg.get("term_min_freq", 5)
         min_consensus = min_consensus if min_consensus is not None else cfg.get("term_min_consensus", 0.6)
+        assert isinstance(min_freq, int)
         assert isinstance(min_consensus, (int, float))
         max_zh_len = cfg.get("term_max_zh_len", 40)
         max_en_len = cfg.get("term_max_en_len", 60)
         min_total = cfg.get("term_consensus_min_total", 3)
 
-        from src.tools.terminology_extract import STOP_WORDS
-
-        def _is_useful_term(norm: str, info: dict) -> bool:
-            stop_lower = {w.lower() for w in STOP_WORDS}
-            norm_lower = norm.lower()
-            if norm_lower in stop_lower:
-                return False
-            if len(norm) <= 2:
-                return False
-            if re.search(r"\d", norm):
-                return False
-            if re.fullmatch(r"[0-9._-]+", norm):
-                return False
-            for word in norm_lower.split():
-                if word in stop_lower:
-                    return False
-            return True
-
-        glossary: list[dict[str, str]] = []
-        for norm, info in sorted(self.merged.items(), key=lambda x: -x[1]["freq"]):
-            if info["freq"] < min_freq or not _is_useful_term(norm, info):
-                continue
-
-            zh_counter: Counter = Counter()
-            for k in info["keys"]:
-                entry = next((e for e in self.matched_entries if e["key"] == k), None)
-                if not entry:
-                    continue
-                # 描述性条目不参与术语表（desc/lore/flavor/text/message 等）
-                if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
-                    continue
-                zh_val = entry.get("zh", "").strip()
-                en_val = entry.get("en", "")
-                if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
-                    continue
-                variants = info["variants"]
-                if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
-                    continue
-                zh_counter[zh_val[:120]] += 1
-
-            if not zh_counter:
-                continue
-
-            best_zh, best_count = zh_counter.most_common(1)[0]
-            total = sum(zh_counter.values())
-            if total >= min_total and best_count / total >= min_consensus:
-                variants = sorted(info["variants"], key=len)
-                en_term = variants[0] if variants else norm
-                glossary.append({"en": en_term, "zh": best_zh})
-            elif total >= min_total:
-                # 共识未达标 → 尝试从多个中文译文中提取公共部分
-                common = _extract_common_zh(zh_counter, min_consensus)
-                if common:
-                    variants = sorted(info["variants"], key=len)
-                    en_term = variants[0] if variants else norm
-                    glossary.append({"en": en_term, "zh": common})
-
-        # 中文互斥：同一中文对应多个英文术语时，若短 en 是长 en 的子串，
-        # 需要给短术语一次「剔除长术语所在 key 后重新统计」的机会。
-        # 若重新统计后短术语指向不同中文，则两者保留；否则删除短的。
-        before_dedup = len(glossary)
-        zh_to_entries: dict[str, list[dict[str, str]]] = {}
-        for item in glossary:
-            zh_to_entries.setdefault(item["zh"], []).append(item)
-        glossary = []
-        removed_count = 0
-        rescued_count = 0
-        for zh_val, items in zh_to_entries.items():
-            if len(items) == 1:
-                glossary.append(items[0])
-                continue
-            sorted_items = sorted(items, key=lambda x: len(x["en"]), reverse=True)
-            to_remove: list[dict[str, str]] = []
-            for i, item_a in enumerate(sorted_items):
-                en_a_l = item_a["en"].lower()
-                for j in range(i + 1, len(sorted_items)):
-                    item_b = sorted_items[j]
-                    en_b_l = item_b["en"].lower()
-                    if en_b_l in en_a_l and item_b not in to_remove:
-                        # 短 en 是长 en 的子串 → 给短术语第二次机会
-                        rescued = try_rescue_short_term(item_b, item_a, self.merged, self.matched_entries)
-                        if rescued:
-                            glossary.append(rescued)
-                            rescued_count += 1
-                        else:
-                            to_remove.append(item_b)
-                            removed_count += 1
-            for item in sorted_items:
-                if item not in to_remove:
-                    glossary.append(item)
-        if removed_count or rescued_count:
-            msg = f"  [术语表] 中文互斥: {before_dedup} → {len(glossary)} 条（移除 {removed_count} 条子串冲突"
-            if rescued_count:
-                msg += f", 救回 {rescued_count} 条（剔除长术语key后指向不同中文）"
-            msg += "）"
-            print(msg)
-
+        glossary = _collect_zh_translations(
+            self.merged, self.matched_entries,
+            min_freq, min_consensus, min_total, max_zh_len, max_en_len,
+        )
+        glossary = _dedup_zh_conflicts(glossary, self.merged, self.matched_entries)
         self.glossary = glossary
-        print(f"  [术语表] {len(glossary)} 条术语（纯程序提取, freq≥{min_freq}, 共识≥{int(min_consensus*100)}%）")
+        info(f"  [术语表] {len(glossary)} 条术语（纯程序提取, freq≥{min_freq}, 共识≥{int(min_consensus*100)}%）")
         return glossary
 
     def llm_verify_glossary(self, llm_call) -> list:
@@ -338,7 +361,8 @@ class TerminologyBuilder:
         try:
             response = llm_call(prompt)
             corrections = _parse_glossary_corrections(response)
-        except Exception:
+        except Exception as e:
+            warn(f"[术语校验] LLM 术语校验调用异常: {type(e).__name__}: {e}")
             return self.glossary
         if not corrections:
             return self.glossary
@@ -349,7 +373,7 @@ class TerminologyBuilder:
                 g["zh"] = corr["new_zh"]
                 corrected += 1
         if corrected:
-            print(f"  [术语表] LLM校验: 修正 {corrected}/{len(verify_items)} 条术语")
+            info(f"  [术语表] LLM校验: 修正 {corrected}/{len(verify_items)} 条术语")
         return self.glossary
 
 

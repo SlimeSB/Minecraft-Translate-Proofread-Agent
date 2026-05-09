@@ -5,6 +5,7 @@
 """
 import json
 
+from src.logging import info
 from src.models import (
     FilterDiscardRecord, PipelineContext, VerdictDict,
 )
@@ -16,80 +17,77 @@ def run_phase4(ctx: PipelineContext) -> None:
     if not ctx.llm_call or ctx.no_llm or ctx.dry_run:
         return
 
-    print("[Phase 4] 最终 LLM 过滤...")
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
+    info("[Phase 4] 最终 LLM 过滤...")
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        verdicts = db.load_verdicts(phase="merged", filtered=0)
+        if not verdicts:
+            info("  无 verdict 需要过滤")
+            return
 
-    verdicts = db.load_verdicts(phase="merged", filtered=0)
-    if not verdicts:
-        print("  无 verdict 需要过滤")
-        db.close()
-        return
+        cached_pass_keys: set[str] = set()
+        cached_clean_reasons: dict[str, str] = {}
+        uncached: list[VerdictDict] = []
 
-    cached_pass_keys: set[str] = set()
-    cached_clean_reasons: dict[str, str] = {}
-    uncached: list[VerdictDict] = []
-
-    for v in verdicts:
-        ck = _cache_key(v)
-        result = db.lookup_filter_cache(ck)
-        if result is not None:
-            action, cleaned = result
-            if action == "PASS":
-                cached_pass_keys.add(v["key"])
-            elif cleaned:
-                cached_clean_reasons[v["key"]] = cleaned
-        else:
-            uncached.append(v)
-
-    cache_hits = len(verdicts) - len(uncached)
-    print(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
-    ctx.filter_cache_hits = cache_hits
-    ctx.filter_cache_total = len(verdicts)
-
-    bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
-
-    if uncached:
-        filtered_uncached, passes_uncached = bridge.filter_verdicts(uncached)
-
-        uncached_pass: set[str] = {d["key"] for d in passes_uncached}
-        uncached_reasons: dict[str, str] = {}
-        for v in filtered_uncached:
-            k = v["key"]
-            r = v.get("reason", "")
-            if r and k not in uncached_pass:
-                uncached_reasons[k] = r
-
-        for v in uncached:
+        for v in verdicts:
             ck = _cache_key(v)
-            k = v["key"]
-            if k in uncached_pass:
-                db.store_filter_cache(ck, "PASS", "")
+            result = db.lookup_filter_cache(ck)
+            if result is not None:
+                action, cleaned = result
+                if action == "PASS":
+                    cached_pass_keys.add(v["key"])
+                elif cleaned:
+                    cached_clean_reasons[v["key"]] = cleaned
             else:
-                db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
-        db.commit_filter_cache()
-    else:
-        uncached_pass = set()
-        uncached_reasons = {}
+                uncached.append(v)  # type: ignore[arg-type]
 
-    all_pass = cached_pass_keys | uncached_pass
-    all_reasons = {**cached_clean_reasons, **uncached_reasons}
+        cache_hits = len(verdicts) - len(uncached)
+        info(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
+        ctx.filter_cache_hits = cache_hits
+        ctx.filter_cache_total = len(verdicts)
 
-    for v in verdicts:
-        k = v["key"]
-        if k in all_pass:
-            db.set_filtered(k, "PASS", "")
+        bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
+
+        if uncached:
+            filtered_uncached, passes_uncached = bridge.filter_verdicts(uncached)
+
+            uncached_pass: set[str] = {d["key"] for d in passes_uncached}
+            uncached_reasons: dict[str, str] = {}
+            for v in filtered_uncached:
+                k = v["key"]
+                r = v.get("reason", "")
+                if r and k not in uncached_pass:
+                    uncached_reasons[k] = r
+
+            for v in uncached:
+                ck = _cache_key(v)  # type: ignore[arg-type]
+                k = v["key"]
+                if k in uncached_pass:
+                    db.store_filter_cache(ck, "PASS", "")
+                else:
+                    db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
+            db.commit_filter_cache()
         else:
-            if k in all_reasons:
-                v["reason"] = all_reasons[k]
-            db.set_filtered(k, v.get("verdict", ""), v.get("reason", ""))
+            uncached_pass = set()
+            uncached_reasons = {}
 
-    removed = len(all_pass)
-    kept = len(verdicts) - removed
-    print(f"  驳回(PASS) {removed} 条, 保留 {kept} 条")
+        all_pass = cached_pass_keys | uncached_pass
+        all_reasons = {**cached_clean_reasons, **uncached_reasons}
 
-    stats = db.get_merged_stats()
-    db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
-    db.close()
+        for v in verdicts:
+            k = v["key"]
+            if k in all_pass:
+                db.set_filtered(k, "PASS", "")
+            else:
+                if k in all_reasons:
+                    v["reason"] = all_reasons[k]
+                db.set_filtered(k, v.get("verdict", ""), v.get("reason", ""))
+
+        removed = len(all_pass)
+        kept = len(verdicts) - removed
+        info(f"  驳回(PASS) {removed} 条, 保留 {kept} 条")
+
+        stats = db.get_merged_stats()
+        db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
 
 
 def _cache_key(v: dict) -> str:

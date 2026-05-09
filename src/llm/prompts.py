@@ -40,7 +40,7 @@ def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
             prefix = "ae2guide:"
         else:
             prefix = group_prefix(key)
-        groups.setdefault(prefix, []).append(entry)
+        groups.setdefault(prefix, []).append(entry)  # type: ignore[arg-type]
     return groups
 
 
@@ -234,7 +234,7 @@ def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
         m = _RE_MULTIPART.match(entry["key"])
         if m:
             base = m.group(1)
-            groups.setdefault(base, []).append(entry)
+            groups.setdefault(base, []).append(entry)  # type: ignore[arg-type]
     result: dict[str, tuple[str, str]] = {}
     for base, group in groups.items():
         if len(group) < 2:

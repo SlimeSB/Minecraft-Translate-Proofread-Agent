@@ -23,8 +23,9 @@ def _load_stop_words() -> set[str]:
     try:
         from src import config as cfg
         _STOP_WORDS = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
-    except Exception:
-        pass
+    except Exception as e:
+        from src.logging import warn
+        warn(f"[停用词] 加载停用词失败: {type(e).__name__}: {e}")
     return _STOP_WORDS
 
 

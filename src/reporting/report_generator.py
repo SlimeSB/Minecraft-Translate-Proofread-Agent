@@ -27,17 +27,11 @@ def _print(*args, **kwargs) -> None:
         print(*safe, **kwargs)
 
 
+from src.models import VERDICT_PRIORITY  # noqa: E402
+
 # ═══════════════════════════════════════════════════════════
 # Verdict 优先级与去重
 # ═══════════════════════════════════════════════════════════
-
-# 优先级：FAIL > REVIEW > SUGGEST > PASS
-VERDICT_PRIORITY: dict[str, int] = {
-    "❌ FAIL": 4,
-    "🔶 REVIEW": 3,
-    "⚠️ SUGGEST": 2,
-    "PASS": 1,
-}
 
 # 来源优先级：LLM 手动审校 > 格式自动检查 > 术语自动检查
 # 同一条目同级别时，手动判断优先

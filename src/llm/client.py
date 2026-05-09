@@ -1,11 +1,13 @@
 """LLM 客户端工厂 —— OpenAI 兼容 API 调用、日志、重试逻辑。"""
 import datetime
-import sys
 import time
 from pathlib import Path
 from typing import Callable
 
+from src.logging import info, warn
+
 from src.models import LLMCallable
+from src import config as _cfg
 
 
 def create_openai_llm_call(
@@ -18,7 +20,6 @@ def create_openai_llm_call(
     reasoning_effort: str | None = None,
 ) -> LLMCallable:
     if system_prompt is None:
-        from src import config as _cfg
         system_prompt = _cfg.REVIEW_SYSTEM_PROMPT
 
     # OpenAI SDK 会自动追加 /chat/completions，不要让它重复
@@ -56,7 +57,9 @@ def create_openai_llm_call(
         with open(latest_path, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] [{level}] {msg}\n")
 
-    MAX_RETRIES = 5
+    MAX_RETRIES = _cfg.get("llm_max_retries", 5)
+    _temperature = _cfg.get("llm_temperature", 0.1)
+    _max_tokens = _cfg.get("llm_max_tokens", 32768)
 
     def call(prompt: str) -> str:
         call_count[0] += 1
@@ -73,8 +76,8 @@ def create_openai_llm_call(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=0.1,
-                    max_tokens=32768,
+                    temperature=_temperature,
+                    max_tokens=_max_tokens,
                 )
                 if reasoning_effort:
                     kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
@@ -103,7 +106,7 @@ def create_openai_llm_call(
                     delay = min(5 * (1 << retries), 60)
                     retries += 1
                     _log("WARN", f"可重试错误, {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:200]}")
-                    print(f"  [LLM] {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:120]}", file=sys.stderr)
+                    warn(f"  [LLM] {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:120]}")
                     time.sleep(delay)
                 else:
                     if retries >= MAX_RETRIES:
@@ -116,6 +119,6 @@ def create_openai_llm_call(
 
 def create_dry_run_llm_call() -> LLMCallable:
     def call(prompt: str) -> str:
-        print(f"[DRY RUN] Prompt length: {len(prompt)} chars")
+        info(f"[DRY RUN] Prompt length: {len(prompt)} chars")
         return "[]"
     return call

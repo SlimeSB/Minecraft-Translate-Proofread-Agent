@@ -9,7 +9,7 @@
   "reportMissingImports": true,
   "reportMissingModuleSource": false,
   "reportTypedDictNotRequiredAccess": false,
-  "reportArgumentType": false,
+  "reportArgumentType": true,
   "reportAssignmentType": false,
   "reportReturnType": false,
   "reportAttributeAccessIssue": false,

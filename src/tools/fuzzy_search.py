@@ -16,6 +16,8 @@ import sys
 import tempfile
 from typing import Any
 
+from src import config as cfg
+
 
 # ═══════════════════════════════════════════════════════════
 # 编辑距离（仅对 FTS 候选做精排）
@@ -107,9 +109,10 @@ class TranslationDB:
         fts_col = "en"
 
         try:
+            recall_mult = cfg.get("fts_recall_multiplier", 10)
             cur = self.conn.execute(
                 f"SELECT key, en, zh FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fts_query, max(top_n * 10, 50)),
+                (fts_query, max(top_n * recall_mult, 50)),
             )
             candidates = [(row[0], row[1], row[2]) for row in cur.fetchall()]
         except sqlite3.OperationalError:

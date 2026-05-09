@@ -30,7 +30,7 @@ def group_mod_files(
 
     返回: {mod_key: {en_base, en_head, zh_base, zh_head, mod_info}}
     """
-    mods: dict[str, dict[str, str | None]] = {}
+    mods: dict[str, Any] = {}
 
     for f in changed_files:
         filename = f.get("filename", "")

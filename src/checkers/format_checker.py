@@ -57,16 +57,31 @@ RE_ELLIPSIS_WRONG = re.compile(r"\.{3}")  # 三个英文句号 ...
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
 
-# 非代码/非专有名词的英文标记（用于判断 en==zh 是否合理）
-NON_TRANSLATABLE_PATTERNS = [
-    re.compile(r"^[A-Z_]+$"),           # 全大写下划线常量
-    re.compile(r"^[0-9]+$"),            # 纯数字
-    re.compile(r"^[A-Za-z0-9_.-]+$"),   # 纯ASCII标识符
-    re.compile(r"^§[0-9a-fA-F].*"),     # 格式码开头
-    re.compile(r"^%[a-zA-Z0-9_.$]*$"),  # 纯占位符: %s, %d, %1$s
-    re.compile(r"^\{[^{}]*\}$"),        # 纯占位符: {0}, {name}
-    re.compile(r"^%[A-Za-z_]\w*%$"),    # 纯占位符: %msg%, %key%
-]
+def _compare_placeholder_lists(
+    en_items: list[str],
+    zh_items: list[str],
+    label_missing: str,
+    label_extra: str,
+    format_fn: Any = None,
+) -> list[str]:
+    """比较 EN/ZH 的占位符列表，若不一致返回 issue 字符串列表。"""
+    issues: list[str] = []
+    if sorted(en_items) != sorted(zh_items):
+        en_count: dict[str, int] = {}
+        for p in en_items:
+            en_count[p] = en_count.get(p, 0) + 1
+        zh_count: dict[str, int] = {}
+        for p in zh_items:
+            zh_count[p] = zh_count.get(p, 0) + 1
+        missing = [p for p in en_count if en_count.get(p, 0) > zh_count.get(p, 0)]
+        extra = [p for p in zh_count if zh_count.get(p, 0) > en_count.get(p, 0)]
+        if missing:
+            formatted = [format_fn(p) for p in missing] if format_fn else missing
+            issues.append(f"缺失{label_missing}: {', '.join(formatted)}")
+        if extra:
+            formatted = [format_fn(p) for p in extra] if format_fn else extra
+            issues.append(f"多余{label_extra}: {', '.join(formatted)}")
+    return issues
 
 
 def count_pattern(text: str, pattern: re.Pattern) -> int:
@@ -74,12 +89,9 @@ def count_pattern(text: str, pattern: re.Pattern) -> int:
     return len(pattern.findall(text))
 
 
-def is_likely_code_or_proper_noun(text: str) -> bool:
-    """判断文本是否看起来像代码/专有名词/标识符（不需要翻译的那种）。"""
-    for pat in NON_TRANSLATABLE_PATTERNS:
-        if pat.match(text.strip()):
-            return True
-    return False
+from src.tools.code_detection import is_likely_code_or_proper_noun  # noqa: E402
+
+_EN_PREVIEW_LEN = cfg.get("en_preview_len", 60)
 
 
 def is_tellraw_json(text: str) -> bool:
@@ -102,7 +114,7 @@ class FormatChecker:
     def __init__(self):
         """初始化格式检查器。"""
 
-    def check_all(self, entry: dict[str, str]) -> list[dict[str, Any]]:
+    def check_all(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
         """对单条 entry 执行所有格式检查，返回 verdict 列表。"""
         key = entry["key"]
         en = entry["en"]
@@ -139,7 +151,7 @@ class FormatChecker:
                 return None  # 唱片名(.desc)不翻译
             if not is_likely_code_or_proper_noun(en):
                 return self._verdict(key, en, zh, "❌ FAIL",
-                    reason=f"值相同（'{en[:60]}'），疑似未翻译",
+                    reason=f"值相同（'{en[:_EN_PREVIEW_LEN]}'），疑似未翻译",
                 )
         return None
 
@@ -149,7 +161,7 @@ class FormatChecker:
         """唱片名(.desc)不应翻译，已翻译则回报。"""
         if "music_disc" in key and key.endswith(".desc") and en != zh and en != "" and zh != "":
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason=f"唱片名不应翻译，建议保留原文（'{en[:60]}'）",
+                reason=f"唱片名不应翻译，建议保留原文（'{en[:_EN_PREVIEW_LEN]}'）",
             )
         return None
 
@@ -164,37 +176,18 @@ class FormatChecker:
                      RE_PRINTF.findall(en) + RE_POSITIONAL_PRINTF.findall(en)]
         zh_printf = [_normalize_printf(p) for p in
                      RE_PRINTF.findall(zh) + RE_POSITIONAL_PRINTF.findall(zh)]
-        if sorted(en_printf) != sorted(zh_printf):
-            en_count = {p: en_printf.count(p) for p in set(en_printf)}
-            zh_count = {p: zh_printf.count(p) for p in set(zh_printf)}
-            missing_en = [p for p in en_count if en_count.get(p, 0) > zh_count.get(p, 0)]
-            missing_zh = [p for p in zh_count if zh_count.get(p, 0) > en_count.get(p, 0)]
-            if missing_en:
-                issues.append(f"缺失占位符: {', '.join(missing_en)}")
-            if missing_zh:
-                issues.append(f"多余占位符: {', '.join(missing_zh)}")
+        issues.extend(_compare_placeholder_lists(en_printf, zh_printf, "占位符", "占位符"))
 
         # %msg% 风格
         en_percv = RE_PERCENT_VAR.findall(en)
         zh_percv = RE_PERCENT_VAR.findall(zh)
-        if sorted(en_percv) != sorted(zh_percv):
-            missing = [p for p in en_percv if p not in zh_percv]
-            extra = [p for p in zh_percv if p not in en_percv]
-            if missing:
-                issues.append(f"缺失变量: {', '.join(missing)}")
-            if extra:
-                issues.append(f"多余变量: {', '.join(extra)}")
+        issues.extend(_compare_placeholder_lists(en_percv, zh_percv, "变量", "变量"))
 
         # {0}, {1} 风格
         en_brace = RE_BRACE_VAR.findall(en)
         zh_brace = RE_BRACE_VAR.findall(zh)
-        if sorted(en_brace) != sorted(zh_brace):
-            missing_brace = [p for p in en_brace if p not in zh_brace]
-            extra_brace = [p for p in zh_brace if p not in en_brace]
-            if missing_brace:
-                issues.append(f"缺失变量: {{{'}, {'.join(missing_brace)}}}")
-            if extra_brace:
-                issues.append(f"多余变量: {{{'}, {'.join(extra_brace)}}}")
+        issues.extend(_compare_placeholder_lists(en_brace, zh_brace, "变量", "变量",
+                                                  format_fn=lambda p: "{" + p + "}"))
 
         if issues:
             return self._verdict(key, en, zh, "❌ FAIL",

@@ -1,6 +1,7 @@
 """Phase 5: 报告生成 —— 从 DB 加载已过滤判决，生成 report.md + report.json。"""
 import json
 
+from src.logging import info
 from src.models import (
     PipelineContext, VerdictDict,
     VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
@@ -10,23 +11,21 @@ from src.storage.database import PipelineDB
 
 
 def run_phase5(ctx: PipelineContext) -> None:
-    print("[Phase 5] 报告生成...")
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-
-    kept = db.load_verdicts(phase="merged", filtered=1)
-    if not kept:
-        kept = db.load_verdicts(phase="merged", filtered=0)
-    db.close()
+    info("[Phase 5] 报告生成...")
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        kept = db.load_verdicts(phase="merged", filtered=1)
+        if not kept:
+            kept = db.load_verdicts(phase="merged", filtered=0)
 
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)
+    rg.load_alignment(ctx.alignment)  # type: ignore[arg-type]
     rg.verdicts = kept
     rg.print_summary()
     rg.print_verdict_table()
 
     # ── report.json ──
-    ns_groups = _group_by_namespace(kept, ctx)
+    ns_groups = _group_by_namespace(kept, ctx)  # type: ignore[arg-type]
     # 仅保留非 PASS 的 verdict（已驳回的不写入 report.json）
     non_pass_verdicts = [v for v in kept if v.get("verdict") != "PASS"]
     report_data = {
@@ -39,13 +38,13 @@ def run_phase5(ctx: PipelineContext) -> None:
         json.dump(report_data, f, ensure_ascii=False, indent=2)
 
     # ── report.md（整体 PR 摘要）──
-    _generate_summary_md(ctx, kept, ns_groups)
+    _generate_summary_md(ctx, kept, ns_groups)  # type: ignore[arg-type]
 
     # ── 按 namespace 分报告（含逐条 verdict 详情）──
-    _generate_namespace_reports(ctx, kept, ns_groups)
+    _generate_namespace_reports(ctx, kept, ns_groups)  # type: ignore[arg-type]
 
-    print(f"  总报告: {json_path}")
-    print(f"  摘要: {ctx.output_dir / 'report.md'}")
+    info(f"  总报告: {json_path}")
+    info(f"  摘要: {ctx.output_dir / 'report.md'}")
 
 
 def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> dict[str, dict]:
@@ -106,15 +105,15 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
 
 
 def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
-                            info: dict, ns_dir) -> None:
+                            ns_info: dict, ns_dir) -> None:
     lines = [
         f"# {ns} — 翻译审校报告",
         "",
-        f"- 条目总数：{info.get('total', '?')}",
-        f"- 问题：{info.get('issues', len(verdicts))} 处",
-        f"- ❌ FAIL：{info.get('fail', 0)}",
-        f"- ⚠️ SUGGEST：{info.get('suggest', 0)}",
-        f"- 🔶 REVIEW：{info.get('review', 0)}",
+        f"- 条目总数：{ns_info.get('total', '?')}",
+        f"- 问题：{ns_info.get('issues', len(verdicts))} 处",
+        f"- ❌ FAIL：{ns_info.get('fail', 0)}",
+        f"- ⚠️ SUGGEST：{ns_info.get('suggest', 0)}",
+        f"- 🔶 REVIEW：{ns_info.get('review', 0)}",
         "",
         "## 问题清单",
         "",
@@ -137,7 +136,7 @@ def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
     md_path = ns_dir / f"{ns}_report.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"  {ns}: {md_path}")
+    info(f"  {ns}: {md_path}")
 
 
 def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],

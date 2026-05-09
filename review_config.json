@@ -3,7 +3,10 @@
 
   "pipeline": {
     "max_workers": 4,
-    "filter_batch_size": 25
+    "filter_batch_size": 25,
+    "review_batch_size": 25,
+    "fts_recall_multiplier": 10,
+    "fuzzy_trigger_patterns": [".desc", "death.attack.", "advancements."]
   },
 
   "key_prefixes": {
@@ -29,6 +32,10 @@
   },
 
   "llm": {
+    "max_retries": 5,
+    "temperature": 0.1,
+    "max_tokens": 32768,
+    "review_retries": 2,
     "system_prompt": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。",
     "header_prefix": "你是Minecraft模组简中翻译审校专家",
     "default_review_focus": "翻译需准确自然; 术语一致; 匹配语境",
@@ -137,6 +144,8 @@
     "consensus_min_total": 3,
     "fuzzy_cluster_threshold": 65.0,
     "fuzzy_cluster_top_n": 200,
+    "max_keys_per_term": 20,
+    "max_keys_raw": 5,
     "blacklist": [
       "the", "a", "an", "of", "to", "in", "and", "is", "it", "you",
       "this", "that", "will", "be", "can", "with", "for", "on", "are",
@@ -154,7 +163,8 @@
       ".desc", ".description", ".lore", ".tooltip",
       ".flavor", ".info", ".message", ".text"
     ],
-    "punctuation_spacing_whitelist": ["book.", "patchouli."]
+    "punctuation_spacing_whitelist": ["book.", "patchouli."],
+    "en_preview_len": 60
   },
 
   "pr": {
