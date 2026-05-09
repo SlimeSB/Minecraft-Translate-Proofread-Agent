@@ -74,11 +74,12 @@ def _apply_merge_map(
                 "ngram_type": info["ngram_type"],
             }
         new_merged[target]["variants"] |= info["variants"]
-        new_merged[target]["freq"] += info["freq"]
         for k in info["keys"]:
             if k not in new_merged[target]["keys"]:
                 new_merged[target]["keys"].append(k)
         new_merged[target]["keys"] = new_merged[target]["keys"][:_MAX_KEYS_PER_TERM]
+    for info in new_merged.values():
+        info["freq"] = len(info["keys"])
     return new_merged
 
 
@@ -117,7 +118,7 @@ def fuzzy_cluster(
     在已规则归并的桶之间做模糊聚类。
     返回: [[norm_a, norm_b, ...], ...] 候选合并组
     """
-    norms = sorted(merged.keys(), key=lambda n: -merged[n]["freq"])
+    norms = sorted(merged.keys(), key=lambda n: -len(merged[n]["keys"]))
     parents = {n: n for n in norms}
 
     def find(n: str) -> str:

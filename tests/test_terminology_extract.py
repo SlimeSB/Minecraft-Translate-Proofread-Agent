@@ -94,6 +94,15 @@ class TestExtractTerms(unittest.TestCase):
             self.assertIn("keys", u)
             self.assertIsInstance(u["keys"], list)
 
+    def test_full_phrase_no_double_count(self):
+        """完整值短语不重复计数：同一 entry 的 2 词值 → bigram freq 仍为 1。"""
+        en = {"item.iron_sword": "Iron Sword"}
+        result = extract_terms(en, min_freq=1, max_ngram=2)
+        bigrams = {b["term"]: b for b in result["bigrams"]}
+        self.assertIn("iron sword", bigrams)
+        self.assertEqual(bigrams["iron sword"]["freq"], 1)
+        self.assertEqual(len(bigrams["iron sword"]["keys"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

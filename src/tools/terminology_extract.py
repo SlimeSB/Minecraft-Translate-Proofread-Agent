@@ -106,18 +106,28 @@ def extract_terms(
 
     # 把完整短语合并到对应 n-gram 桶中
     # 2 词的完整短语 → bigrams；3+ 词的 → trigrams（扩展 max_ngram 未覆盖的长度）
+    # 注意：若该 n-gram 已在滑动窗口中被计数，不重复累加 freq，仅 extend 未出现过的 keys
     for tup in full_freq:
         n = len(tup)
         if n == 2:
-            bi_freq[tup] += full_freq[tup]
-            bi_keys[tup].extend(full_keys[tup])
+            if tup not in bi_freq:
+                bi_freq[tup] = full_freq[tup]
+            for k in full_keys[tup]:
+                if k not in bi_keys[tup]:
+                    bi_keys[tup].append(k)
         elif n == 3:
-            tri_freq[tup] += full_freq[tup]
-            tri_keys[tup].extend(full_keys[tup])
+            if tup not in tri_freq:
+                tri_freq[tup] = full_freq[tup]
+            for k in full_keys[tup]:
+                if k not in tri_keys[tup]:
+                    tri_keys[tup].append(k)
         else:
             # 4+ 词：也放入 trigram 桶以便后续提取
-            tri_freq[tup] += full_freq[tup]
-            tri_keys[tup].extend(full_keys[tup])
+            if tup not in tri_freq:
+                tri_freq[tup] = full_freq[tup]
+            for k in full_keys[tup]:
+                if k not in tri_keys[tup]:
+                    tri_keys[tup].append(k)
 
     # ── build sorted result lists ──
     def build_list(

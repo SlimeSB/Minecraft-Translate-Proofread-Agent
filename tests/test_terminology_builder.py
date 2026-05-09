@@ -3,7 +3,7 @@ import unittest
 from collections import Counter
 
 from src.checkers.terminology_builder import (
-    _extract_common_zh, TerminologyBuilder,
+    _extract_common_zh, TerminologyBuilder, _collect_zh_translations,
 )
 
 
@@ -125,6 +125,52 @@ class TestTerminologyBuilder(unittest.TestCase):
         self.tb.glossary = [{"en": "Iron", "zh": "铁"}]
         verdicts = self.tb.check_consistency()
         self.assertEqual(len(verdicts), 0)
+
+    def test_collect_zh_freq_uses_keys_not_accum_freq(self):
+        """低频术语（freq 虚高但 keys<5）应被过滤。"""
+        merged = {
+            "copper": {
+                "normalized": "copper",
+                "variants": {"copper", "coppers"},
+                "freq": 9,
+                "keys": ["k1", "k2", "k3"],
+                "ngram_type": "unigrams",
+            },
+        }
+        matched = [
+            {"key": "k1", "en": "Copper Ore", "zh": "铜矿石"},
+            {"key": "k2", "en": "Copper Block", "zh": "铜块"},
+            {"key": "k3", "en": "Copper Ingot", "zh": "铜锭"},
+        ]
+        result = _collect_zh_translations(
+            merged, matched, min_freq=5, min_consensus=0.6,
+            min_total=1, max_zh_len=200, max_en_len=200,
+        )
+        self.assertEqual(len(result), 0)
+
+    def test_collect_zh_freq_passes_with_enough_keys(self):
+        """术语 keys>=5 时应通过频率过滤。"""
+        merged = {
+            "copper": {
+                "normalized": "copper",
+                "variants": {"copper"},
+                "freq": 3,
+                "keys": ["k1", "k2", "k3", "k4", "k5"],
+                "ngram_type": "unigrams",
+            },
+        }
+        matched = [
+            {"key": "k1", "en": "Copper Ore", "zh": "铜"},
+            {"key": "k2", "en": "Copper Block", "zh": "铜"},
+            {"key": "k3", "en": "Copper Ingot", "zh": "铜"},
+            {"key": "k4", "en": "Deepslate Copper Ore", "zh": "深层铜"},
+            {"key": "k5", "en": "Raw Copper", "zh": "粗铜"},
+        ]
+        result = _collect_zh_translations(
+            merged, matched, min_freq=5, min_consensus=0.6,
+            min_total=1, max_zh_len=200, max_en_len=200,
+        )
+        self.assertGreaterEqual(len(result), 1)
 
     def test_merge_and_build_no_llm(self):
         en = {

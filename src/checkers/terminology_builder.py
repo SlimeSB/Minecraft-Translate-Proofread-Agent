@@ -126,8 +126,8 @@ def _collect_zh_translations(
 ) -> list[dict[str, str]]:
     """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
     glossary: list[dict[str, str]] = []
-    for norm, info in sorted(merged.items(), key=lambda x: -x[1]["freq"]):
-        if info["freq"] < min_freq or not _is_useful_term(norm):
+    for norm, info in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
+        if len(info["keys"]) < min_freq or not _is_useful_term(norm):
             continue
 
         zh_counter: Counter = Counter()
