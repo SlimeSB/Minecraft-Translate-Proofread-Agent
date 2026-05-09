@@ -185,11 +185,11 @@ def _run_filter_only(args, output_dir_str: str) -> None:
 
     base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
     model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-    llm_call = create_openai_llm_call(api_key, model, base_url)
+    llm_call = create_openai_llm_call(api_key, model, base_url, label="Review")
     filter_llm_call = create_openai_llm_call(api_key, model, base_url,
                                               system_prompt=cfg.FILTER_SYSTEM_PROMPT,
-                                              log_dir="logs/filter",
-                                              reasoning_effort="high")
+                                              reasoning_effort="high",
+                                              label="Filter")
 
     db = PipelineDB(db_path)
     verdicts = db.load_verdicts(phase="merged", filtered=0)
@@ -256,11 +256,12 @@ def _build_llm_calls(args) -> tuple:
         print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
 
     llm_call = create_openai_llm_call(api_key, model, base_url,
-                                      system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
+                                      system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
+                                      label="Review")
     filter_llm_call = create_openai_llm_call(api_key, model, base_url,
                                               system_prompt=cfg.FILTER_SYSTEM_PROMPT,
-                                              log_dir="logs/filter",
-                                              reasoning_effort="high")
+                                              reasoning_effort="high",
+                                              label="Filter")
     return llm_call, filter_llm_call
 
 
