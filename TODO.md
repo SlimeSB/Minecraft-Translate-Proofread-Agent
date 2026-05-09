@@ -131,3 +131,20 @@
 - `bridge.py:211` — `"__llm_error__"` 哨兵 key 硬编码
 - `bridge.py:344` — 交互模式 `input("> ")` 提示符硬编码
 - `run.py:80,100` — 日期格式 `%Y-%m-%d %H:%M:%S` 两处 `print()` 硬编码
+
+### Critical — 功能影响
+- **`shutil.rmtree()` 每次运行清空 output 目录** (`pipeline.py:67`): 设计如此，勿在 `-o` 目录放其他文件
+
+### High — 代码质量
+- **pyright 配置了大量 `=false`** (`pyrightconfig.json`): 14 项核心类型检查关闭 (`reportArgumentType`, `reportReturnType` 等)，TypedDict 约束形同虚设
+- **LLM 模块无独立测试**: `bridge.py`, `prompts.py`, `client.py` 共约 800+ 行零单元测试覆盖，仅在集成测试间接触及
+
+### Medium — 代码结构
+- **`apply_cache_merge()` 和 `apply_llm_merge()` token 子集守卫位置不一致**: 前者在 redirect 构建时预过滤，后者在 `_apply_merge_map` 内过滤。两者均已委托给 `_apply_merge_map`，差异化合理但守卫点不统一
+
+### Low — 风格/一致性
+- **模块级全局单例**: `fuzzy_search.py` 的 `_db_instance`、`config.py` 的 `_cfg_cache`，非线程安全但单进程够用
+- **`TerminologyBuilder` 类承担过多职责**: 术语提取 + 词形归并 + 表构建 + LLM校验 + 一致性检查，约 441 行 10 方法
+
+### 未测模块（无独立测试文件）
+`dictionary/external.py`, `pipeline/phase1-5*.py`, `cli.py`, `tools/pr/__init__.py`
