@@ -8,6 +8,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from src.logging import warn
+
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
@@ -24,7 +26,6 @@ def _load_stop_words() -> set[str]:
         from src import config as cfg
         _STOP_WORDS = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
     except Exception as e:
-        from src.logging import warn
         warn(f"[停用词] 加载停用词失败: {type(e).__name__}: {e}")
     return _STOP_WORDS
 
@@ -57,7 +58,7 @@ class ExternalDictStore:
                 "ON dict(LOWER(ORIGIN_NAME))"
             )
         except sqlite3.OperationalError:
-            pass  # 只读文件系统等场景静默跳过
+            warn(f"[ExternalDict] 索引创建失败（可能为只读文件系统）")
         total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
         unique = self._conn.execute(
             "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"

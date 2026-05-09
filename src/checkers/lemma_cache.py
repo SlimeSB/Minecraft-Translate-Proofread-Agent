@@ -39,7 +39,7 @@ def _not_stop(term: str) -> bool:
             if word in stop:
                 return False
         return True
-    except Exception:
+    except ImportError:
         return True
 
 

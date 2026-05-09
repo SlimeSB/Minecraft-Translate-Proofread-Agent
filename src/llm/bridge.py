@@ -151,8 +151,8 @@ async def _batch_process(
             parsed = parse_review_response(response)
             warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts")
             for v in parsed:
-                _normalize_verdict(v)
                 v.setdefault("source", source)
+                _normalize_verdict(v)
             return parsed
         except Exception as e:
             warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ✗ {e}")

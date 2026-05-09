@@ -31,6 +31,5 @@ def run_phase3a(ctx: PipelineContext) -> None:
     if ctx.pr_warnings:
         info(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_verdicts(all_v, "format")  # type: ignore[arg-type]
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_verdicts(all_v, "format")  # type: ignore[arg-type]

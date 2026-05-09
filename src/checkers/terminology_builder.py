@@ -4,15 +4,17 @@
 归并策略: 规则粗筛 → 模糊搜索聚类 → LLM 裁决同形异体
 
 用法:
-    from terminology_builder import TerminologyBuilder
+    from terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
     tb = TerminologyBuilder()
     tb.load(en_data, zh_data, alignment)
-    glossary = tb.merge_and_build(llm_call=my_llm_fn, min_freq=3)
-    verdicts = tb.check_consistency()
+    glossary = tb.merge_and_build(llm_call=my_llm_fn)
+    glossary = llm_verify_glossary(glossary, tb.en_data, my_llm_fn)
+    verdicts = check_consistency(glossary, tb.matched_entries, tb.merged)
 """
 import json
 import re
 from collections import Counter
+from collections.abc import Sequence
 from typing import Any, Callable
 
 from src.logging import info, warn
@@ -207,6 +209,154 @@ def _dedup_zh_conflicts(
     return glossary
 
 
+# ═══════════════════════════════════════════════════════════
+# 模块级校验与检查函数
+# ═══════════════════════════════════════════════════════════
+
+def llm_verify_glossary(
+    glossary: Sequence[dict[str, Any]],
+    en_data: dict[str, str],
+    llm_call: Callable[[str], str] | None,
+) -> list[dict[str, Any]]:
+    """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。
+
+    Args:
+        glossary: 术语表列表，每项含 "en" 和 "zh" 键
+        en_data: 英文条目数据 (key -> en text)
+        llm_call: LLM 调用函数
+
+    Returns:
+        修正后的术语表（与传入的 glossary 为同一列表对象）
+    """
+    if not glossary or not llm_call:
+        return glossary
+
+    import re
+    term_sources: dict[str, list[str]] = {}
+    for g in glossary:
+        en_lower = g["en"].lower()
+        term_sources[en_lower] = []
+        for en_val in en_data.values():
+            if not isinstance(en_val, str):
+                continue
+            if re.search(r"\b" + re.escape(en_lower) + r"\b", en_val, re.IGNORECASE):
+                term_sources[en_lower].append(en_val)
+
+    lines: list[str] = []
+    verify_items: list[dict[str, Any]] = []
+    for g in glossary:
+        en_lower = g["en"].lower()
+        sources = term_sources.get(en_lower, [])
+        if not sources:
+            continue
+        unique = list(dict.fromkeys(sources))
+        if len(unique) < 2:
+            continue
+        sorted_len = sorted(unique, key=len)
+        ctx = [sorted_len[-1]] + sorted_len[:4]
+        block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
+        for j, txt in enumerate(ctx):
+            block += '  [' + str(j + 1) + '] "' + txt + '"\n'
+        lines.append(block)
+        verify_items.append(g)
+
+    if not verify_items:
+        return glossary
+
+    prompt = (
+        '你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。\n'
+        '自动术语表从多个模组统计提取，可能存在错误。\n'
+        '判断每条术语译文是否合适，不合适给出修正。\n'
+        '输出JSON: [{"en":"原文","old_zh":"原中文","new_zh":"修正或原中文","reason":"理由"}]\n'
+        '仅输出需要修正的。仅输出JSON数组。\n\n'
+        + "\n\n".join(lines)
+    )
+
+    try:
+        response = llm_call(prompt)
+        corrections = _parse_glossary_corrections(response)
+    except Exception as e:
+        warn(f"[术语校验] LLM 术语校验调用异常: {type(e).__name__}: {e}")
+        return glossary
+
+    if not corrections:
+        return glossary
+
+    corrected = 0
+    for g in glossary:
+        corr = corrections.get(g["en"].lower())
+        if corr:
+            g["zh"] = corr["new_zh"]
+            corrected += 1
+
+    if corrected:
+        info(f"  [术语表] LLM校验: 修正 {corrected}/{len(verify_items)} 条术语")
+
+    return glossary
+
+
+def check_consistency(
+    glossary: Sequence[dict[str, Any]],
+    matched_entries: Sequence[dict[str, Any]],
+    merged: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """用术语表检查 matched_entries 中的翻译一致性。
+    按词边界匹配（避免子串误匹配：eat 不匹配 Defeat）。
+    唱片名（music_disc.*.desc）跳过不检查。
+
+    Args:
+        glossary: 术语表列表，每项含 "en" 和 "zh" 键
+        matched_entries: 已对齐条目列表
+        merged: 词形归并桶（可选），用于变体展开。None 时仅使用 glossary en 值。
+
+    Returns:
+        Verdict 列表
+    """
+    if not glossary:
+        return []
+
+    import re
+
+    term_info: list[tuple[str, str, re.Pattern]] = []
+    for g in glossary:
+        en_lower = g["en"].lower()
+        if merged is not None and en_lower in merged:
+            variants = sorted(merged[en_lower]["variants"], key=len)
+        else:
+            variants = [g["en"]]
+        patterns = [re.escape(v.lower()) for v in variants]
+        combined = r"\b(?:" + "|".join(patterns) + r")\b"
+        term_info.append((g["en"], g["zh"], re.compile(combined, re.IGNORECASE)))
+
+    verdicts: list[dict[str, Any]] = []
+    for entry in matched_entries:
+        key = entry["key"]
+        en = entry.get("en", "")
+        zh = entry.get("zh", "")
+        if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
+            continue
+
+        if "music_disc" in key and key.endswith(".desc"):
+            continue
+
+        for en_term, std_zh, pattern in term_info:
+            if not pattern.search(en):
+                continue
+            if std_zh in zh:
+                continue
+            verdicts.append({
+                "key": key,
+                "en_current": en,
+                "zh_current": zh,
+                "verdict": "❌ FAIL",
+                "suggestion": std_zh,
+                "reason": f'术语不一致——“{en_term}”在术语表中译为“{std_zh}”，此处未使用',
+                "source": "terminology_check",
+            })
+
+    return verdicts
+
+
 class TerminologyBuilder:
     """术语提取、归并、匹配的完整流水线。"""
 
@@ -316,118 +466,6 @@ class TerminologyBuilder:
         self.glossary = glossary
         info(f"  [术语表] {len(glossary)} 条术语（纯程序提取, freq≥{min_freq}, 共识≥{int(min_consensus*100)}%）")
         return glossary
-
-    def llm_verify_glossary(self, llm_call) -> list:
-        """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。"""
-        if not self.glossary or not llm_call:
-            return self.glossary
-        import re
-        term_sources = {}
-        for g in self.glossary:
-            en_lower = g["en"].lower()
-            term_sources[en_lower] = []
-            for en_val in self.en_data.values():
-                if not isinstance(en_val, str):
-                    continue
-                if re.search(r"\b" + re.escape(en_lower) + r"\b", en_val, re.IGNORECASE):
-                    term_sources[en_lower].append(en_val)
-        lines = []
-        verify_items = []
-        for g in self.glossary:
-            en_lower = g["en"].lower()
-            sources = term_sources.get(en_lower, [])
-            if not sources:
-                continue
-            unique = list(dict.fromkeys(sources))
-            if len(unique) < 2:
-                continue
-            sorted_len = sorted(unique, key=len)
-            ctx = [sorted_len[-1]] + sorted_len[:4]
-            block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
-            for j, txt in enumerate(ctx):
-                block += '  [' + str(j + 1) + '] "' + txt + '"\n'
-            lines.append(block)
-            verify_items.append(g)
-        if not verify_items:
-            return self.glossary
-        prompt = (
-            '你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。\n'
-            '自动术语表从多个模组统计提取，可能存在错误。\n'
-            '判断每条术语译文是否合适，不合适给出修正。\n'
-            '输出JSON: [{"en":"原文","old_zh":"原中文","new_zh":"修正或原中文","reason":"理由"}]\n'
-            '仅输出需要修正的。仅输出JSON数组。\n\n'
-            + "\n\n".join(lines)
-        )
-        try:
-            response = llm_call(prompt)
-            corrections = _parse_glossary_corrections(response)
-        except Exception as e:
-            warn(f"[术语校验] LLM 术语校验调用异常: {type(e).__name__}: {e}")
-            return self.glossary
-        if not corrections:
-            return self.glossary
-        corrected = 0
-        for g in self.glossary:
-            corr = corrections.get(g["en"].lower())
-            if corr:
-                g["zh"] = corr["new_zh"]
-                corrected += 1
-        if corrected:
-            info(f"  [术语表] LLM校验: 修正 {corrected}/{len(verify_items)} 条术语")
-        return self.glossary
-
-
-    def check_consistency(self) -> list[dict[str, Any]]:
-        """
-        用术语表检查 matched_entries 中的翻译一致性。
-        按词边界匹配（避免子串误匹配：eat 不匹配 Defeat）。
-        """
-        if not self.glossary:
-            return []
-
-        import re
-
-        # 构建术语→标准译文 + regex 模式
-        term_info: list[tuple[str, str, re.Pattern]] = []
-        for g in self.glossary:
-            en_lower = g["en"].lower()
-            # 从 merged 找回变体，构建 OR 模式
-            variants = [g["en"]]
-            if en_lower in self.merged:
-                variants = sorted(self.merged[en_lower]["variants"], key=len)
-            # 对每个变体用 \b 词边界
-            patterns = [re.escape(v.lower()) for v in variants]
-            combined = r"\b(?:" + "|".join(patterns) + r")\b"
-            term_info.append((g["en"], g["zh"], re.compile(combined, re.IGNORECASE)))
-
-        verdicts: list[dict[str, Any]] = []
-        for entry in self.matched_entries:
-            key = entry["key"]
-            en = entry.get("en", "")
-            zh = entry.get("zh", "")
-            if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
-                continue
-
-            # 唱片名(.desc)不翻译，跳过术语检查
-            if "music_disc" in key and key.endswith(".desc"):
-                continue
-
-            for en_term, std_zh, pattern in term_info:
-                if not pattern.search(en):
-                    continue
-                if std_zh in zh:
-                    continue
-                verdicts.append({
-                    "key": key,
-                    "en_current": en,
-                    "zh_current": zh,
-                    "verdict": "❌ FAIL",
-                    "suggestion": std_zh,
-                    "reason": f'术语不一致——“{en_term}”在术语表中译为“{std_zh}”，此处未使用',
-                    "source": "terminology_check",
-                })
-
-        return verdicts
 
     # ── 便捷入口 ──────────────────────────────────────────
 

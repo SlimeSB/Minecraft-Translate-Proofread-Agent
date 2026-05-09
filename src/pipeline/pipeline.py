@@ -106,6 +106,6 @@ def _save_merged_verdicts(ctx: PipelineContext) -> None:
     verdicts = report.get("verdicts", [])
     stats = report.get("stats", {})
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_verdicts(verdicts, "merged")
-    db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_verdicts(verdicts, "merged")
+        db.set_meta("stats", json.dumps(stats, ensure_ascii=False))

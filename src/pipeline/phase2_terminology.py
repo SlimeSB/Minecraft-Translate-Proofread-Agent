@@ -1,7 +1,7 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
 from src.logging import info
 from src.models import GlossaryDict, PipelineContext, VerdictDict
-from src.checkers.terminology_builder import TerminologyBuilder
+from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
 from src.storage.database import PipelineDB
 
 
@@ -22,13 +22,12 @@ def run_phase2(ctx: PipelineContext) -> None:
     tb.merge_lemmas(llm_call=ctx.llm_call)
     ctx.glossary = tb.build_glossary()
     if ctx.llm_call and not ctx.no_llm:
-        ctx.glossary = tb.llm_verify_glossary(ctx.llm_call)
-    ctx.term_verdicts = tb.check_consistency()
+        ctx.glossary = llm_verify_glossary(ctx.glossary, tb.en_data, ctx.llm_call)  # type: ignore[arg-type]
+    ctx.term_verdicts = check_consistency(ctx.glossary, tb.matched_entries, tb.merged)  # type: ignore[arg-type]
 
     info(f"  术语表: {len(ctx.glossary)} 条")
     info(f"  术语不一致 verdicts: {len(ctx.term_verdicts)} 条")
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_glossary(ctx.glossary)  # type: ignore[arg-type]
-    db.save_verdicts(ctx.term_verdicts, "terminology")  # type: ignore[arg-type]
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_glossary(ctx.glossary)  # type: ignore[arg-type]
+        db.save_verdicts(ctx.term_verdicts, "terminology")  # type: ignore[arg-type]
