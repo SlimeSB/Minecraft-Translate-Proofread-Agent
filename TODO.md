@@ -75,7 +75,7 @@
 - `external.py:28,82-83` — `except Exception` 太宽 + lemma 缓存加载失败静默重置
 - `bridge.py:66-67,73-74` — 两层 `except json.JSONDecodeError: pass`（虽然后续有 fallback）
 - `client.py:93` — `except Exception` 太宽
-- `terminology_builder.py:81-83` — JSON 解析 `except: arr=[]` 无 warn
+- `terminology_builder.py:81-83,437-438` — JSON 解析 `except: arr=[]` 无 warn；LLM 归并 `except Exception` 太宽
 
 ### 多处 `print()` 而非 `info()/warn()`
 - `run.py:80,100,105-142` — 耗时/用量 `print()`
@@ -104,6 +104,8 @@
 - **退避策略两套**：`client.py` 指数退避 5/10/20/40/60s vs `bridge.py` 自己的重试循环
 - **DB 连接管理不统一**：`run.py:194-197` 手动 `db = PipelineDB(...)` + `db.close()`，其余 Phase 均用 `with` 语法
 - 同模块内 silent vs noisy 行为不一致（`config.py` 静默恢复 vs `pr/_http.py` 抛异常）
+- 失败时返回值不统一：`pr/_http.py:73` 404 返回空串，同文件 :53 其他 HTTP 错误抛 `RuntimeError`
+- `run.py:168,171,179,184` — `_validate_input_files()` 内直接 `sys.exit(1)`，属于库函数风格不应 exit
 
 ### 其他
 - `config.py:12` — `_cfg_cache` 模块级全局缓存
