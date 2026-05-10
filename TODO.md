@@ -10,14 +10,6 @@
 
 ## 目前待办
 
-### 代码整洁
-
-- [ ] `terminology_extract.py:23` 混用 `from ..config import get`（相对）和 `from src.tools.term_validation import ...`（绝对）— 统一为绝对导入风格
-
-### 长函数重构
-
-- [ ] `phase3c_review.py:28` `run_phase3c()` 104 行 — 超 80 行警戒线，可拆筛选/送审/写回
-
 ---
 
 ## 未计划
@@ -37,6 +29,8 @@
 
 ## 已完成
 
+- [x] `terminology_extract.py:23` — 导入风格已统一为绝对导入
+- [x] `phase3c_review.py:28` — `run_phase3c()` 拆为 `_filter_and_prepare()` + `_review_entries()` + 薄编排（11 行）
 - [x] `_is_useful_term` / `_is_valid_term` 词法 check 逻辑重复 → 合并为 `src/tools/term_validation.py`
 - [x] `openspec/specs/` 6 个已实现 spec 归档 + typeddict-migration change 归档
 - [x] `models.py:104` — AlignmentDict total=False 修复
