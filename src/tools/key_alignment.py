@@ -31,9 +31,8 @@
 import json
 import re
 from pathlib import Path
-from typing import Any
-
 from src.tools.code_detection import is_likely_code_or_proper_noun
+from src.models import AlignmentDict, EntryDict, VerdictDict
 
 _COMMENT_KEY_RE = re.compile(r"^_comment")
 
@@ -43,7 +42,7 @@ def load_json(path: str) -> dict:
         return json.load(f)
 
 
-def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
+def load_json_clean(path: str) -> tuple[dict[str, str], list[str]]:
     """加载 JSON 语言文件，过滤 _comment* 键，检测重复 key。
 
     返回: (cleaned_data, warnings)
@@ -55,9 +54,9 @@ def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
     seen: dict[str, int] = {}
     stripped = 0
 
-    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    def _hook(pairs: list[tuple[str, str]]) -> dict[str, str]:
         nonlocal stripped
-        result: dict[str, Any] = {}
+        result: dict[str, str] = {}
         for key, val in pairs:
             if _COMMENT_KEY_RE.match(key):
                 stripped += 1
@@ -76,7 +75,7 @@ def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
     return data, warnings
 
 
-def align_keys(en_data: dict, zh_data: dict) -> dict:
+def align_keys(en_data: dict[str, str], zh_data: dict[str, str]) -> AlignmentDict:
     en_keys = set(en_data.keys())
     zh_keys = set(zh_data.keys())
 
@@ -130,7 +129,7 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
 def check_vanilla_collisions(
     en_data: dict[str, str],
     db_path: str = "data/Minecraft.db",
-) -> list[dict[str, Any]]:
+) -> list[VerdictDict]:
     """从 Minecraft.db 读取原版 key 并检测模组覆盖。
 
     返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
@@ -184,6 +183,8 @@ def check_vanilla_collisions(
 
 
 def main() -> None:
+    import argparse
+    import sys
     parser = argparse.ArgumentParser(
         description="比较 en_us.json 和 zh_cn.json 的键对齐情况"
     )

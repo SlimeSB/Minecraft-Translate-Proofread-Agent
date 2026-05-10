@@ -9,7 +9,7 @@
 """
 import sys
 from collections import defaultdict
-from typing import Any
+from collections.abc import Sequence
 
 
 def _print(*args, **kwargs) -> None:
@@ -25,7 +25,7 @@ def _print(*args, **kwargs) -> None:
         print(*safe, **kwargs)
 
 
-from src.models import VERDICT_PRIORITY  # noqa: E402
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════
 # Verdict 优先级与去重
@@ -43,9 +43,9 @@ SOURCE_PRIORITY: dict[str, int] = {
 
 
 def merge_verdicts(
-    *verdict_lists: list[dict[str, Any]],
+    *verdict_lists: Sequence[VerdictDict],
     keep_all: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[VerdictDict]:
     """
     合并多个 verdict 列表，按 key 去重。
     同一 key 保留最高优先级的 verdict。
@@ -54,7 +54,7 @@ def merge_verdicts(
     :return: 合并后的 verdict 列表
     """
     if keep_all:
-        all_v: list[dict[str, Any]] = []
+        all_v: list[VerdictDict] = []
         seen: set[tuple[str, str]] = set()
         for vl in verdict_lists:
             for v in vl:
@@ -65,14 +65,14 @@ def merge_verdicts(
         return sorted(all_v, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
 
     # 按 key 归并
-    by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_key: dict[str, list[VerdictDict]] = defaultdict(list)
     for vl in verdict_lists:
         for v in vl:
             key = v.get("key", "")
             if key:
                 by_key[key].append(v)
 
-    merged: list[dict[str, Any]] = []
+    merged: list[VerdictDict] = []
     for key, verdicts in by_key.items():
         # 选最高优先级
         best = max(verdicts, key=lambda v: (
@@ -100,17 +100,17 @@ class ReportGenerator:
     """收集 verdict 并生成审校报告。"""
 
     def __init__(self):
-        self.alignment: dict[str, Any] = {}
-        self.matched_entries: list[dict[str, str]] = []
-        self.verdicts: list[dict[str, Any]] = []
+        self.alignment: AlignmentDict = {}  # type: ignore[assignment]
+        self.matched_entries: list[EntryDict] = []
+        self.verdicts: list[VerdictDict] = []
         self.stats: dict[str, int] = {}
 
-    def load_alignment(self, alignment: dict[str, Any]) -> None:
+    def load_alignment(self, alignment: AlignmentDict) -> None:
         """加载对齐数据。"""
         self.alignment = alignment
         self.matched_entries = alignment.get("matched_entries", [])
 
-    def collect(self, *verdict_lists: list[dict[str, Any]]) -> None:
+    def collect(self, *verdict_lists: Sequence[VerdictDict]) -> None:
         """收集并合并所有 verdict。"""
         self.verdicts = merge_verdicts(*verdict_lists)
 
@@ -132,7 +132,7 @@ class ReportGenerator:
 
     def build_report(
         self,
-    ) -> dict[str, Any]:
+    ) -> ReviewReportDict:
         """构建报告 dict（不写磁盘），供调用方自行存储。"""
         if not self.stats:
             self.compute_stats()
@@ -151,8 +151,8 @@ class ReportGenerator:
             "PASS": "PASS",
         }
 
-        def _normalize(v: dict[str, Any]) -> dict[str, Any] | None:
-            out: dict[str, Any] = {
+        def _normalize(v: VerdictDict) -> VerdictDict | None:
+            out: VerdictDict = {
                 "key":        v.get("key", ""),
                 "en_current": v.get("en_current", ""),
                 "zh_current": v.get("zh_current", ""),
@@ -170,7 +170,7 @@ class ReportGenerator:
                 return None
             return out
 
-        by_key: dict[str, dict[str, Any]] = {}
+        by_key: dict[str, VerdictDict] = {}
         for v in self.verdicts:
             nv = _normalize(v)
             if nv is None:

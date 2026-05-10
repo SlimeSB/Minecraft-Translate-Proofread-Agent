@@ -11,9 +11,8 @@
 import json
 import sqlite3
 import sys
-from typing import Any
-
 from src import config as cfg
+from src.models import FuzzyResultDict
 
 
 # ═══════════════════════════════════════════════════════════
@@ -86,7 +85,7 @@ class TranslationDB:
         zh_entries: dict[str, str] | None = None,
         top_n: int = 5,
         threshold: float = 50.0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[FuzzyResultDict]:
         """
         模糊搜索。先用 FTS5 token 前缀匹配召回候选，再用编辑距离精排。
         """
@@ -117,7 +116,7 @@ class TranslationDB:
             return []
 
         # 编辑距离精排
-        results: list[dict[str, Any]] = []
+        results: list[FuzzyResultDict] = []
         for key, en_text, zh_text in candidates:
             sim = calc_similarity(query, en_text or "")
             if sim >= threshold:
@@ -156,7 +155,7 @@ def fuzzy_search_lines(
     zh_entries: dict[str, str],
     top_n: int = 5,
     threshold: float = 50.0,
-) -> list[dict[str, Any]]:
+) -> list[FuzzyResultDict]:
     """在翻译记忆库中模糊搜索（保持旧 API 兼容）。"""
     db = _get_db(en_entries, zh_entries)
     return db.search(query, zh_entries, top_n, threshold)
@@ -172,6 +171,7 @@ def load_json(path: str) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def main() -> None:
+    import argparse
     parser = argparse.ArgumentParser(description="在翻译记忆库中模糊搜索相似翻译")
     parser.add_argument("--query", required=True, help="待查找的英文原文")
     parser.add_argument("--en", required=True, help="en_us.json 路径")

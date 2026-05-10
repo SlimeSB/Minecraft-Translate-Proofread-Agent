@@ -2,8 +2,6 @@
 import asyncio
 import json
 import re
-from typing import Any
-
 from src.logging import info, warn
 
 from src import config as cfg
@@ -73,7 +71,7 @@ def parse_review_response(response: str) -> list[VerdictDict]:
         except json.JSONDecodeError:  # Acceptable fallback
             pass
     # 逐行解析 JSON 对象
-    results: list[dict[str, Any]] = []
+    results: list[VerdictDict] = []
     for line in response.split("\n"):
         line = line.strip()
         if line.startswith("{") and line.endswith("}"):
@@ -319,7 +317,7 @@ def interactive_entry_review(
     auto_verdicts_map: AutoVerdictsMap | None = None,
     fuzzy_results_map: FuzzyResultsMap | None = None,
 ) -> list[VerdictDict]:
-    verdicts: list[dict[str, Any]] = []
+    verdicts: list[VerdictDict] = []
     options = {
         "1": ("PASS", ""),
         "2": ("⚠️ SUGGEST", ""),

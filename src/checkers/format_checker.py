@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from src import config as cfg
+from src.models import EntryDict, VerdictDict
 
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
@@ -114,7 +115,7 @@ class FormatChecker:
     def __init__(self):
         """初始化格式检查器。"""
 
-    def check_all(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+    def check_all(self, entry: EntryDict) -> list[VerdictDict]:
         """对单条 entry 执行所有格式检查，返回 verdict 列表。"""
         key = entry["key"]
         en = entry["en"]
@@ -133,7 +134,7 @@ class FormatChecker:
             self._check_sound_subtitle_format,
         ]
 
-        verdicts: list[dict[str, Any]] = []
+        verdicts: list[VerdictDict] = []
         for check_fn in checks:
             result = check_fn(key, en, zh)
             if result:
@@ -144,7 +145,7 @@ class FormatChecker:
 
     def _check_empty_translation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查空翻译：zh == en 且原文非代码/专有名词。"""
         if en == zh and en != "":
             if "music_disc" in key and key.endswith(".desc"):
@@ -157,7 +158,7 @@ class FormatChecker:
 
     def _check_music_disc_no_translation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """唱片名(.desc)不应翻译，已翻译则回报。"""
         if "music_disc" in key and key.endswith(".desc") and en != zh and en != "" and zh != "":
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
@@ -167,7 +168,7 @@ class FormatChecker:
 
     def _check_placeholder_integrity(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查占位符完整性：%d, %s, %f, %n$s, %msg%, {0} 等。"""
         issues: list[str] = []
 
@@ -197,7 +198,7 @@ class FormatChecker:
 
     def _check_special_tags(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查特殊标签完整性：§颜色码、&颜色码、$(action)、HTML标签、<br>、\n。"""
         issues: list[str] = []
 
@@ -245,7 +246,7 @@ class FormatChecker:
 
     def _check_tellraw_json(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查 tellraw JSON：仅翻译 "text" 键，其余保留原文。"""
         if not is_tellraw_json(en):
             return None
@@ -288,7 +289,7 @@ class FormatChecker:
 
     def _check_punctuation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查中文标点规范：全角标点、半角括号[]、中英文间距。"""
         if not is_chinese_text(zh):
             return None
@@ -337,7 +338,7 @@ class FormatChecker:
 
     def _check_trailing_whitespace(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """中文译文尾部有多余空格时提示。"""
         if zh != zh.rstrip() and is_chinese_text(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
@@ -347,7 +348,7 @@ class FormatChecker:
 
     def _check_energy_units(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查能量/体积单位是否被翻译。FE、RF、MB 等应保留原文。"""
         en_units = RE_ENERGY_UNIT.findall(en)
         zh_units = RE_ENERGY_UNIT.findall(zh)
@@ -360,7 +361,7 @@ class FormatChecker:
 
     def _check_ellipsis(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查省略号格式：不应使用三个英文句号 ..."""
         if RE_ELLIPSIS_WRONG.search(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
@@ -370,7 +371,7 @@ class FormatChecker:
 
     def _check_sound_subtitle_format(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查声音字幕格式。仅对 subtitles.* 键生效。"""
         if not key.startswith("subtitles.") and not key.startswith("sound."):
             return None
@@ -389,7 +390,7 @@ class FormatChecker:
     def _verdict(
         key: str, en: str, zh: str, verdict: str, reason: str,
         suggestion: str = "",
-    ) -> dict[str, Any]:
+    ) -> VerdictDict:
         return {
             "key": key,
             "en_current": en,

@@ -29,9 +29,9 @@ def run_phase3b(ctx: PipelineContext, llm_entries: list[EntryDict]) -> None:
         )
         results = [r for r in results if r.get("key") != key]
         if results:
-            ctx.fuzzy_results_map[key] = results  # type: ignore[arg-type]
+            ctx.fuzzy_results_map[key] = results
 
     info(f"  模糊搜索: {len(to_search)} 条查询, {len(ctx.fuzzy_results_map)} 条有结果")
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_fuzzy_results(ctx.fuzzy_results_map)  # type: ignore[arg-type]
+        db.save_fuzzy_results(ctx.fuzzy_results_map)

@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 
 from src.logging import info, warn
+from src.models import AlignmentDict, EntryDict, GlossaryDict, VerdictDict
 from src.tools.terminology_extract import extract_terms
 from src import config as cfg
 from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
@@ -102,15 +103,15 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
 
 def _collect_zh_translations(
     merged: dict[str, dict[str, Any]],
-    matched_entries: list[dict[str, str]],
+    matched_entries: list[EntryDict],
     min_freq: int,
     min_consensus: float,
     min_total: int,
     max_zh_len: int,
     max_en_len: int,
-) -> list[dict[str, str]]:
+) -> list[GlossaryDict]:
     """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
-    glossary: list[dict[str, str]] = []
+    glossary: list[GlossaryDict] = []
     for norm, info in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
         if len(info["keys"]) < min_freq or not is_valid_term(norm):
             continue
@@ -149,13 +150,13 @@ def _collect_zh_translations(
 
 
 def _dedup_zh_conflicts(
-    glossary: list[dict[str, str]],
+    glossary: list[GlossaryDict],
     merged: dict[str, dict[str, Any]],
-    matched_entries: list[dict[str, str]],
-) -> list[dict[str, str]]:
+    matched_entries: list[EntryDict],
+) -> list[GlossaryDict]:
     """中文互斥去重：同一中文对应多个英文术语时，给短术语第二次机会。"""
     before_dedup = len(glossary)
-    zh_to_entries: dict[str, list[dict[str, str]]] = {}
+    zh_to_entries: dict[str, list[GlossaryDict]] = {}
     for item in glossary:
         zh_to_entries.setdefault(item["zh"], []).append(item)
     glossary = []
@@ -166,16 +167,16 @@ def _dedup_zh_conflicts(
             glossary.append(items[0])
             continue
         sorted_items = sorted(items, key=lambda x: len(x["en"]), reverse=True)
-        to_remove: list[dict[str, str]] = []
+        to_remove: list[GlossaryDict] = []
         for i, item_a in enumerate(sorted_items):
             en_a_l = item_a["en"].lower()
             for j in range(i + 1, len(sorted_items)):
                 item_b = sorted_items[j]
                 en_b_l = item_b["en"].lower()
                 if en_b_l in en_a_l and item_b not in to_remove:
-                    rescued = try_rescue_short_term(item_b, item_a, merged, matched_entries)
+                    rescued = try_rescue_short_term(item_b, item_a, merged, matched_entries)  # type: ignore[arg-type]
                     if rescued:
-                        glossary.append(rescued)
+                        glossary.append(rescued)  # type: ignore[arg-type]
                         rescued_count += 1
                     else:
                         to_remove.append(item_b)
@@ -197,10 +198,10 @@ def _dedup_zh_conflicts(
 # ═══════════════════════════════════════════════════════════
 
 def llm_verify_glossary(
-    glossary: Sequence[dict[str, Any]],
+    glossary: Sequence[GlossaryDict],
     en_data: dict[str, str],
     llm_call: Callable[[str], str] | None,
-) -> list[dict[str, Any]]:
+) -> list[GlossaryDict]:
     """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。
 
     Args:
@@ -226,7 +227,7 @@ def llm_verify_glossary(
                 term_sources[en_lower].append(en_val)
 
     lines: list[str] = []
-    verify_items: list[dict[str, Any]] = []
+    verify_items: list[GlossaryDict] = []
     for g in glossary:
         en_lower = g["en"].lower()
         sources = term_sources.get(en_lower, [])
@@ -279,10 +280,10 @@ def llm_verify_glossary(
 
 
 def check_consistency(
-    glossary: Sequence[dict[str, Any]],
-    matched_entries: Sequence[dict[str, Any]],
+    glossary: Sequence[GlossaryDict],
+    matched_entries: Sequence[EntryDict],
     merged: dict[str, dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[VerdictDict]:
     """用术语表检查 matched_entries 中的翻译一致性。
     按词边界匹配（避免子串误匹配：eat 不匹配 Defeat）。
     唱片名（music_disc.*.desc）跳过不检查。
@@ -311,7 +312,7 @@ def check_consistency(
         combined = r"\b(?:" + "|".join(patterns) + r")\b"
         term_info.append((g["en"], g["zh"], re.compile(combined, re.IGNORECASE)))
 
-    verdicts: list[dict[str, Any]] = []
+    verdicts: list[VerdictDict] = []
     for entry in matched_entries:
         key = entry["key"]
         en = entry.get("en", "")
@@ -346,9 +347,9 @@ class TerminologyBuilder:
     def __init__(self, cache_path: str = DEFAULT_CACHE_PATH):
         self.en_data: dict[str, str] = {}
         self.zh_data: dict[str, str] = {}
-        self.matched_entries: list[dict[str, str]] = []
+        self.matched_entries: list[EntryDict] = []
         self.extracted: dict[str, Any] = {}
-        self.glossary: list[dict[str, Any]] = []
+        self.glossary: list[GlossaryDict] = []
         self.merged: dict[str, dict[str, Any]] = {}
         self.cache = LemmaCache(cache_path)
         self._cache_hits = 0
@@ -357,7 +358,7 @@ class TerminologyBuilder:
         self,
         en_data: dict[str, str],
         zh_data: dict[str, str],
-        alignment: dict[str, Any],
+        alignment: AlignmentDict,
     ) -> None:
         """加载数据。"""
         self.en_data = en_data
@@ -426,7 +427,7 @@ class TerminologyBuilder:
 
     # ── 术语翻译 + 一致性检查 ─────────────────────────────
 
-    def build_glossary(self, min_freq: int | None = None, min_consensus: float | None = None) -> list[dict[str, str]]:
+    def build_glossary(self, min_freq: int | None = None, min_consensus: float | None = None) -> list[GlossaryDict]:
         """
         纯程序化构建术语表：从 matched_entries 中统计每组术语的已有中文译文。
         """
@@ -454,7 +455,7 @@ class TerminologyBuilder:
 
     def merge_and_build(
         self, llm_call: Callable[[str], str] | None = None
-    ) -> list[dict[str, str]]:
+    ) -> list[GlossaryDict]:
         """归并 + 纯程序提取术语表（一步完成）。"""
         self.merge_lemmas(llm_call=llm_call)
         return self.build_glossary()

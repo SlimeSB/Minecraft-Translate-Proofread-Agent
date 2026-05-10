@@ -51,7 +51,7 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
     }
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_alignment(ctx.alignment)  # type: ignore[arg-type]
+        db.save_alignment(ctx.alignment)
 
     for entry in data.get("all_entries", []):
         key = entry["key"]
@@ -107,4 +107,4 @@ def _align_keys(ctx: PipelineContext) -> None:
     info(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "
           f"⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_alignment(ctx.alignment)  # type: ignore[arg-type]
+        db.save_alignment(ctx.alignment)

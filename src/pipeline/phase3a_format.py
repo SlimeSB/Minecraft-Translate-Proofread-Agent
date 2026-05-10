@@ -11,7 +11,7 @@ def run_phase3a(ctx: PipelineContext) -> None:
     matched = ctx.alignment.get("matched_entries", [])
     all_v: list[VerdictDict] = []
     for entry in matched:
-        all_v.extend(checker.check_all(entry))  # type: ignore[arg-type]
+        all_v.extend(checker.check_all(entry))
 
     # PR 模式：注入原文变更但翻译未变更的 warning
     if ctx.pr_mode and ctx.pr_warnings:
@@ -32,4 +32,4 @@ def run_phase3a(ctx: PipelineContext) -> None:
         info(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(all_v, "format")  # type: ignore[arg-type]
+        db.save_verdicts(all_v, "format")

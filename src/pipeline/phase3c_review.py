@@ -128,4 +128,4 @@ def run_phase3c(ctx: PipelineContext) -> None:
     info(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(ctx.llm_verdicts, "llm")  # type: ignore[arg-type]
+        db.save_verdicts(ctx.llm_verdicts, "llm")

@@ -100,8 +100,8 @@ class ReviewPipeline:
 def _save_merged_verdicts(ctx: PipelineContext) -> None:
     """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
     rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)  # type: ignore[arg-type]
-    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)  # type: ignore[arg-type]
+    rg.load_alignment(ctx.alignment)
+    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
 
     report = rg.build_report()
     verdicts = report.get("verdicts", [])

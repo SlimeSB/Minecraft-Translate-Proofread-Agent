@@ -154,6 +154,8 @@ def extract_terms(
 
 
 def main() -> None:
+    import argparse
+    import sys
     parser = argparse.ArgumentParser(
         description="从 en_us.json 提取高频术语和短语"
     )

@@ -6,6 +6,7 @@ from src.checkers.terminology_builder import (
     _extract_common_zh, TerminologyBuilder, _collect_zh_translations,
     check_consistency, llm_verify_glossary,
 )
+from src.models import AlignmentDict, EntryDict, GlossaryDict
 
 
 class TestExtractCommonZh(unittest.TestCase):
@@ -46,7 +47,7 @@ class TestTerminologyBuilder(unittest.TestCase):
     def setUp(self):
         self.tb = TerminologyBuilder()
 
-    def _make_entry(self, key, en, zh, fmt="json"):
+    def _make_entry(self, key: str, en: str, zh: str, fmt: str = "json") -> EntryDict:
         return {"key": key, "en": en, "zh": zh, "format": fmt}
 
     def test_load_and_extract(self):
@@ -60,12 +61,14 @@ class TestTerminologyBuilder(unittest.TestCase):
             "item.iron_pickaxe": "铁镐",
             "item.gold_sword": "金剑",
         }
-        alignment = {
+        alignment: AlignmentDict = {
             "matched_entries": [
                 self._make_entry("item.iron_sword", "Iron Sword", "铁剑"),
                 self._make_entry("item.iron_pickaxe", "Iron Pickaxe", "铁镐"),
                 self._make_entry("item.gold_sword", "Golden Sword", "金剑"),
-            ]
+            ],
+            "missing_zh": [], "extra_zh": [], "suspicious_untranslated": [],
+            "stats": {"matched": 3, "missing_zh": 0, "extra_zh": 0, "suspicious_untranslated": 0, "total_en": 3, "total_zh": 3},
         }
         self.tb.load(en, zh, alignment)
         extracted = self.tb.extract(min_freq=2, max_ngram=2)
@@ -86,12 +89,14 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_block": "铜块",
             "item.copper_ingot": "铜锭",
         }
-        alignment = {
+        alignment: AlignmentDict = {
             "matched_entries": [
                 self._make_entry("block.copper_ore", "Copper Ore", "铜矿石"),
                 self._make_entry("block.copper_block", "Copper Block", "铜块"),
                 self._make_entry("item.copper_ingot", "Copper Ingot", "铜锭"),
-            ]
+            ],
+            "missing_zh": [], "extra_zh": [], "suspicious_untranslated": [],
+            "stats": {"matched": 3, "missing_zh": 0, "extra_zh": 0, "suspicious_untranslated": 0, "total_en": 3, "total_zh": 3},
         }
         self.tb.load(en, zh, alignment)
         self.tb.extract(min_freq=2, max_ngram=2)
@@ -114,14 +119,16 @@ class TestTerminologyBuilder(unittest.TestCase):
             "item.iron_axe": "铁斧",
             "item.steel_sword": "钢剑",
         }
-        alignment = {
+        alignment: AlignmentDict = {
             "matched_entries": [
                 self._make_entry("item.iron_sword", "Iron Sword", "铁剑"),
                 self._make_entry("item.iron_axe", "Iron Axe", "铁斧"),
                 self._make_entry("item.steel_sword", "Steel Sword", "钢剑"),
-            ]
+            ],
+            "missing_zh": [], "extra_zh": [], "suspicious_untranslated": [],
+            "stats": {"matched": 3, "missing_zh": 0, "extra_zh": 0, "suspicious_untranslated": 0, "total_en": 3, "total_zh": 3},
         }
-        glossary = [{"en": "Iron", "zh": "铁"}]
+        glossary: list[GlossaryDict] = [{"en": "Iron", "zh": "铁"}]
         verdicts = check_consistency(glossary, alignment["matched_entries"])
         self.assertEqual(len(verdicts), 0)
 
@@ -136,7 +143,7 @@ class TestTerminologyBuilder(unittest.TestCase):
                 "ngram_type": "unigrams",
             },
         }
-        matched = [
+        matched: list[EntryDict] = [
             {"key": "k1", "en": "Copper Ore", "zh": "铜矿石"},
             {"key": "k2", "en": "Copper Block", "zh": "铜块"},
             {"key": "k3", "en": "Copper Ingot", "zh": "铜锭"},
@@ -158,7 +165,7 @@ class TestTerminologyBuilder(unittest.TestCase):
                 "ngram_type": "unigrams",
             },
         }
-        matched = [
+        matched: list[EntryDict] = [
             {"key": "k1", "en": "Copper Ore", "zh": "铜"},
             {"key": "k2", "en": "Copper Block", "zh": "铜"},
             {"key": "k3", "en": "Copper Ingot", "zh": "铜"},
@@ -180,11 +187,13 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_ore": "铜矿石",
             "block.copper_block": "铜块",
         }
-        alignment = {
+        alignment: AlignmentDict = {
             "matched_entries": [
                 self._make_entry("block.copper_ore", "Copper Ore", "铜矿石"),
                 self._make_entry("block.copper_block", "Copper Block", "铜块"),
-            ]
+            ],
+            "missing_zh": [], "extra_zh": [], "suspicious_untranslated": [],
+            "stats": {"matched": 2, "missing_zh": 0, "extra_zh": 0, "suspicious_untranslated": 0, "total_en": 2, "total_zh": 2},
         }
         self.tb.load(en, zh, alignment)
         glossary = self.tb.merge_and_build()
@@ -192,7 +201,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_llm_verify_glossary_no_corrections(self):
         """LLM 返回空修正时 glossary 不变。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "copper", "zh": "铜"},
             {"en": "iron", "zh": "铁"},
         ]
@@ -208,7 +217,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_llm_verify_glossary_has_correction(self):
         """LLM 返回修正时 glossary 被更新。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "copper", "zh": "铜"},
         ]
         en_data = {
@@ -222,7 +231,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_llm_verify_glossary_llm_exception_fallback(self):
         """LLM 调用异常时返回原始 glossary 不丢失数据。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "copper", "zh": "铜"},
         ]
         en_data = {
@@ -243,13 +252,13 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_llm_verify_glossary_no_llm_call(self):
         """llm_call 为 None 时直接返回。"""
-        glossary = [{"en": "copper", "zh": "铜"}]
+        glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
         result = llm_verify_glossary(glossary, {}, None)  # type: ignore[arg-type]
         self.assertIs(result, glossary)
 
     def test_check_consistency_merged_none_downgrade(self):
         """merged=None 时仅使用 glossary en 值构建正则。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "Iron", "zh": "铁"},
         ]
         matched_entries = [
@@ -261,7 +270,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_check_consistency_with_merged_variants(self):
         """merged 参数提供变体展开，短术语借助变体匹配。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "iron", "zh": "铁"},
         ]
         merged = {
@@ -281,7 +290,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_check_consistency_music_disc_skipped(self):
         """唱片名条目跳过术语检查。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "Music", "zh": "音乐"},
         ]
         matched_entries = [
@@ -292,7 +301,7 @@ class TestTerminologyBuilder(unittest.TestCase):
 
     def test_check_consistency_term_mismatch_found(self):
         """术语未使用标准译文时生成 FAIL verdict。"""
-        glossary = [
+        glossary: list[GlossaryDict] = [
             {"en": "Iron", "zh": "铁"},
         ]
         matched_entries = [

@@ -9,6 +9,7 @@
 import json
 import sqlite3
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 # ═══════════════════════════════════════════════════════════
@@ -98,7 +99,7 @@ class PipelineDB:
 
     # ── Alignment ──────────────────────────────────────
 
-    def save_alignment(self, alignment: dict) -> None:
+    def save_alignment(self, alignment: Mapping[str, Any]) -> None:
         entries = alignment.get("matched_entries", [])
         self._conn.execute("DELETE FROM alignment")
         for e in entries:
@@ -123,7 +124,7 @@ class PipelineDB:
 
     # ── Glossary ───────────────────────────────────────
 
-    def save_glossary(self, glossary: list[dict]) -> None:
+    def save_glossary(self, glossary: Sequence[Mapping[str, Any]]) -> None:
         self._conn.execute("DELETE FROM glossary")
         for g in glossary:
             self._conn.execute("INSERT INTO glossary (en,zh) VALUES (?,?)",
@@ -136,7 +137,7 @@ class PipelineDB:
 
     # ── Verdicts ───────────────────────────────────────
 
-    def save_verdicts(self, verdicts: list[dict], phase: str) -> None:
+    def save_verdicts(self, verdicts: Sequence[Mapping[str, Any]], phase: str) -> None:
         """按 phase 保存判决（'format' / 'terminology' / 'llm' / 'merged'）。"""
         self._conn.execute("DELETE FROM verdicts WHERE phase=?", (phase,))
         for v in verdicts:
@@ -218,7 +219,7 @@ class PipelineDB:
 
     # ── Fuzzy Results ──────────────────────────────────
 
-    def save_fuzzy_results(self, fm: dict[str, list[dict]]) -> None:
+    def save_fuzzy_results(self, fm: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
         self._conn.execute("DELETE FROM fuzzy_results")
         for key, items in fm.items():
             for it in items:

@@ -3,7 +3,7 @@ import json
 
 from src.logging import info
 from src.models import (
-    PipelineContext, VerdictDict,
+    EntryDict, PipelineContext, VerdictDict,
     VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
 )
 from src.reporting.report_generator import ReportGenerator
@@ -13,19 +13,19 @@ from src.storage.database import PipelineDB
 def run_phase5(ctx: PipelineContext) -> None:
     info("[Phase 5] 报告生成...")
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        kept = db.load_verdicts(phase="merged", filtered=1)
+        kept: list[VerdictDict] = db.load_verdicts(phase="merged", filtered=1)  # type: ignore[assignment]
         if not kept:
-            kept = db.load_verdicts(phase="merged", filtered=0)
+            kept = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
 
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)  # type: ignore[arg-type]
+    rg.load_alignment(ctx.alignment)
     rg.collect(kept)
     rg.print_summary()
     rg.print_verdict_table()
 
     # ── report.json ──
-    ns_groups = _group_by_namespace(kept, ctx)  # type: ignore[arg-type]
+    ns_groups = _group_by_namespace(kept, ctx)
     # 仅保留非 PASS 的 verdict（已驳回的不写入 report.json）
     non_pass_verdicts = [v for v in kept if v.get("verdict") != "PASS"]
     report_data = {
@@ -38,16 +38,16 @@ def run_phase5(ctx: PipelineContext) -> None:
         json.dump(report_data, f, ensure_ascii=False, indent=2)
 
     # ── report.md（整体 PR 摘要）──
-    _generate_summary_md(ctx, kept, ns_groups)  # type: ignore[arg-type]
+    _generate_summary_md(ctx, kept, ns_groups)
 
     # ── 按 namespace 分报告（含逐条 verdict 详情）──
-    _generate_namespace_reports(ctx, kept, ns_groups)  # type: ignore[arg-type]
+    _generate_namespace_reports(ctx, kept, ns_groups)
 
     info(f"  总报告: {json_path}")
     info(f"  摘要: {ctx.output_dir / 'report.md'}")
 
 
-def _build_ns_map(verdicts: list[VerdictDict], entries: list[dict[str, str]]) -> dict[str, list[VerdictDict]]:
+def _build_ns_map(verdicts: list[VerdictDict], entries: list[EntryDict]) -> dict[str, list[VerdictDict]]:
     ns_map: dict[str, list[VerdictDict]] = {}
     for v in verdicts:
         k = v.get("key", "")

@@ -4,6 +4,8 @@
 结果写回 DB（驳回 → 改判为 PASS；保留 → 维持原 verdict）。
 """
 import json
+from collections.abc import Mapping
+from typing import Any
 
 from src.logging import info
 from src.models import (
@@ -19,7 +21,7 @@ def run_phase4(ctx: PipelineContext) -> None:
 
     info("[Phase 4] 最终 LLM 过滤...")
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        verdicts = db.load_verdicts(phase="merged", filtered=0)
+        verdicts: list[VerdictDict] = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
         if not verdicts:
             info("  无 verdict 需要过滤")
             return
@@ -38,7 +40,7 @@ def run_phase4(ctx: PipelineContext) -> None:
                 elif cleaned:
                     cached_clean_reasons[v["key"]] = cleaned
             else:
-                uncached.append(v)  # type: ignore[arg-type]
+                uncached.append(v)
 
         cache_hits = len(verdicts) - len(uncached)
         info(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
@@ -59,7 +61,7 @@ def run_phase4(ctx: PipelineContext) -> None:
                     uncached_reasons[k] = r
 
             for v in uncached:
-                ck = _cache_key(v)  # type: ignore[arg-type]
+                ck = _cache_key(v)
                 k = v["key"]
                 if k in uncached_pass:
                     db.store_filter_cache(ck, "PASS", "")
@@ -90,7 +92,7 @@ def run_phase4(ctx: PipelineContext) -> None:
         db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
 
 
-def _cache_key(v: dict) -> str:
+def _cache_key(v: Mapping[str, Any]) -> str:
     import hashlib
     raw = ":".join([
         v.get("key", ""),
