@@ -56,7 +56,7 @@ class AlignmentStats(TypedDict):
     total_zh: int
 
 
-class AlignmentDict(TypedDict):
+class AlignmentDict(TypedDict, total=False):
     """键对齐结果。Phase 1 产出。"""
     matched_entries: list[EntryDict]
     missing_zh: list[MissingEntryDict]
@@ -143,24 +143,11 @@ class FilterDiscardRecord(TypedDict):
     reason: str
 
 
-class FormatVerdictsContainer(TypedDict):
-    """格式检查 verdicts 容器（pipeline.db verdicts 表 phase='format'）。"""
-    total_checked: int
-    issues_found: int
-    verdicts: list[VerdictDict]
-
-
 class KeyPrefixConfig(TypedDict, total=False):
     """key_prefixes 中每个前缀的配置。"""
     label: str
     focus: str
     llm_required: bool
-
-
-class EnZhPair(TypedDict):
-    """EN/ZH 速查条目。"""
-    en: str
-    zh: str
 
 
 # ═══════════════════════════════════════════════════════════
@@ -178,9 +165,6 @@ AutoVerdictsMap = dict[str, list[VerdictDict]]
 
 # {key: [fuzzy results]}
 FuzzyResultsMap = dict[str, list[FuzzyResultDict]]
-
-# {key: {en, zh}}
-EnZhLookup = dict[str, EnZhPair]
 
 # {key: str}
 StrDict = dict[str, str]
@@ -207,7 +191,6 @@ VERDICT_PRIORITY: dict[str, int] = {
     VERDICT_PASS:    1,
 }
 
-ALL_VERDICTS = frozenset([VERDICT_PASS, VERDICT_SUGGEST, VERDICT_REVIEW, VERDICT_FAIL])
 
 # ═══════════════════════════════════════════════════════════
 # 管道上下文 (dataclass)
@@ -246,6 +229,8 @@ class PipelineContext:
     pr_change_meta: dict[str, PRChangeMetaDict] = field(default_factory=dict)
     pr_warnings: list[PRWarningDict] = field(default_factory=list)
     zh_only_entries: list[PRAlignmentEntryDict] = field(default_factory=list)
+    pr_full_en_data: StrDict = field(default_factory=dict)
+    pr_full_zh_data: StrDict = field(default_factory=dict)
 
     # ── 中间结果 ──
     en_data: StrDict = field(default_factory=dict)
@@ -261,6 +246,11 @@ class PipelineContext:
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
     external_dict_store: object = None  # ExternalDictStore | None
+
+    config: dict = field(default_factory=dict)
+
+    filter_cache_hits: int = 0
+    filter_cache_total: int = 0
 
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)

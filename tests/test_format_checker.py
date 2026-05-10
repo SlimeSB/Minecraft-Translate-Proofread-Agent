@@ -138,6 +138,12 @@ class TestEmptyTranslation(unittest.TestCase):
         """全大写常量 zh==en 应 PASS。"""
         self.assertIsNone(self._check("GUI_TITLE", "GUI_TITLE"))
 
+    def test_fail_zh_empty(self):
+        """zh 为空字符串应 FAIL。"""
+        result = self._check("Hello World", "")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["verdict"], "❌ FAIL")
+
     def test_pass_different_text(self):
         """不同文本应 PASS。"""
         self.assertIsNone(self._check("Hello", "你好"))

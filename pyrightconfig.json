@@ -1,0 +1,22 @@
+{
+  "include": ["src", "tests", "run.py", "scripts"],
+  "exclude": ["venv", ".venv", "__pycache__", ".pytest_cache", "output", "logs"],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownVariableType": false,
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false,
+  "reportTypedDictNotRequiredAccess": false,
+  "reportArgumentType": true,
+  "reportAssignmentType": false,
+  "reportReturnType": false,
+  "reportAttributeAccessIssue": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportOptionalOperand": false,
+  "reportOperatorIssue": false,
+  "reportIndexIssue": false,
+  "pythonVersion": "3.12"
+}

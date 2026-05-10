@@ -27,17 +27,19 @@ def configure_utf8_output() -> None:
 
 
 def safe_print(*args, **kwargs) -> None:
-    """GBK 安全打印。"""
+    """GBK 安全打印。fallback 用 buffer.write 绕过编码层。"""
     try:
         print(*args, **kwargs)
     except UnicodeEncodeError:
-        enc = sys.stdout.encoding or "utf-8"
-        for a in args:
-            print(str(a).encode(enc, errors="replace").decode(enc), **kwargs)
+        f = kwargs.get("file", sys.stdout)
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        text = sep.join(str(a) for a in args) + end
+        f.buffer.write(text.encode("utf-8", errors="replace"))
 
 
 def check_api_health(base_url: str, api_key: str) -> bool:
-    """启动前检查 API 可用性。成功返回 True。"""
+    """启动前检查 API 可用性。先测 /models（原生 OpenAI 有），不成再测 /chat/completions。成功返回 True。"""
     import urllib.error
     import urllib.request
 
@@ -45,11 +47,12 @@ def check_api_health(base_url: str, api_key: str) -> bool:
     if base_url.endswith("/chat/completions"):
         base_url = base_url[: -len("/chat/completions")]
 
-    models_url = base_url + "/models"
     headers = {"User-Agent": "MinecraftTranslateProofreadAgent/1.0"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # ── 尝试 /models ──
+    models_url = base_url + "/models"
     try:
         req = urllib.request.Request(models_url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -67,29 +70,39 @@ def check_api_health(base_url: str, api_key: str) -> bool:
         safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
         return False
 
-    chat_url = base_url + "/chat/completions"
-    body = json.dumps({
-        "model": os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash"),
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-    }).encode("utf-8")
-    headers["Content-Type"] = "application/json"
-    try:
-        req = urllib.request.Request(chat_url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status in (200, 201):
-                safe_print(f"  [OK] API 可用: {base_url}")
-                return True
-            body_text = resp.read().decode("utf-8", errors="replace")
-            if "invalid" in body_text.lower():
-                safe_print(f"  [FAIL] API Key 无效: {base_url}")
+    # ── 尝试 /chat/completions ──
+    model_name = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
+    for path in [base_url, base_url + "/v1"]:
+        chat_url = path + "/chat/completions"
+        body = json.dumps({
+            "model": model_name,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }).encode("utf-8")
+        h = {**headers, "Content-Type": "application/json"}
+        try:
+            req = urllib.request.Request(chat_url, data=body, headers=h, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status in (200, 201):
+                    safe_print(f"  [OK] API 可用: {path}")
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                safe_print(f"  [FAIL] API Key 无效 ({e.code}): {chat_url}")
                 return False
-            safe_print(f"  [OK] API 连接正常: {base_url}")
-            return True
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")[:200]
-        safe_print(f"  [FAIL] API 请求失败 ({e.code}): {body_text}")
-        return False
-    except Exception as e:
-        safe_print(f"  [FAIL] API 不可达: {base_url} -- {e}")
-        return False
+            # 404 / 405 — 试下一个 path
+            if e.code == 404:
+                continue
+            body_text = e.read().decode("utf-8", errors="replace")[:200]
+            safe_print(f"  [FAIL] API 请求失败 ({e.code}): {body_text}")
+            return False
+        except Exception as e:
+            safe_print(f"  [FAIL] API 不可达: {chat_url} -- {e}")
+            return False
+
+    safe_print(f"  [FAIL] API 404: 请检查 .env 中的 REVIEW_OPENAI_BASE_URL")
+    safe_print(f"     当前值: {os.environ.get('REVIEW_OPENAI_BASE_URL', '(未设置)')}")
+    safe_print(f"     尝试过: {base_url}/chat/completions 和 {base_url}/v1/chat/completions")
+    safe_print(f"     DeepSeek 示例: https://api.deepseek.com")
+    safe_print(f"     OpenAI 示例: https://api.openai.com/v1")
+    return False

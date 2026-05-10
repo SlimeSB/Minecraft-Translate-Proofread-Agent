@@ -8,13 +8,10 @@
 输出:
     JSON: { "similar_lines": [{ "similarity": 85.5, "key": "...", "en": "...", "zh": "..." }, ...] }
 """
-import argparse
 import json
-import os
 import sqlite3
-import sys
-import tempfile
-from typing import Any
+from src import config as cfg
+from src.models import FuzzyResultDict
 
 
 # ═══════════════════════════════════════════════════════════
@@ -87,7 +84,7 @@ class TranslationDB:
         zh_entries: dict[str, str] | None = None,
         top_n: int = 5,
         threshold: float = 50.0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[FuzzyResultDict]:
         """
         模糊搜索。先用 FTS5 token 前缀匹配召回候选，再用编辑距离精排。
         """
@@ -107,16 +104,18 @@ class TranslationDB:
         fts_col = "en"
 
         try:
+            recall_mult = cfg.get("fts_recall_multiplier", 10)
+            recall_min = cfg.get("fts_recall_min", 50)
             cur = self.conn.execute(
                 f"SELECT key, en, zh FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fts_query, max(top_n * 10, 50)),
+                (fts_query, max(top_n * recall_mult, recall_min)),
             )
             candidates = [(row[0], row[1], row[2]) for row in cur.fetchall()]
         except sqlite3.OperationalError:
             return []
 
         # 编辑距离精排
-        results: list[dict[str, Any]] = []
+        results: list[FuzzyResultDict] = []
         for key, en_text, zh_text in candidates:
             sim = calc_similarity(query, en_text or "")
             if sim >= threshold:
@@ -134,6 +133,7 @@ class TranslationDB:
 # 单例（复用 FTS 索引，避免每次查询重建）
 # ═══════════════════════════════════════════════════════════
 
+# Module-level singleton — intentional: caches SQLite DB by key set to avoid rebuild on repeated calls
 _db_instance: TranslationDB | None = None
 _db_key_set: frozenset[str] | None = None
 
@@ -154,48 +154,14 @@ def fuzzy_search_lines(
     zh_entries: dict[str, str],
     top_n: int = 5,
     threshold: float = 50.0,
-) -> list[dict[str, Any]]:
+) -> list[FuzzyResultDict]:
     """在翻译记忆库中模糊搜索（保持旧 API 兼容）。"""
     db = _get_db(en_entries, zh_entries)
     return db.search(query, zh_entries, top_n, threshold)
 
 
-def load_json(path: str) -> dict:
+def load_json(path: str) -> dict[str, str]:
+    """加载 JSON 语言文件。"""
     with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
-
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="在翻译记忆库中模糊搜索相似翻译")
-    parser.add_argument("--query", required=True, help="待查找的英文原文")
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("--threshold", type=float, default=50.0, help="相似度阈值 (0-100)，默认50")
-    parser.add_argument("--top", type=int, default=5, help="返回最相似的前N条，默认5")
-
-    args = parser.parse_args()
-
-    try:
-        en_entries = load_json(args.en)
-        zh_entries = load_json(args.zh)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        sys.exit(1)
-
-    matches = fuzzy_search_lines(
-        query=args.query,
-        en_entries=en_entries,
-        zh_entries=zh_entries,
-        top_n=args.top,
-        threshold=args.threshold,
-    )
-    print(json.dumps({"similar_lines": matches}, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()
 

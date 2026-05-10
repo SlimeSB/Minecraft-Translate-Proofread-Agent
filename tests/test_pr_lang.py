@@ -69,7 +69,9 @@ class TestGroupModFiles(unittest.TestCase):
         mods = group_mod_files(files)
         key = "1.18/testmod/testmod"
         self.assertIn(key, mods)
-        self.assertIn("zh_cn.json", mods[key]["zh_head"])
+        zh_head: str | None = mods[key]["zh_head"]
+        self.assertIsNotNone(zh_head)
+        self.assertIn("zh_cn.json", zh_head)  # type: ignore[arg-type]
 
     def test_removed_file_becomes_base_only(self):
         files = [

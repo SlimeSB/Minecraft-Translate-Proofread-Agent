@@ -5,8 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-_USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"
-_TOKEN_WARNED = False
+_USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"  # Hardcoded; acceptable for GitHub API
+_TOKEN_WARNED = False  # Module-level flag prevents repeated warnings; acceptable
 
 
 def _token_warning():
@@ -69,8 +69,6 @@ def raw_get(url: str, token: str = "", retries: int = 3) -> str:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return resp.read().decode("utf-8")
             except urllib.error.HTTPError as e:
-                if e.code == 404:
-                    return ""
                 body = e.read().decode("utf-8", errors="replace")
                 raise RuntimeError(f"Raw 文件错误 {e.code}: {body}") from e
             except (TimeoutError, urllib.error.URLError) as e:

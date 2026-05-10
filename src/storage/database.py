@@ -9,7 +9,10 @@
 import json
 import sqlite3
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from src.models import AlignmentDict
 
 # ═══════════════════════════════════════════════════════════
 # Schema
@@ -89,9 +92,16 @@ class PipelineDB:
     def close(self) -> None:
         self._conn.close()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False
+
     # ── Alignment ──────────────────────────────────────
 
-    def save_alignment(self, alignment: dict) -> None:
+    def save_alignment(self, alignment: Mapping[str, Any]) -> None:
         entries = alignment.get("matched_entries", [])
         self._conn.execute("DELETE FROM alignment")
         for e in entries:
@@ -104,7 +114,7 @@ class PipelineDB:
                  chg.get("old_en", ""), chg.get("old_zh", "")))
         self._conn.commit()
 
-    def load_alignment(self) -> dict:
+    def load_alignment(self) -> AlignmentDict:
         rows = self._conn.execute("SELECT * FROM alignment").fetchall()
         matched = []
         for r in rows:
@@ -116,7 +126,7 @@ class PipelineDB:
 
     # ── Glossary ───────────────────────────────────────
 
-    def save_glossary(self, glossary: list[dict]) -> None:
+    def save_glossary(self, glossary: Sequence[Mapping[str, Any]]) -> None:
         self._conn.execute("DELETE FROM glossary")
         for g in glossary:
             self._conn.execute("INSERT INTO glossary (en,zh) VALUES (?,?)",
@@ -129,18 +139,25 @@ class PipelineDB:
 
     # ── Verdicts ───────────────────────────────────────
 
-    def save_verdicts(self, verdicts: list[dict], phase: str) -> None:
+    def save_verdicts(self, verdicts: Sequence[Mapping[str, Any]], phase: str) -> None:
         """按 phase 保存判决（'format' / 'terminology' / 'llm' / 'merged'）。"""
         self._conn.execute("DELETE FROM verdicts WHERE phase=?", (phase,))
         for v in verdicts:
+            def _s(key: str, default: str = "") -> str:
+                val = v.get(key, default)
+                if isinstance(val, str):
+                    return val
+                if isinstance(val, dict):
+                    return val.get("zh", "") or val.get("text", "") or val.get("value", "") or str(val)
+                return str(val) if val else default
             self._conn.execute(
                 "INSERT INTO verdicts (key,phase,en_current,zh_current,verdict,suggestion,reason,source,namespace) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                (v.get("key", ""), phase,
-                 v.get("en_current", ""), v.get("zh_current", ""),
-                 v.get("verdict", ""), v.get("suggestion", ""),
-                 v.get("reason", ""), v.get("source", ""),
-                 v.get("namespace", "")))
+                (_s("key"), phase,
+                 _s("en_current"), _s("zh_current"),
+                 _s("verdict"), _s("suggestion"),
+                 _s("reason"), _s("source"),
+                 _s("namespace")))
         self._conn.commit()
 
     def load_verdicts(self, phase: str | None = None,
@@ -204,7 +221,7 @@ class PipelineDB:
 
     # ── Fuzzy Results ──────────────────────────────────
 
-    def save_fuzzy_results(self, fm: dict[str, list[dict]]) -> None:
+    def save_fuzzy_results(self, fm: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
         self._conn.execute("DELETE FROM fuzzy_results")
         for key, items in fm.items():
             for it in items:

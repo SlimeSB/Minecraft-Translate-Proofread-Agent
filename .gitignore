@@ -12,3 +12,6 @@ lemma_cache.json
 /.commandcode
 AGENTS.md
 *.db
+!data/MInecraft.db
+/.opencode
+/openspec

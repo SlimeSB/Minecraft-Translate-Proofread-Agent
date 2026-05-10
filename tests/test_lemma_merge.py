@@ -1,7 +1,7 @@
 """测试词形归并和中文互斥救援。"""
 import unittest
 
-from src.checkers.lemma_merge import raw_merge, try_rescue_short_term
+from src.checkers.lemma_merge import raw_merge, try_rescue_short_term, _apply_merge_map
 
 
 class TestRawMerge(unittest.TestCase):
@@ -51,6 +51,56 @@ class TestRawMerge(unittest.TestCase):
         result = raw_merge(extracted)
         self.assertIn("Sword", result["sword"]["variants"])
         self.assertIn("sword", result["sword"]["variants"])
+
+
+class TestApplyMergeMap(unittest.TestCase):
+    def test_merge_freq_equals_unique_keys(self):
+        """合并两个有重叠 key 的桶后，freq 应等于去重 key 数量，而非加法累计。"""
+        merged = {
+            "sword": {
+                "normalized": "sword",
+                "variants": {"sword"},
+                "freq": 5,
+                "keys": ["k1", "k2", "k3", "k4", "k5"],
+                "ngram_type": "unigrams",
+            },
+            "swords": {
+                "normalized": "swords",
+                "variants": {"swords"},
+                "freq": 4,
+                "keys": ["k3", "k4", "k5", "k6"],
+                "ngram_type": "unigrams",
+            },
+        }
+        redirect = {"swords": "sword"}
+        result = _apply_merge_map(merged, redirect)
+        self.assertIn("sword", result)
+        self.assertEqual(result["sword"]["freq"], 6)
+        self.assertEqual(len(result["sword"]["keys"]), 6)
+        self.assertIn("k6", result["sword"]["keys"])
+
+    def test_merge_no_overlap_keys(self):
+        """合并两个无重叠 key 的桶后，freq 应等于两桶 key 数量之和。"""
+        merged = {
+            "copper": {
+                "normalized": "copper",
+                "variants": {"copper"},
+                "freq": 3,
+                "keys": ["k1", "k2", "k3"],
+                "ngram_type": "unigrams",
+            },
+            "coppers": {
+                "normalized": "coppers",
+                "variants": {"coppers"},
+                "freq": 2,
+                "keys": ["k4", "k5"],
+                "ngram_type": "unigrams",
+            },
+        }
+        redirect = {"coppers": "copper"}
+        result = _apply_merge_map(merged, redirect)
+        self.assertEqual(result["copper"]["freq"], 5)
+        self.assertEqual(len(result["copper"]["keys"]), 5)
 
 
 class TestTryRescueShortTerm(unittest.TestCase):

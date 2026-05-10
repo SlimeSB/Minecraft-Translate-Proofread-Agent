@@ -12,6 +12,8 @@ from src.tools.fuzzy_search import calc_similarity
 from src import config as cfg
 from .lemma_cache import LemmaCache
 
+_MAX_KEYS_PER_TERM = cfg.get("max_keys_per_term", 20)
+
 
 # ═══════════════════════════════════════════════════════════
 # 第一遍：按原始形式分桶（不做词形归并——归并交给缓存+LLM）
@@ -37,7 +39,7 @@ def raw_merge(extracted: dict[str, Any]) -> dict[str, dict[str, Any]]:
             for k in item["keys"]:
                 if k not in merged[norm]["keys"]:
                     merged[norm]["keys"].append(k)
-            merged[norm]["keys"] = merged[norm]["keys"][:20]
+            merged[norm]["keys"] = merged[norm]["keys"][:_MAX_KEYS_PER_TERM]
     return merged
 
 
@@ -52,6 +54,35 @@ def _is_token_proper_subset(a: str, b: str) -> bool:
     return ta < tb or tb < ta
 
 
+def _apply_merge_map(
+    merged: dict[str, dict[str, Any]],
+    redirect: dict[str, str],
+    guard_token_subset: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """根据 redirect 字典合并 merged 桶。返回新的 merged dict。"""
+    new_merged: dict[str, dict[str, Any]] = {}
+    for norm, info in merged.items():
+        target = redirect.get(norm, norm)
+        if guard_token_subset and target != norm and _is_token_proper_subset(norm, target):
+            target = norm
+        if target not in new_merged:
+            new_merged[target] = {
+                "normalized": target,
+                "variants": set(),
+                "freq": 0,
+                "keys": [],
+                "ngram_type": info["ngram_type"],
+            }
+        new_merged[target]["variants"] |= info["variants"]
+        for k in info["keys"]:
+            if k not in new_merged[target]["keys"]:
+                new_merged[target]["keys"].append(k)
+        new_merged[target]["keys"] = new_merged[target]["keys"][:_MAX_KEYS_PER_TERM]
+    for info in new_merged.values():
+        info["freq"] = len(info["keys"])
+    return new_merged
+
+
 def apply_cache_merge(
     merged: dict[str, dict[str, Any]],
     cache: LemmaCache,
@@ -61,47 +92,18 @@ def apply_cache_merge(
     返回 (归并后的 merged, 命中次数)。
     """
     hits = 0
-    # 收集缓存映射: {raw_key → canonical_key}
     redirect: dict[str, str] = {}
     for raw_key in merged:
         canon = cache.lookup(raw_key)
         if canon and canon != raw_key and not _is_token_proper_subset(raw_key, canon):
             redirect[raw_key] = canon
             hits += 1
-            # bump canonical freq so it stays "hot"
-            cache.lookup(canon)
+            cache.lookup(canon)  # bump canonical freq so it stays "hot"
 
     if not redirect:
         return merged, 0
 
-    new_merged: dict[str, dict[str, Any]] = {}
-    for raw_key, info in merged.items():
-        target = redirect.get(raw_key, raw_key)
-        if target not in new_merged:
-            if target in merged:
-                new_merged[target] = {
-                    "normalized": merged[target]["normalized"],
-                    "variants": set(merged[target]["variants"]),
-                    "freq": merged[target]["freq"],
-                    "keys": list(merged[target]["keys"]),
-                    "ngram_type": merged[target]["ngram_type"],
-                }
-            else:
-                new_merged[target] = {
-                    "normalized": target,
-                    "variants": set(),
-                    "freq": 0,
-                    "keys": [],
-                    "ngram_type": info["ngram_type"],
-                }
-        new_merged[target]["variants"] |= info["variants"]
-        new_merged[target]["freq"] += info["freq"]
-        for k in info["keys"]:
-            if k not in new_merged[target]["keys"]:
-                new_merged[target]["keys"].append(k)
-        new_merged[target]["keys"] = new_merged[target]["keys"][:20]
-
-    return new_merged, hits
+    return _apply_merge_map(merged, redirect, guard_token_subset=False), hits
 
 
 # ═══════════════════════════════════════════════════════════
@@ -116,7 +118,7 @@ def fuzzy_cluster(
     在已规则归并的桶之间做模糊聚类。
     返回: [[norm_a, norm_b, ...], ...] 候选合并组
     """
-    norms = sorted(merged.keys(), key=lambda n: -merged[n]["freq"])
+    norms = sorted(merged.keys(), key=lambda n: -len(merged[n]["keys"]))
     parents = {n: n for n in norms}
 
     def find(n: str) -> str:
@@ -192,7 +194,7 @@ def parse_merge_response(response: str) -> dict[str, str]:
                             mapping[mb] = canon
                         if canon not in mapping:
                             mapping[canon] = canon
-            except json.JSONDecodeError:
+            except json.JSONDecodeError:  # Acceptable fallback — direct parse already tried, this is regex rescue
                 pass
     return mapping
 
@@ -202,26 +204,7 @@ def apply_llm_merge(
     llm_mapping: dict[str, str],
 ) -> dict[str, dict[str, Any]]:
     """根据 LLM 裁决将 merged 桶合并。过滤多词→单词的非法映射。"""
-    new_merged: dict[str, dict[str, Any]] = {}
-    for norm, info in merged.items():
-        target = llm_mapping.get(norm, norm)
-        if target != norm and _is_token_proper_subset(norm, target):
-            target = norm
-        if target not in new_merged:
-            new_merged[target] = {
-                "normalized": target,
-                "variants": set(),
-                "freq": 0,
-                "keys": [],
-                "ngram_type": info["ngram_type"],
-            }
-        new_merged[target]["variants"] |= info["variants"]
-        new_merged[target]["freq"] += info["freq"]
-        for k in info["keys"]:
-            if k not in new_merged[target]["keys"]:
-                new_merged[target]["keys"].append(k)
-        new_merged[target]["keys"] = new_merged[target]["keys"][:20]
-    return new_merged
+    return _apply_merge_map(merged, llm_mapping, guard_token_subset=True)
 
 
 # ═══════════════════════════════════════════════════════════

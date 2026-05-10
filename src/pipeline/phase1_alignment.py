@@ -1,6 +1,7 @@
 """Phase 1: 键对齐（传统模式）或 PR 数据加载。"""
 import json
 
+from src.logging import info
 from src.models import (
     AlignmentDict,
     EntryDict,
@@ -10,7 +11,7 @@ from src.models import (
     PRWarningDict,
 )
 from src.storage.database import PipelineDB
-from src.tools.key_alignment import align_keys, load_json, load_json_clean
+from src.tools.key_alignment import align_keys, load_json_clean
 
 
 def run_phase1(ctx: PipelineContext) -> None:
@@ -21,7 +22,7 @@ def run_phase1(ctx: PipelineContext) -> None:
 
 
 def _load_pr_alignment(ctx: PipelineContext) -> None:
-    print("[PR Mode] 加载 PR 对齐数据...")
+    info("[PR Mode] 加载 PR 对齐数据...")
     data = ctx.pr_alignment
     matched: list[EntryDict] = []
     for entry in data.get("all_entries", []):
@@ -49,9 +50,8 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
         },
     }
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_alignment(ctx.alignment)
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_alignment(ctx.alignment)
 
     for entry in data.get("all_entries", []):
         key = entry["key"]
@@ -67,12 +67,21 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
             ctx.zh_only_entries.append(entry)
 
     ctx.pr_warnings = data.get("all_warnings", [])
-    print(f"  已加载: {len(matched)} 条变更, {len(ctx.pr_warnings)} 条警告, "
+
+    mods = data.get("mods", {})
+    for mod_data in mods.values():
+        full_en = mod_data.get("full_en", {})
+        full_zh = mod_data.get("full_zh", {})
+        ctx.pr_full_en_data.update(full_en)
+        ctx.pr_full_zh_data.update(full_zh)
+    if ctx.pr_full_en_data:
+        info(f"  全量数据: {len(ctx.pr_full_en_data)} 个唯一 key")
+    info(f"  已加载: {len(matched)} 条变更, {len(ctx.pr_warnings)} 条警告, "
           f"{len(ctx.zh_only_entries)} 条 ZH-only 变更")
 
 
 def _align_keys(ctx: PipelineContext) -> None:
-    print("[Phase 1] 键对齐...")
+    info("[Phase 1] 键对齐...")
     warnings: list[str] = []
     is_lang = str(ctx.en_path).endswith(".lang")
     if is_lang:
@@ -87,7 +96,7 @@ def _align_keys(ctx: PipelineContext) -> None:
         warnings.extend(f"[EN] {w}" for w in en_w)
         warnings.extend(f"[ZH] {w}" for w in zh_w)
     for w in warnings:
-        print(f"  {w}")
+        info(f"  {w}")
 
     ctx.alignment = align_keys(ctx.en_data, ctx.zh_data)
     fmt = "lang" if is_lang else "json"
@@ -95,8 +104,7 @@ def _align_keys(ctx: PipelineContext) -> None:
         e["format"] = fmt
 
     stats = ctx.alignment["stats"]
-    print(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "
+    info(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "
           f"⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_alignment(ctx.alignment)
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_alignment(ctx.alignment)

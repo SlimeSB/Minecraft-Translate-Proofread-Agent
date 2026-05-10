@@ -7,37 +7,15 @@
     rg.collect(format_v, term_v, llm_v)
     rg.generate(output_dir)
 """
-import json
-import sys
 from collections import defaultdict
-from pathlib import Path
-from typing import Any
+from collections.abc import Sequence
 
-
-def _print(*args, **kwargs) -> None:
-    """安全打印，应对 Windows GBK 终端无法输出 emoji 的情况。"""
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        encoding = sys.stdout.encoding or "utf-8"
-        safe = [
-            str(a).encode(encoding, errors="replace").decode(encoding)
-            for a in args
-        ]
-        print(*safe, **kwargs)
-
+from src.cli import safe_print as _print
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY
 
 # ═══════════════════════════════════════════════════════════
 # Verdict 优先级与去重
 # ═══════════════════════════════════════════════════════════
-
-# 优先级：FAIL > REVIEW > SUGGEST > PASS
-VERDICT_PRIORITY: dict[str, int] = {
-    "❌ FAIL": 4,
-    "🔶 REVIEW": 3,
-    "⚠️ SUGGEST": 2,
-    "PASS": 1,
-}
 
 # 来源优先级：LLM 手动审校 > 格式自动检查 > 术语自动检查
 # 同一条目同级别时，手动判断优先
@@ -51,9 +29,9 @@ SOURCE_PRIORITY: dict[str, int] = {
 
 
 def merge_verdicts(
-    *verdict_lists: list[dict[str, Any]],
+    *verdict_lists: Sequence[VerdictDict],
     keep_all: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[VerdictDict]:
     """
     合并多个 verdict 列表，按 key 去重。
     同一 key 保留最高优先级的 verdict。
@@ -62,7 +40,7 @@ def merge_verdicts(
     :return: 合并后的 verdict 列表
     """
     if keep_all:
-        all_v: list[dict[str, Any]] = []
+        all_v: list[VerdictDict] = []
         seen: set[tuple[str, str]] = set()
         for vl in verdict_lists:
             for v in vl:
@@ -73,14 +51,14 @@ def merge_verdicts(
         return sorted(all_v, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
 
     # 按 key 归并
-    by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_key: dict[str, list[VerdictDict]] = defaultdict(list)
     for vl in verdict_lists:
         for v in vl:
             key = v.get("key", "")
             if key:
                 by_key[key].append(v)
 
-    merged: list[dict[str, Any]] = []
+    merged: list[VerdictDict] = []
     for key, verdicts in by_key.items():
         # 选最高优先级
         best = max(verdicts, key=lambda v: (
@@ -108,17 +86,17 @@ class ReportGenerator:
     """收集 verdict 并生成审校报告。"""
 
     def __init__(self):
-        self.alignment: dict[str, Any] = {}
-        self.matched_entries: list[dict[str, str]] = []
-        self.verdicts: list[dict[str, Any]] = []
+        self.alignment: AlignmentDict = {}  # type: ignore[assignment]
+        self.matched_entries: list[EntryDict] = []
+        self.verdicts: list[VerdictDict] = []
         self.stats: dict[str, int] = {}
 
-    def load_alignment(self, alignment: dict[str, Any]) -> None:
+    def load_alignment(self, alignment: AlignmentDict) -> None:
         """加载对齐数据。"""
         self.alignment = alignment
         self.matched_entries = alignment.get("matched_entries", [])
 
-    def collect(self, *verdict_lists: list[dict[str, Any]]) -> None:
+    def collect(self, *verdict_lists: Sequence[VerdictDict]) -> None:
         """收集并合并所有 verdict。"""
         self.verdicts = merge_verdicts(*verdict_lists)
 
@@ -140,7 +118,7 @@ class ReportGenerator:
 
     def build_report(
         self,
-    ) -> dict[str, Any]:
+    ) -> ReviewReportDict:
         """构建报告 dict（不写磁盘），供调用方自行存储。"""
         if not self.stats:
             self.compute_stats()
@@ -159,8 +137,8 @@ class ReportGenerator:
             "PASS": "PASS",
         }
 
-        def _normalize(v: dict[str, Any]) -> dict[str, Any] | None:
-            out: dict[str, Any] = {
+        def _normalize(v: VerdictDict) -> VerdictDict | None:
+            out: VerdictDict = {
                 "key":        v.get("key", ""),
                 "en_current": v.get("en_current", ""),
                 "zh_current": v.get("zh_current", ""),
@@ -178,7 +156,7 @@ class ReportGenerator:
                 return None
             return out
 
-        by_key: dict[str, dict[str, Any]] = {}
+        by_key: dict[str, VerdictDict] = {}
         for v in self.verdicts:
             nv = _normalize(v)
             if nv is None:
@@ -209,89 +187,6 @@ class ReportGenerator:
             "stats": dict(self.stats),
             "verdicts": merged,
         }
-
-    def generate_review_report(
-        self,
-        output_path: str,
-    ) -> None:
-        """生成 review_report.json（写入磁盘）。"""
-        report = self.build_report()
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-
-    def generate_annotated_json(
-        self,
-        output_path: str,
-    ) -> None:
-        """
-        生成 zh_cn_annotated.json —— 带 _comments 段的可读副本。
-        仅对 ❌ FAIL 和 🔶 REVIEW 条目添加注释。
-        """
-        annotated: dict[str, Any] = {
-            "_note": "仅供参考，不作为游戏读取文件。",
-        }
-        comments: dict[str, str] = {}
-
-        for entry in self.matched_entries:
-            key = entry["key"]
-            zh = entry["zh"]
-
-            # 构建 verdict 索引
-            vs = [
-                v for v in self.verdicts
-                if v.get("key") == key and v.get("verdict") in ("❌ FAIL", "🔶 REVIEW")
-            ]
-            if vs:
-                parts = []
-                for v in vs:
-                    part = f"{v['verdict']} — {v['reason']}"
-                    if v.get("suggestion"):
-                        part += f" → 建议: {v['suggestion']}"
-                    parts.append(part)
-                comments[key] = " | ".join(parts)
-
-            annotated[key] = zh
-
-        if comments:
-            annotated["_comments"] = comments
-
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(annotated, f, ensure_ascii=False, indent=2)
-
-    def generate_markdown_report(self, output_path: str, namespace: str = "") -> None:
-        """生成可读的 Markdown 审校报告。"""
-        if not self.stats:
-            self.compute_stats()
-
-        lines: list[str] = []
-        lines.append(f"# 审校报告{f' — {namespace}' if namespace else ''}")
-        lines.append("")
-        lines.append("| 判定 | Key | 原文 | 译文 | 建议 | 问题 |")
-        lines.append("|------|-----|------|------|------|------|")
-
-        for v in self.verdicts:
-            verdict = v.get("verdict", "")
-            if verdict == "PASS":
-                continue
-            key = v.get("key", "")
-            en = (v.get("en_current", "") or "")[:60]
-            zh = (v.get("zh_current", "") or "")[:60]
-            suggestion = (v.get("suggestion", "") or "")[:60]
-            reason = (v.get("reason", "") or "")[:80]
-            lines.append(f"| {verdict} | `{key}` | {en} | {zh} | {suggestion} | {reason} |")
-
-        lines.append("")
-        s = self.stats
-        lines.append(f"- 总计 {s['total']} 条 | PASS {s['PASS']} | ⚠️ SUGGEST {s['⚠️ SUGGEST']} | ❌ FAIL {s['❌ FAIL']} | 🔶 REVIEW {s['🔶 REVIEW']}")
-
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
 
     def print_summary(self) -> None:
         """打印审校摘要。"""

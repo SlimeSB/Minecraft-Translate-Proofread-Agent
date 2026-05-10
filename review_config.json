@@ -3,7 +3,11 @@
 
   "pipeline": {
     "max_workers": 4,
-    "filter_batch_size": 50
+    "filter_batch_size": 25,
+    "review_batch_size": 25,
+    "fts_recall_multiplier": 10,
+    "fts_recall_min": 50,
+    "fuzzy_trigger_patterns": [".desc", "death.", "advancements."]
   },
 
   "key_prefixes": {
@@ -29,6 +33,10 @@
   },
 
   "llm": {
+    "max_retries": 5,
+    "temperature": 0.1,
+    "max_tokens": 32768,
+    "review_retries": 2,
     "system_prompt": "你是一位Minecraft模组简中翻译审校专家。请按要求输出JSON。",
     "header_prefix": "你是Minecraft模组简中翻译审校专家",
     "default_review_focus": "翻译需准确自然; 术语一致; 匹配语境",
@@ -57,7 +65,7 @@
         "对每条问题输出一个JSON对象:",
         "- 驳回: {\"key\": \"key值\", \"verdict\": \"PASS\", \"reason\": \"驳回理由\"}",
         "- 保留: {\"key\": \"key值\", \"verdict\": \"条目原判定（如 ⚠️ SUGGEST）\", \"reason\": \"清洗后的中文问题描述\"}",
-        "仅输出JSON数组。",
+        "每条都必须输出，不得遗漏。仅输出JSON数组。",
         "",
         "判定标准：",
         "- 术语不一致但上下文合理 → PASS",
@@ -72,6 +80,59 @@
         "- 简洁准确：一段话讲清楚，不重复、不自相矛盾",
         "- 去除自动检查套话（如「值相同」「疑似未翻译」），改写为自然语言"
       ]
+    },
+    "prompt_templates": {
+      "review_header": [
+        "{header_prefix}。当前类型: {cat_label}（{prefix}*）。",
+        "",
+        "## 审查重点",
+        "{focus_notes}",
+        "",
+        "## 普适原则",
+        "{review_principles}"
+      ],
+      "review_pr_section": [
+        "",
+        "## PR 模式审校指南",
+        "{change_context}"
+      ],
+      "review_items_section": [
+        "",
+        "## 待审条目 ({count}条)",
+        "{review_instruction}"
+      ],
+      "review_input_device_section": [
+        "",
+        "## 输入设备翻译专项指南",
+        "{input_guidance}"
+      ],
+      "filter_header": [
+        "## 任务",
+        "以下是自动检查和LLM审校后汇总的翻译问题列表（{cat_label}）。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。",
+        "",
+        "## 问题列表 ({count}条)"
+      ],
+      "filter_entry_block": [
+        "key: `{key}`",
+        "EN: \"{en}\"",
+        "ZH: \"{zh}\"",
+        "判定: {verdict}",
+        "问题: {reason}"
+      ],
+      "filter_entry_suggestion": "建议: {suggestion}",
+      "untranslated_prompt": [
+        "你是Minecraft模组翻译审校专家。以下条目的英文和中文值相同（或高度相似），请判断是否确实为未翻译，还是合法的不需翻译的内容。",
+        "",
+        "## 判定标准",
+        "- 原文为自然语言文本（单词、短语、句子），中文本应翻译但没有翻译 → 确实未翻译，判定 ❌ FAIL 并给出建议译文",
+        "- 原文为代码、版本号、数字、URL路径、占位符、专有名词、色彩代码、命令参数等，中英一致是合理的 → 合法不需翻译，判定 PASS",
+        "",
+        "## 输出格式",
+        "对每条输出: {{\"key\": \"条目的key值\", \"verdict\": \"PASS/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"判定理由\"}}",
+        "每条都必须输出，不得遗漏。仅输出JSON数组。",
+        "",
+        "## 条目 ({count}条)"
+      ]
     }
   },
 
@@ -83,6 +144,9 @@
     "consensus_min_total": 3,
     "fuzzy_cluster_threshold": 65.0,
     "fuzzy_cluster_top_n": 200,
+    "max_ngram": 3,
+    "max_keys_per_term": 20,
+    "max_keys_raw": 5,
     "blacklist": [
       "the", "a", "an", "of", "to", "in", "and", "is", "it", "you",
       "this", "that", "will", "be", "can", "with", "for", "on", "are",
@@ -91,7 +155,8 @@
       "all", "some", "when", "if", "then", "also", "just", "now",
       "only", "out", "been", "was", "were", "into", "than", "no",
       "so", "up", "down", "here", "there", "over", "under", "block",
-      "spawn", "egg", "spawn egg", "potion", "one", "enable"
+      "spawn", "egg", "potion", "one", "enable", "back", "rotate", "output", "item","Shift",
+      "other", "another", "any"
     ]
   },
 
@@ -100,7 +165,8 @@
       ".desc", ".description", ".lore", ".tooltip",
       ".flavor", ".info", ".message", ".text"
     ],
-    "punctuation_spacing_whitelist": ["book.", "patchouli."]
+    "punctuation_spacing_whitelist": ["book.", "patchouli."],
+    "en_preview_len": 60
   },
 
   "pr": {

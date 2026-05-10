@@ -28,27 +28,16 @@
         }
     }
 """
-import argparse
 import json
 import re
-import sys
 from pathlib import Path
-from typing import Any
+from src.tools.code_detection import is_likely_code_or_proper_noun
+from src.models import AlignmentDict, EntryDict, VerdictDict
 
-_RE_CODE_LIKE = re.compile(r"^[A-Z_]+$|^[0-9]+$|^[A-Za-z0-9_.-]+$|^§[0-9a-fA-F].*")
 _COMMENT_KEY_RE = re.compile(r"^_comment")
 
 
-def _is_code_or_proper_noun(text: str) -> bool:
-    return bool(_RE_CODE_LIKE.match(text.strip()))
-
-
-def load_json(path: str) -> dict:
-    with open(path, "r", encoding="utf-8-sig") as f:
-        return json.load(f)
-
-
-def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
+def load_json_clean(path: str) -> tuple[dict[str, str], list[str]]:
     """加载 JSON 语言文件，过滤 _comment* 键，检测重复 key。
 
     返回: (cleaned_data, warnings)
@@ -60,9 +49,9 @@ def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
     seen: dict[str, int] = {}
     stripped = 0
 
-    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    def _hook(pairs: list[tuple[str, str]]) -> dict[str, str]:
         nonlocal stripped
-        result: dict[str, Any] = {}
+        result: dict[str, str] = {}
         for key, val in pairs:
             if _COMMENT_KEY_RE.match(key):
                 stripped += 1
@@ -81,7 +70,7 @@ def load_json_clean(path: str) -> tuple[dict[str, Any], list[str]]:
     return data, warnings
 
 
-def align_keys(en_data: dict, zh_data: dict) -> dict:
+def align_keys(en_data: dict[str, str], zh_data: dict[str, str]) -> AlignmentDict:
     en_keys = set(en_data.keys())
     zh_keys = set(zh_data.keys())
 
@@ -102,7 +91,7 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
         en_val = entry["en"]
         zh_val = entry["zh"]
         if en_val == zh_val:
-            if _is_code_or_proper_noun(en_val):
+            if is_likely_code_or_proper_noun(en_val):
                 continue
             if en_val == "":
                 reason = "均为空字符串"
@@ -131,27 +120,46 @@ def align_keys(en_data: dict, zh_data: dict) -> dict:
     }
 
 
+
 def check_vanilla_collisions(
     en_data: dict[str, str],
-    vanilla_keys_path: str = "data/vanilla_keys.json",
-) -> list[dict[str, Any]]:
-    """检查模组 key 是否覆盖了原版 key。
+    db_path: str = "data/Minecraft.db",
+) -> list[VerdictDict]:
+    """从 Minecraft.db 读取原版 key 并检测模组覆盖。
 
-    返回碰撞列表，每项: {key, mod_value, vanilla_is_known}。
-    若原版 key 文件不存在则返回空列表。
+    返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
     """
+    import sqlite3
     try:
-        with open(vanilla_keys_path, "r", encoding="utf-8") as f:
-            vanilla_data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.OperationalError:
         return []
 
-    vanilla_set: set[str] = set(vanilla_data.get("keys", []))
-    if not vanilla_set:
+    try:
+        rows = conn.execute(
+            "SELECT key, zh_cn, version_start, version_end, changes FROM vanilla_keys"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        conn.close()
         return []
+
+    if not rows:
+        conn.close()
+        return []
+
+    vanilla_map: dict[str, dict] = {}
+    for r in rows:
+        vanilla_map[r["key"]] = {
+            "zh_cn": r["zh_cn"],
+            "version_start": r["version_start"],
+            "version_end": r["version_end"],
+            "changes": r["changes"],
+        }
+    conn.close()
 
     mod_keys = set(en_data.keys())
-    collisions = mod_keys & vanilla_set
+    collisions = mod_keys & set(vanilla_map.keys())
 
     if not collisions:
         return []
@@ -160,41 +168,11 @@ def check_vanilla_collisions(
         {
             "key": k,
             "mod_value": str(en_data[k])[:80],
+            "vanilla_zh": vanilla_map[k]["zh_cn"],
+            "version_start": vanilla_map[k]["version_start"],
+            "version_end": vanilla_map[k]["version_end"],
+            "changes": vanilla_map[k]["changes"],
         }
         for k in sorted(collisions)
     ]
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="比较 en_us.json 和 zh_cn.json 的键对齐情况"
-    )
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("--output", default=None, help="保存对齐报告到文件（可选）")
-
-    args = parser.parse_args()
-
-    try:
-        en_data = load_json(args.en)
-        zh_data = load_json(args.zh)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-
-    result = align_keys(en_data, zh_data)
-
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

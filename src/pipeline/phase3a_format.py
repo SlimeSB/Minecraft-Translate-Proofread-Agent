@@ -1,11 +1,12 @@
 """Phase 3a: 全自动格式检查。"""
-from src.models import EntryDict, FormatVerdictsContainer, PipelineContext, VerdictDict
+from src.logging import info
+from src.models import EntryDict, PipelineContext, VerdictDict
 from src.checkers.format_checker import FormatChecker
 from src.storage.database import PipelineDB
 
 
 def run_phase3a(ctx: PipelineContext) -> None:
-    print("[Phase 3a] 格式检查...")
+    info("[Phase 3a] 格式检查...")
     checker = FormatChecker()
     matched = ctx.alignment.get("matched_entries", [])
     all_v: list[VerdictDict] = []
@@ -26,10 +27,9 @@ def run_phase3a(ctx: PipelineContext) -> None:
             })
 
     ctx.format_verdicts = all_v
-    print(f"  格式问题: {len(all_v)} 条")
+    info(f"  格式问题: {len(all_v)} 条")
     if ctx.pr_warnings:
-        print(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
+        info(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_verdicts(all_v, "format")
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_verdicts(all_v, "format")

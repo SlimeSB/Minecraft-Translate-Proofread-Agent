@@ -2,6 +2,8 @@
 import re
 from typing import Any
 
+from src.config import GUIDEME_PREFIX
+
 _GUIDEME_PATH_RE = re.compile(
     r"^projects/(?:assets/(?P<cid>[^/]+)/(?P<ver>[^/]+)"
     r"|(?P<ver2>[^/]+)/assets/(?P<cid2>[^/]+))"
@@ -36,7 +38,7 @@ def align(
     warnings: list[dict[str, Any]] = []
 
     # 按 rel_path 分组：{rel_path: {en_base, en_head, zh_base, zh_head}}
-    groups: dict[str, dict[str, str | None]] = {}
+    groups: dict[str, Any] = {}
     for f in changed_files:
         filename = f.get("filename", "")
         info = match(filename)
@@ -84,7 +86,7 @@ def align(
             continue
 
         entry: dict[str, Any] = {
-            "key": f"ae2guide:{rel_path}",
+            "key": f"{GUIDEME_PREFIX}{rel_path}",
             "en": new_en,
             "zh": new_zh,
             "namespace": g["namespace"],

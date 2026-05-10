@@ -9,6 +9,7 @@ from typing import Any
 
 CONFIG_PATH = "review_config.json"
 
+# Module-level cache — loaded once at startup, never mutated at runtime
 _cfg_cache: dict[str, Any] | None = None
 
 # 顶层分组键
@@ -21,7 +22,8 @@ def _load() -> dict[str, Any]:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"[config] 配置加载失败: {e}", file=sys.stderr)
             raw = {}
         _validate(raw)
         _cfg_cache = _flatten(raw)
@@ -45,6 +47,10 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     p = raw.get("pipeline", {})
     flat["max_workers"] = p.get("max_workers", 4)
     flat["filter_batch_size"] = p.get("filter_batch_size", 50)
+    flat["review_batch_size"] = p.get("review_batch_size", 25)
+    flat["fts_recall_multiplier"] = p.get("fts_recall_multiplier", 10)
+    flat["fts_recall_min"] = p.get("fts_recall_min", 50)
+    flat["fuzzy_trigger_patterns"] = p.get("fuzzy_trigger_patterns", [".desc", "death.attack.", "advancements."])
 
     # ── key_prefixes ──
     # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
@@ -57,6 +63,10 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
 
     # ── llm ──
     l = raw.get("llm", {})
+    flat["llm_max_retries"] = l.get("max_retries", 5)
+    flat["llm_temperature"] = l.get("temperature", 0.1)
+    flat["llm_max_tokens"] = l.get("max_tokens", 32768)
+    flat["llm_review_retries"] = l.get("review_retries", 2)
     flat["review_system_prompt"] = l.get("system_prompt")
     flat["review_header_prefix"] = l.get("header_prefix")
     flat["default_review_focus"] = l.get("default_review_focus")
@@ -70,6 +80,13 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["filter_system_prompt"] = filt.get("system_prompt")
     flat["filter_instruction"] = filt.get("instruction", [])
 
+    # ── prompt_templates ──
+    pt = l.get("prompt_templates", {})
+    for key in ("review_header", "review_pr_section", "review_items_section",
+                 "review_input_device_section", "filter_header", "filter_entry_block",
+                 "filter_entry_suggestion", "untranslated_prompt"):
+        flat[f"prompt_{key}"] = pt.get(key, [])
+
     # ── terminology ──
     t = raw.get("terminology", {})
     flat["term_min_freq"] = t.get("min_freq", 5)
@@ -80,11 +97,15 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["fuzzy_cluster_threshold"] = t.get("fuzzy_cluster_threshold", 65.0)
     flat["fuzzy_cluster_top_n"] = t.get("fuzzy_cluster_top_n", 200)
     flat["term_blacklist"] = t.get("blacklist", [])
+    flat["max_keys_per_term"] = t.get("max_keys_per_term", 20)
+    flat["max_keys_raw"] = t.get("max_keys_raw", 5)
+    flat["term_max_ngram"] = t.get("max_ngram", 3)
 
     # ── format ──
     fmt = raw.get("format", {})
     flat["desc_key_suffixes"] = fmt.get("desc_key_suffixes", [])
     flat["punctuation_spacing_whitelist"] = fmt.get("punctuation_spacing_whitelist", [])
+    flat["en_preview_len"] = fmt.get("en_preview_len", 60)
 
     # ── pr ──
     pr = raw.get("pr", {})
@@ -105,6 +126,7 @@ def get(key: str, default: Any = None) -> Any:
 # 常用配置项（保持与旧版完全相同的 API）
 # ═══════════════════════════════════════════════════════════
 
+# Computed at import time; config doesn't change at runtime so this is fine
 DESC_KEY_SUFFIXES: tuple[str, ...] = tuple(
     get("desc_key_suffixes", [".desc", ".description", ".lore", ".tooltip",
                                ".flavor", ".info", ".message", ".text"])
@@ -121,10 +143,12 @@ TERM_MAX_EN_LEN: int = get("term_max_en_len", 60)
 TERM_CONSENSUS_MIN_TOTAL: int = get("term_consensus_min_total", 3)
 FUZZY_CLUSTER_THRESHOLD: float = get("fuzzy_cluster_threshold", 65.0)
 FUZZY_CLUSTER_TOP_N: int = get("fuzzy_cluster_top_n", 200)
+TERM_MAX_NGRAM: int = get("term_max_ngram", 3)
 MAX_WORKERS: int = get("max_workers", 4)
 
 KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
 LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
+GUIDEME_PREFIX: str = "ae2guide:"
 
 
 def _as_text(val: str | list[str]) -> str:
@@ -143,5 +167,15 @@ MOUSE_GUIDANCE: str = get("mouse_guidance")
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
 FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
+
+# prompt 模板
+PROMPT_REVIEW_HEADER: str = _as_text(get("prompt_review_header"))
+PROMPT_REVIEW_PR_SECTION: str = _as_text(get("prompt_review_pr_section"))
+PROMPT_REVIEW_ITEMS_SECTION: str = _as_text(get("prompt_review_items_section"))
+PROMPT_REVIEW_INPUT_DEVICE_SECTION: str = _as_text(get("prompt_review_input_device_section"))
+PROMPT_FILTER_HEADER: str = _as_text(get("prompt_filter_header"))
+PROMPT_FILTER_ENTRY_BLOCK: str = _as_text(get("prompt_filter_entry_block"))
+PROMPT_FILTER_ENTRY_SUGGESTION: str = _as_text(get("prompt_filter_entry_suggestion"))
+PROMPT_UNTRANSLATED: str = _as_text(get("prompt_untranslated_prompt"))
 
 DEFAULT_PR_REPO: str = get("default_pr_repo", "CFPAOrg/Minecraft-Mod-Language-Package")

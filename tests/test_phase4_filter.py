@@ -37,7 +37,7 @@ class TestCacheKey(unittest.TestCase):
 
     def test_hex_output(self):
         key = _cache_key({"key": "a", "verdict": "PASS", "reason": "", "zh_current": ""})
-        self.assertEqual(len(key), 16)
+        self.assertEqual(len(key), 32)
         int(key, 16)
 
 

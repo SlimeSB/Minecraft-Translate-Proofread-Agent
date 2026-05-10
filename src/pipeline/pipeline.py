@@ -4,9 +4,9 @@
 """
 import json
 import shutil
-import sys
 from pathlib import Path
 
+from src.logging import info, warn
 from src.models import LLMCallable, PipelineContext, PRAlignmentWrapper
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
@@ -17,11 +17,13 @@ from src.pipeline.phase5_report import run_phase5
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 from src.dictionary.external import ExternalDictStore
+from src import config as cfg
 
 
 class ReviewPipeline:
     """翻译审校流水线 — 薄编排层。"""
 
+    # NOTE: 14 keyword-only params with defaults, single construction point — no value in builder pattern
     def __init__(
         self,
         en_path: str = "",
@@ -44,6 +46,7 @@ class ReviewPipeline:
             en_path=Path(en_path) if en_path else None,
             zh_path=Path(zh_path) if zh_path else None,
             output_dir=Path(output_dir),
+            config=cfg._load(),
             llm_call=llm_call,
             filter_llm_call=filter_llm_call,
             no_llm=no_llm,
@@ -65,18 +68,18 @@ class ReviewPipeline:
             shutil.rmtree(ctx.output_dir, ignore_errors=True)
         ctx.ensure_output_dir()
 
-        print(f"{'='*60}")
-        print("Minecraft 模组翻译审校流水线")
-        print(f"  EN: {ctx.en_path}")
-        print(f"  ZH: {ctx.zh_path}")
-        print(f"  输出: {ctx.output_dir}")
+        info(f"{'='*60}")
+        info("Minecraft 模组翻译审校流水线")
+        info(f"  EN: {ctx.en_path}")
+        info(f"  ZH: {ctx.zh_path}")
+        info(f"  输出: {ctx.output_dir}")
         if ctx.dry_run:
-            print("  模式: 干运行")
+            info("  模式: 干运行")
         elif ctx.interactive:
-            print("  模式: 交互审校")
+            info("  模式: 交互审校")
         elif ctx.no_llm:
-            print("  模式: 仅自动检查")
-        print(f"{'='*60}")
+            info("  模式: 仅自动检查")
+        info(f"{'='*60}")
 
         try:
             run_phase1(ctx)       # 键对齐 / PR 数据加载
@@ -90,7 +93,7 @@ class ReviewPipeline:
             run_phase4(ctx)       # 最终 LLM 过滤
             run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
         except Exception as e:
-            print(f"\n错误: {e}", file=sys.stderr)
+            warn(f"\n错误: {e}")
             raise
 
 
@@ -104,7 +107,6 @@ def _save_merged_verdicts(ctx: PipelineContext) -> None:
     verdicts = report.get("verdicts", [])
     stats = report.get("stats", {})
 
-    db = PipelineDB(ctx.output_dir / "pipeline.db")
-    db.save_verdicts(verdicts, "merged")
-    db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
-    db.close()
+    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
+        db.save_verdicts(verdicts, "merged")
+        db.set_meta("stats", json.dumps(stats, ensure_ascii=False))

@@ -12,6 +12,8 @@ import re
 from typing import Any
 
 from src import config as cfg
+from src.models import EntryDict, VerdictDict
+from src.tools.code_detection import is_likely_code_or_proper_noun
 
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
@@ -48,30 +50,40 @@ RE_NEWLINE = re.compile(r"\\n|\n")
 # 能量/体积单位（\b 需 re.ASCII，否则中文被当作 \w 导致边界失效）
 RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b", re.ASCII)
 
-# 中文全角标点
-RE_CHINESE_PUNCT = re.compile(r"[，。；：？！、‘’“”【】《》（）—…]")
-
 # 中文内容检测（含中文字符）
 RE_CHINESE_CHAR = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 
 # 省略号检测
 RE_ELLIPSIS_WRONG = re.compile(r"\.{3}")  # 三个英文句号 ...
-RE_ELLIPSIS_BOTTOM = re.compile(r"……")    # 偏下省略号
-RE_ELLIPSIS_CENTER = re.compile(r"⋯⋯")    # 居中省略号（正确）
 
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
 
-# 非代码/非专有名词的英文标记（用于判断 en==zh 是否合理）
-NON_TRANSLATABLE_PATTERNS = [
-    re.compile(r"^[A-Z_]+$"),           # 全大写下划线常量
-    re.compile(r"^[0-9]+$"),            # 纯数字
-    re.compile(r"^[A-Za-z0-9_.-]+$"),   # 纯ASCII标识符
-    re.compile(r"^§[0-9a-fA-F].*"),     # 格式码开头
-    re.compile(r"^%[a-zA-Z0-9_.$]*$"),  # 纯占位符: %s, %d, %1$s
-    re.compile(r"^\{[^{}]*\}$"),        # 纯占位符: {0}, {name}
-    re.compile(r"^%[A-Za-z_]\w*%$"),    # 纯占位符: %msg%, %key%
-]
+def _compare_placeholder_lists(
+    en_items: list[str],
+    zh_items: list[str],
+    label_missing: str,
+    label_extra: str,
+    format_fn: Any = None,
+) -> list[str]:
+    """比较 EN/ZH 的占位符列表，若不一致返回 issue 字符串列表。"""
+    issues: list[str] = []
+    if sorted(en_items) != sorted(zh_items):
+        en_count: dict[str, int] = {}
+        for p in en_items:
+            en_count[p] = en_count.get(p, 0) + 1
+        zh_count: dict[str, int] = {}
+        for p in zh_items:
+            zh_count[p] = zh_count.get(p, 0) + 1
+        missing = [p for p in en_count if en_count.get(p, 0) > zh_count.get(p, 0)]
+        extra = [p for p in zh_count if zh_count.get(p, 0) > en_count.get(p, 0)]
+        if missing:
+            formatted = [format_fn(p) for p in missing] if format_fn else missing
+            issues.append(f"缺失{label_missing}: {', '.join(formatted)}")
+        if extra:
+            formatted = [format_fn(p) for p in extra] if format_fn else extra
+            issues.append(f"多余{label_extra}: {', '.join(formatted)}")
+    return issues
 
 
 def count_pattern(text: str, pattern: re.Pattern) -> int:
@@ -79,12 +91,8 @@ def count_pattern(text: str, pattern: re.Pattern) -> int:
     return len(pattern.findall(text))
 
 
-def is_likely_code_or_proper_noun(text: str) -> bool:
-    """判断文本是否看起来像代码/专有名词/标识符（不需要翻译的那种）。"""
-    for pat in NON_TRANSLATABLE_PATTERNS:
-        if pat.match(text.strip()):
-            return True
-    return False
+
+_EN_PREVIEW_LEN = cfg.get("en_preview_len", 60)
 
 
 def is_tellraw_json(text: str) -> bool:
@@ -104,18 +112,10 @@ def is_chinese_text(text: str) -> bool:
 class FormatChecker:
     """对单条翻译条目执行所有格式检查。"""
 
-    def __init__(self, tree_terms: set[str] | None = None):
-        """
-        :param tree_terms: 木材/树木相关术语集合，用于树名检查
-        """
-        self.tree_terms = tree_terms or {
-            "log", "wood", "planks", "sapling", "leaves",
-            "stairs", "slab", "fence", "fence_gate", "door",
-            "sign", "boat", "chest_boat", "button", "pressure_plate",
-            "trapdoor", "stripped_log", "stripped_wood",
-        }
+    def __init__(self):
+        """初始化格式检查器。"""
 
-    def check_all(self, entry: dict[str, str]) -> list[dict[str, Any]]:
+    def check_all(self, entry: EntryDict) -> list[VerdictDict]:
         """对单条 entry 执行所有格式检查，返回 verdict 列表。"""
         key = entry["key"]
         en = entry["en"]
@@ -132,10 +132,9 @@ class FormatChecker:
             self._check_energy_units,
             self._check_ellipsis,
             self._check_sound_subtitle_format,
-            self._check_tree_terms,
         ]
 
-        verdicts: list[dict[str, Any]] = []
+        verdicts: list[VerdictDict] = []
         for check_fn in checks:
             result = check_fn(key, en, zh)
             if result:
@@ -146,30 +145,38 @@ class FormatChecker:
 
     def _check_empty_translation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查空翻译：zh == en 且原文非代码/专有名词。"""
+    ) -> VerdictDict | None:
+        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。"""
+        if zh == "" and en != "":
+            if "music_disc" in key and key.endswith(".desc"):
+                return None  # 唱片名(.desc)不翻译
+            if not is_likely_code_or_proper_noun(en):
+                return self._verdict(key, en, zh, "❌ FAIL",
+                    reason=f"翻译为空，原文'{en[:_EN_PREVIEW_LEN]}'未翻译",
+                )
+            return None
         if en == zh and en != "":
             if "music_disc" in key and key.endswith(".desc"):
                 return None  # 唱片名(.desc)不翻译
             if not is_likely_code_or_proper_noun(en):
                 return self._verdict(key, en, zh, "❌ FAIL",
-                    reason=f"值相同（'{en[:60]}'），疑似未翻译",
+                    reason=f"值相同（'{en[:_EN_PREVIEW_LEN]}'），疑似未翻译",
                 )
         return None
 
     def _check_music_disc_no_translation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """唱片名(.desc)不应翻译，已翻译则回报。"""
         if "music_disc" in key and key.endswith(".desc") and en != zh and en != "" and zh != "":
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason=f"唱片名不应翻译，建议保留原文（'{en[:60]}'）",
+                reason=f"唱片名不应翻译，建议保留原文（'{en[:_EN_PREVIEW_LEN]}'）",
             )
         return None
 
     def _check_placeholder_integrity(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查占位符完整性：%d, %s, %f, %n$s, %msg%, {0} 等。"""
         issues: list[str] = []
 
@@ -178,37 +185,18 @@ class FormatChecker:
                      RE_PRINTF.findall(en) + RE_POSITIONAL_PRINTF.findall(en)]
         zh_printf = [_normalize_printf(p) for p in
                      RE_PRINTF.findall(zh) + RE_POSITIONAL_PRINTF.findall(zh)]
-        if sorted(en_printf) != sorted(zh_printf):
-            en_count = {p: en_printf.count(p) for p in set(en_printf)}
-            zh_count = {p: zh_printf.count(p) for p in set(zh_printf)}
-            missing_en = [p for p in en_count if en_count.get(p, 0) > zh_count.get(p, 0)]
-            missing_zh = [p for p in zh_count if zh_count.get(p, 0) > en_count.get(p, 0)]
-            if missing_en:
-                issues.append(f"缺失占位符: {', '.join(missing_en)}")
-            if missing_zh:
-                issues.append(f"多余占位符: {', '.join(missing_zh)}")
+        issues.extend(_compare_placeholder_lists(en_printf, zh_printf, "占位符", "占位符"))
 
         # %msg% 风格
         en_percv = RE_PERCENT_VAR.findall(en)
         zh_percv = RE_PERCENT_VAR.findall(zh)
-        if sorted(en_percv) != sorted(zh_percv):
-            missing = [p for p in en_percv if p not in zh_percv]
-            extra = [p for p in zh_percv if p not in en_percv]
-            if missing:
-                issues.append(f"缺失变量: {', '.join(missing)}")
-            if extra:
-                issues.append(f"多余变量: {', '.join(extra)}")
+        issues.extend(_compare_placeholder_lists(en_percv, zh_percv, "变量", "变量"))
 
         # {0}, {1} 风格
         en_brace = RE_BRACE_VAR.findall(en)
         zh_brace = RE_BRACE_VAR.findall(zh)
-        if sorted(en_brace) != sorted(zh_brace):
-            missing_brace = [p for p in en_brace if p not in zh_brace]
-            extra_brace = [p for p in zh_brace if p not in en_brace]
-            if missing_brace:
-                issues.append(f"缺失变量: {{{'}, {'.join(missing_brace)}}}")
-            if extra_brace:
-                issues.append(f"多余变量: {{{'}, {'.join(extra_brace)}}}")
+        issues.extend(_compare_placeholder_lists(en_brace, zh_brace, "变量", "变量",
+                                                  format_fn=lambda p: "{" + p + "}"))
 
         if issues:
             return self._verdict(key, en, zh, "❌ FAIL",
@@ -218,7 +206,7 @@ class FormatChecker:
 
     def _check_special_tags(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查特殊标签完整性：§颜色码、&颜色码、$(action)、HTML标签、<br>、\n。"""
         issues: list[str] = []
 
@@ -266,7 +254,7 @@ class FormatChecker:
 
     def _check_tellraw_json(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查 tellraw JSON：仅翻译 "text" 键，其余保留原文。"""
         if not is_tellraw_json(en):
             return None
@@ -309,7 +297,7 @@ class FormatChecker:
 
     def _check_punctuation(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查中文标点规范：全角标点、半角括号[]、中英文间距。"""
         if not is_chinese_text(zh):
             return None
@@ -358,20 +346,17 @@ class FormatChecker:
 
     def _check_trailing_whitespace(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查尾部空格/标点功能差异。"""
-        # 检查中英文尾部空格差异是否可能导致功能问题
-        en_trailing = bool(en != en.rstrip())
-        zh_trailing = bool(zh != zh.rstrip())
-        if en_trailing != zh_trailing and is_chinese_text(zh):
+    ) -> VerdictDict | None:
+        """中文译文尾部有多余空格时提示。"""
+        if zh != zh.rstrip() and is_chinese_text(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason=f"尾部空格不一致（EN有={en_trailing}, ZH有={zh_trailing}），可能影响显示",
+                reason="中文译文尾部有多余空格",
             )
         return None
 
     def _check_energy_units(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查能量/体积单位是否被翻译。FE、RF、MB 等应保留原文。"""
         en_units = RE_ENERGY_UNIT.findall(en)
         zh_units = RE_ENERGY_UNIT.findall(zh)
@@ -384,17 +369,17 @@ class FormatChecker:
 
     def _check_ellipsis(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查省略号格式：不应使用三个英文句号 ..."""
         if RE_ELLIPSIS_WRONG.search(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason="使用了三个英文句号'...'作为省略号，应使用'⋯⋯'（居中省略号）",
+                reason="使用了三个英文句号'...'作为省略号，应使用'……'（中文省略号）",
             )
         return None
 
     def _check_sound_subtitle_format(
         self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
+    ) -> VerdictDict | None:
         """检查声音字幕格式。仅对 subtitles.* 键生效。"""
         if not key.startswith("subtitles.") and not key.startswith("sound."):
             return None
@@ -407,26 +392,13 @@ class FormatChecker:
                     reason="声音字幕建议使用'主体：声音'格式（全角冒号）",
                 )
 
-    def _check_tree_terms(
-        self, key: str, en: str, zh: str
-    ) -> dict[str, Any] | None:
-        """检查树木相关术语命名一致性。"""
-        key_lower = key.lower()
-        # 检查 key 是否包含树木相关词
-        for term in self.tree_terms:
-            if term in key_lower:
-                # 树木命名模式检查交给术语表和 LLM
-                # 此处仅做基本检查
-                return None
-        return None
-
     # ── 工具方法 ──────────────────────────────────────────
 
     @staticmethod
     def _verdict(
         key: str, en: str, zh: str, verdict: str, reason: str,
         suggestion: str = "",
-    ) -> dict[str, Any]:
+    ) -> VerdictDict:
         return {
             "key": key,
             "en_current": en,

@@ -15,6 +15,8 @@ from typing import Any
 
 DEFAULT_CACHE_PATH = "data/lemma_cache.json"
 
+from src.tools.term_validation import is_valid_term
+
 
 class LemmaCache:
     """持久化词形映射缓存。"""
@@ -36,15 +38,18 @@ class LemmaCache:
                 self.map.clear()
                 self._freq.clear()
                 for canonical, entry in data.items():
+                    if not is_valid_term(canonical):
+                        continue
                     canon_lower = canonical.lower().strip()
                     freq = entry.get("freq", 0)
                     self._freq[canon_lower] = max(self._freq.get(canon_lower, 0), freq)
                     variants = entry.get("variants", [canonical])
                     for v in variants:
                         vk = v.lower().strip()
-                        if vk not in self.map:
+                        if vk not in self.map and is_valid_term(v):
                             self.map[vk] = canonical
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
+                from src.logging import warn; warn(f"[LemmaCache] 缓存加载失败: {e}")
                 self.map = {}
                 self._freq = {}
         self._loaded = True
@@ -91,13 +96,16 @@ class LemmaCache:
 
     def record(self, canonical: str, members: list[str], source: str = "llm") -> None:
         """写入一批映射并保存。"""
+        if not is_valid_term(canonical):
+            return
         canon_key = canonical.lower().strip()
-        # 更新 canonical 自身
         self.map[canon_key] = canonical
         self._freq[canon_key] = self._freq.get(canon_key, 0) + 1
         self._contrib[canon_key] = self._contrib.get(canon_key, 0) + 1
 
         for m in members:
+            if not is_valid_term(m):
+                continue
             mk = m.lower().strip()
             if mk == canon_key:
                 continue

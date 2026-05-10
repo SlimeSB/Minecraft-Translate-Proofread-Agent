@@ -30,7 +30,7 @@ def group_mod_files(
 
     返回: {mod_key: {en_base, en_head, zh_base, zh_head, mod_info}}
     """
-    mods: dict[str, dict[str, str | None]] = {}
+    mods: dict[str, Any] = {}
 
     for f in changed_files:
         filename = f.get("filename", "")
@@ -61,8 +61,12 @@ def group_mod_files(
                 if "renamed" not in status and "added" not in status and "copied" not in status:
                     mods[mod_key]["en_base"] = filename
         elif parsed["lang"] == "zh_cn":
-            if status != "removed":
+            if status == "removed":
+                mods[mod_key]["zh_base"] = filename
+            else:
                 mods[mod_key]["zh_head"] = filename
+                if "renamed" not in status and "added" not in status and "copied" not in status:
+                    mods[mod_key]["zh_base"] = filename
 
     for mod_key, mod_data in mods.items():
         if mod_data["zh_head"] is None:

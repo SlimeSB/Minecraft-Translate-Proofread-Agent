@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_health
@@ -68,13 +69,16 @@ def main() -> None:
         _run_filter_only(args, output_dir)
         return
 
+    # ── 构建 LLM（API 健康检查提前）──
+    llm_call, filter_llm_call = _build_llm_calls(args)
+
     # ── PR 对齐 ──
     pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
 
-    # ── 构建 LLM ──
-    llm_call, filter_llm_call = _build_llm_calls(args)
-
     # ── 运行流水线 ──
+    _start = time.time()
+    safe_print(f"\n⏱ 开始: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
     pipeline = ReviewPipeline(
         en_path=args.en or "",
         zh_path=args.zh or "",
@@ -92,6 +96,51 @@ def main() -> None:
     )
     pipeline.run()
 
+    _elapsed = time.time() - _start
+    safe_print(f"\n⏱ 结束: {time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
+
+    _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
+
+
+def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
+    review_u = getattr(llm_call, "usage", {}) if llm_call else {}
+    filter_u = getattr(filter_llm_call, "usage", {}) if filter_llm_call else {}
+
+    total_prompt = review_u.get("prompt_tokens", 0) + filter_u.get("prompt_tokens", 0)
+    total_completion = review_u.get("completion_tokens", 0) + filter_u.get("completion_tokens", 0)
+    total_tokens = review_u.get("total_tokens", 0) + filter_u.get("total_tokens", 0)
+    total_calls = review_u.get("calls", 0) + filter_u.get("calls", 0)
+
+    if total_calls == 0:
+        return
+
+    safe_print(f"\n{'='*40}")
+    safe_print("Token 用量")
+    safe_print(f"{'='*40}")
+    if review_u.get("calls", 0):
+        safe_print(f"  LLM 审校 (Phase 3c):         {review_u['calls']} 次调用, "
+              f"{review_u['total_tokens']:,} tokens "
+              f"(prompt: {review_u['prompt_tokens']:,}, completion: {review_u['completion_tokens']:,})")
+    if filter_u.get("calls", 0):
+        safe_print(f"  最终过滤 (Phase 4):           {filter_u['calls']} 次调用, "
+              f"{filter_u['total_tokens']:,} tokens "
+              f"(prompt: {filter_u['prompt_tokens']:,}, completion: {filter_u['completion_tokens']:,})")
+
+    # 缓存估算
+    cache_hits = getattr(ctx, "filter_cache_hits", 0)
+    cache_total = getattr(ctx, "filter_cache_total", 0)
+    if cache_hits and filter_u.get("calls", 0):
+        avg_per_call = filter_u["total_tokens"] / filter_u["calls"]
+        cached_verdicts_per_call = (cache_total - cache_hits) / filter_u["calls"] if filter_u["calls"] else 1
+        if cached_verdicts_per_call > 0:
+            saved = int(cache_hits / cached_verdicts_per_call * avg_per_call)
+            safe_print(f"  缓存命中 (Phase 4):            {cache_hits}/{cache_total} 条, 节省约 {saved:,} tokens")
+
+    safe_print(f"  {'─' * 38}")
+    safe_print(f"  实际消耗:                     {total_calls} 次调用, {total_tokens:,} tokens "
+          f"(prompt: {total_prompt:,}, completion: {total_completion:,})")
+    safe_print(f"{'='*40}")
+
 
 def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--en", default=None, help="en_us.json 路径（传统模式必需）")
@@ -104,9 +153,9 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-llm", action="store_true", help="跳过 LLM 审校")
     parser.add_argument("--interactive", action="store_true", help="交互模式：逐条手动判定")
     parser.add_argument("--dry-run", action="store_true", help="干运行：显示统计不调 LLM")
-    parser.add_argument("--min-term-freq", type=int, default=3, help="术语最低频次阈值")
+    parser.add_argument("--min-term-freq", type=int, default=5, help="术语最低频次阈值")
     parser.add_argument("--fuzzy-threshold", type=float, default=60.0, help="模糊搜索相似度阈值")
-    parser.add_argument("--batch-size", type=int, default=20, help="LLM 每批条目数")
+    parser.add_argument("--batch-size", type=int, default=25, help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
                         help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
     parser.add_argument("--external-dict", action="store_true",
@@ -115,10 +164,10 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _validate_input_files(en_path: str, zh_path: str) -> None:
     if not os.path.exists(en_path):
-        print(f"错误: EN 文件不存在: {en_path}", file=sys.stderr)
+        safe_print(f"错误: EN 文件不存在: {en_path}", file=sys.stderr)
         sys.exit(1)
     if not os.path.exists(zh_path):
-        print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
+        safe_print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -126,18 +175,21 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     output_dir = Path(output_dir_str)
     db_path = output_dir / "pipeline.db"
     if not db_path.exists():
-        print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
+        safe_print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
         sys.exit(1)
 
     api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
     if not api_key:
-        print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
+        safe_print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
         sys.exit(1)
 
     base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
     model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-    llm_call = create_openai_llm_call(api_key, model, base_url)
-    filter_llm_call = create_openai_llm_call(api_key, model, base_url, log_dir="logs/filter")
+    llm_call = create_openai_llm_call(api_key, model, base_url, label="Review")
+    filter_llm_call = create_openai_llm_call(api_key, model, base_url,
+                                              system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                              reasoning_effort="high",
+                                              label="Filter")
 
     db = PipelineDB(db_path)
     verdicts = db.load_verdicts(phase="merged", filtered=0)
@@ -145,7 +197,7 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     db.close()
 
     if not verdicts:
-        print("无待过滤 verdict")
+        safe_print("无待过滤 verdict")
         sys.exit(0)
 
     ctx = PipelineContext(
@@ -161,10 +213,10 @@ def _run_filter_only(args, output_dir_str: str) -> None:
 
 def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str) -> PRAlignmentWrapper | None:
     if is_pr_alignment:
-        print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
+        safe_print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
         with open(args.pr_alignment, "r", encoding="utf-8") as f:
             pr_alignment = json.load(f)
-        print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
+        safe_print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
               f"{len(pr_alignment.get('all_warnings', []))} 条警告")
         return pr_alignment
 
@@ -195,19 +247,21 @@ def _build_llm_calls(args) -> tuple:
     model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
 
     if not api_key:
-        print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
+        safe_print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
         return llm_call, filter_llm_call
 
-    print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
+    safe_print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
     if not check_api_health(base_url, api_key):
-        print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
-        print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
+        safe_print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
+        safe_print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
 
     llm_call = create_openai_llm_call(api_key, model, base_url,
-                                      system_prompt=cfg.REVIEW_SYSTEM_PROMPT)
+                                      system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
+                                      label="Review")
     filter_llm_call = create_openai_llm_call(api_key, model, base_url,
-                                              system_prompt=cfg.REVIEW_SYSTEM_PROMPT,
-                                              log_dir="logs/filter")
+                                              system_prompt=cfg.FILTER_SYSTEM_PROMPT,
+                                              reasoning_effort="high",
+                                              label="Filter")
     return llm_call, filter_llm_call
 
 

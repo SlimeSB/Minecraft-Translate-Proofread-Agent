@@ -1,30 +1,34 @@
 """
-外部社区翻译词典 — 从 SQLite 加载 900K+ 条历史翻译记录，
+外部社区翻译词典 — 按需 SQLite 查询 900K+ 条历史翻译记录，
 按 EN 原文匹配后，按 ZH 译文分组注入 LLM 提示词。
+
+不再全量加载到内存，每次 lookup 直接查询 SQLite。
 """
 import re
 import sqlite3
 from pathlib import Path
+
+from src.logging import warn
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 _RE_WORD = re.compile(r"[A-Za-z]+")
 
+from src.tools.term_validation import STOP_WORDS
+
 
 class ExternalDictStore:
-    """加载外部 SQLite 词典，提供按 EN 原文查询翻译参考。"""
+    """按需查询外部 SQLite 词典，避免全量内存加载（~200-300MB）。"""
 
     def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
-        # 全量加载到内存（42万唯一EN词条, 90万条记录, 约200-300MB）
-        self._index: dict[str, list[tuple[str, str]]] = {}
+        self._conn: sqlite3.Connection | None = None
         self._lemma_map: dict[str, str] = {}
         self._loaded = False
         self._db_path = db_path
         self._lemma_cache_path = lemma_cache_path
 
     def load(self) -> None:
-        """从 SQLite 加载全部 ORIGIN_NAME → (TRANS_NAME, MODID) 入内存。"""
         if self._loaded:
             return
         self._load_lemma_cache()
@@ -33,23 +37,22 @@ class ExternalDictStore:
             print(f"[ExternalDict] 词典文件不存在: {db_path}")
             self._loaded = True
             return
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT ORIGIN_NAME, TRANS_NAME, MODID FROM dict"
-        ).fetchall()
-        conn.close()
-
-        for row in rows:
-            en = row["ORIGIN_NAME"]
-            zh = row["TRANS_NAME"]
-            modid = row["MODID"]
-            key_lower = en.lower().strip()
-            self._index.setdefault(key_lower, []).append((zh, modid))
-
+        self._conn = sqlite3.connect(str(db_path))
+        self._conn.row_factory = sqlite3.Row
+        # 加速按 EN 原文查询（首次加载时创建索引）
+        try:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_dict_origin_lower "
+                "ON dict(LOWER(ORIGIN_NAME))"
+            )
+        except sqlite3.OperationalError:
+            warn(f"[ExternalDict] 索引创建失败（可能为只读文件系统）")
+        total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
+        unique = self._conn.execute(
+            "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"
+        ).fetchone()[0]
         self._loaded = True
-        total = sum(len(v) for v in self._index.values())
-        print(f"[ExternalDict] 加载完成: {len(self._index)} 个唯一 EN 词条, {total} 条总记录")
+        print(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
 
     def _load_lemma_cache(self) -> None:
         import json
@@ -64,54 +67,74 @@ class ExternalDictStore:
                         vk = v.lower().strip()
                         if vk not in self._lemma_map:
                             self._lemma_map[vk] = canonical
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
+                warn(f"[ExternalDict] lemma 缓存加载失败: {e}")
                 self._lemma_map = {}
+
+    def _query_word(self, word_lower: str) -> list[tuple[str, str]]:
+        """查询单个英文单词的翻译记录，返回 [(zh, modid), ...]."""
+        if self._conn is None:
+            return []
+        rows = self._conn.execute(
+            "SELECT TRANS_NAME, MODID FROM dict WHERE LOWER(ORIGIN_NAME) = ?",
+            (word_lower,),
+        ).fetchall()
+        return [(r["TRANS_NAME"], r["MODID"]) for r in rows]
 
     def lookup(self, en_text: str, max_groups: int = 3, max_modids: int = 5) -> str:
         """在 EN 原文中搜索已知翻译，返回注入文本（空串表示无匹配）。"""
         if not self._loaded:
             self.load()
-        if not self._index:
+        if self._conn is None:
             return ""
 
         words = _RE_WORD.findall(en_text)
         if not words:
             return ""
 
-        groups: dict[str, set[str]] = {}
-        seen_zh: set[str] = set()
+        stop_words = STOP_WORDS
+        pairs: dict[tuple[str, str], set[str]] = {}  # (en_word, zh) -> {modids}
+        seen: set[tuple[str, str]] = set()
 
         for w in words:
             w_lower = w.lower()
-            candidates = self._index.get(w_lower)
+            if w_lower in stop_words:
+                continue
+            candidates = self._query_word(w_lower)
             if not candidates:
                 canon = self._lemma_map.get(w_lower)
                 if canon:
                     canon_lower = canon.lower()
                     if canon_lower != w_lower:
-                        candidates = self._index.get(canon_lower)
+                        candidates = self._query_word(canon_lower)
             if not candidates:
                 continue
 
             for zh, modid in candidates:
-                if zh in seen_zh:
-                    groups[zh].add(modid)
+                pair_key = (w, zh)
+                if pair_key in seen:
+                    pairs[pair_key].add(modid)
                 else:
-                    seen_zh.add(zh)
-                    groups[zh] = {modid}
+                    seen.add(pair_key)
+                    pairs[pair_key] = {modid}
 
-        if not groups:
+        if not pairs:
             return ""
 
-        sorted_groups = sorted(groups.items(), key=lambda x: -len(x[1]))
+        sorted_pairs = sorted(pairs.items(), key=lambda x: -len(x[1]))
         lines: list[str] = []
-        for zh, modids in sorted_groups[:max_groups]:
+        for (en_word, zh), modids in sorted_pairs[:max_groups]:
             modid_list = sorted(modids)[:max_modids]
             modid_str = ", ".join(modid_list)
             if len(modids) > max_modids:
                 modid_str += f" +{len(modids) - max_modids}"
-            lines.append(f"\"{zh}\" 来源Mod: [{modid_str}]")
+            lines.append(f"\"{en_word}\" -> \"{zh}\" 来源Mod: [{modid_str}]")
 
         if not lines:
             return ""
         return "  外部词典: " + " | ".join(lines)
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
