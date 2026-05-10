@@ -57,7 +57,7 @@ def run_phase4(ctx: PipelineContext) -> None:
             for v in filtered_uncached:
                 k = v["key"]
                 r = v.get("reason", "")
-                if r and k not in uncached_pass:
+                if r and k not in pass_keys:
                     uncached_reasons[k] = r
 
             for v in uncached:

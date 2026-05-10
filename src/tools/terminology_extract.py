@@ -20,7 +20,7 @@ from collections import defaultdict
 
 
 # ── stop words ────────────────────────────────────────────
-from ..config import get as _cfg_get
+from src.config import get as _cfg_get
 from src.tools.term_validation import STOP_WORDS
 
 
