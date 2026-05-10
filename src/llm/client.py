@@ -39,15 +39,8 @@ def create_openai_llm_call(
         raise ImportError("请安装 openai: pip install openai")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    call_count = [0]  # Mutable list in closure — intentional design
-
-    # token 用量统计
-    usage = {  # Mutable dict in closure — intentional design
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-        "calls": 0,
-    }
+    call_count = 0
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
 
     log_dir_path = Path(log_dir)
     log_dir_path.mkdir(parents=True, exist_ok=True)
@@ -56,7 +49,7 @@ def create_openai_llm_call(
     # 仅轮转有内容的日志（多 label 共用同一 log_dir 时避免空文件轮转）
     if latest_path.exists() and latest_path.stat().st_size > 0:
         mtime = latest_path.stat().st_mtime
-        archive_name = time.strftime("%Y%m%d-%H%M%S", time.localtime(mtime))
+        archive_name = time.strftime("%Y-%m-%d-%H%M%S", time.localtime(mtime))
         latest_path.rename(log_dir_path / f"latest.{archive_name}.log")
 
     def _log(level: str, msg: str) -> None:
@@ -69,8 +62,9 @@ def create_openai_llm_call(
     _max_tokens = _cfg.get("llm_max_tokens", 32768)
 
     def call(prompt: str) -> str:
-        call_count[0] += 1
-        n = call_count[0]
+        nonlocal call_count
+        call_count += 1
+        n = call_count
         call_id = uuid.uuid4().hex[:8]
         tag = f"[{label}#{n}] [id={call_id}]"
         _log("INFO", f"{tag} === Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")

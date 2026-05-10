@@ -152,38 +152,3 @@ def extract_terms(
         },
     }
 
-
-def main() -> None:
-    import argparse
-    import sys
-    parser = argparse.ArgumentParser(
-        description="从 en_us.json 提取高频术语和短语"
-    )
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument(
-        "--min-freq", type=int, default=2,
-        help="最低出现次数阈值，默认 2"
-    )
-    parser.add_argument(
-        "--max-ngram", type=int, default=3,
-        help="最大 n-gram 长度，默认 3"
-    )
-
-    args = parser.parse_args()
-
-    try:
-        with open(args.en, "r", encoding="utf-8-sig") as f:
-            en_data = json.load(f)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-
-    result = extract_terms(en_data, args.min_freq, args.max_ngram)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

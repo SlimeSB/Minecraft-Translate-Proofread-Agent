@@ -37,11 +37,6 @@ from src.models import AlignmentDict, EntryDict, VerdictDict
 _COMMENT_KEY_RE = re.compile(r"^_comment")
 
 
-def load_json(path: str) -> dict:
-    with open(path, "r", encoding="utf-8-sig") as f:
-        return json.load(f)
-
-
 def load_json_clean(path: str) -> tuple[dict[str, str], list[str]]:
     """加载 JSON 语言文件，过滤 _comment* 键，检测重复 key。
 
@@ -181,39 +176,3 @@ def check_vanilla_collisions(
         for k in sorted(collisions)
     ]
 
-
-def main() -> None:
-    import argparse
-    import sys
-    parser = argparse.ArgumentParser(
-        description="比较 en_us.json 和 zh_cn.json 的键对齐情况"
-    )
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("--output", default=None, help="保存对齐报告到文件（可选）")
-
-    args = parser.parse_args()
-
-    try:
-        en_data = load_json(args.en)
-        zh_data = load_json(args.zh)
-    except FileNotFoundError as e:
-        print(json.dumps({"error": f"文件未找到: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"JSON解析错误: {e}"}, ensure_ascii=False))
-        sys.exit(1)
-
-    result = align_keys(en_data, zh_data)
-
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()

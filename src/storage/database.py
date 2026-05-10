@@ -12,6 +12,8 @@ from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.models import AlignmentDict
+
 # ═══════════════════════════════════════════════════════════
 # Schema
 # ═══════════════════════════════════════════════════════════
@@ -112,7 +114,7 @@ class PipelineDB:
                  chg.get("old_en", ""), chg.get("old_zh", "")))
         self._conn.commit()
 
-    def load_alignment(self) -> dict:
+    def load_alignment(self) -> AlignmentDict:
         rows = self._conn.execute("SELECT * FROM alignment").fetchall()
         matched = []
         for r in rows:

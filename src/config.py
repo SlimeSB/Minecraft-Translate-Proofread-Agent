@@ -148,6 +148,7 @@ MAX_WORKERS: int = get("max_workers", 4)
 
 KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
 LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
+GUIDEME_PREFIX: str = "ae2guide:"
 
 
 def _as_text(val: str | list[str]) -> str:

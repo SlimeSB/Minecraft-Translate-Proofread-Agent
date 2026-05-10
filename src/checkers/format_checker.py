@@ -13,6 +13,7 @@ from typing import Any
 
 from src import config as cfg
 from src.models import EntryDict, VerdictDict
+from src.tools.code_detection import is_likely_code_or_proper_noun
 
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
@@ -90,7 +91,6 @@ def count_pattern(text: str, pattern: re.Pattern) -> int:
     return len(pattern.findall(text))
 
 
-from src.tools.code_detection import is_likely_code_or_proper_noun  # noqa: E402
 
 _EN_PREVIEW_LEN = cfg.get("en_preview_len", 60)
 

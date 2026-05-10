@@ -5,6 +5,7 @@
 import re
 
 from src import config as cfg
+from src.config import GUIDEME_PREFIX
 from src.models import (
     AutoVerdictsMap,
     EntryDict,
@@ -36,8 +37,8 @@ def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
         key = entry["key"]
-        if key.startswith("ae2guide:"):
-            prefix = "ae2guide:"
+        if key.startswith(GUIDEME_PREFIX):
+            prefix = GUIDEME_PREFIX
         else:
             prefix = group_prefix(key)
         groups.setdefault(prefix, []).append(entry)  # type: ignore[arg-type]
@@ -183,7 +184,7 @@ def build_entry_block(
     en = full_en or entry.get("en", "")
     zh = full_zh or entry.get("zh", "")
     lines = [f"key: `{key}`"]
-    is_guideme = key.startswith("ae2guide:")
+    is_guideme = key.startswith(GUIDEME_PREFIX)
     if full_en:
         en_s = en if is_guideme else en[:600]
         zh_s = zh if is_guideme else zh[:600]
@@ -266,7 +267,7 @@ def build_review_prompt(
         info = KEY_PREFIX_PROMPTS.get(prefix, {})
         cat_label = info.get("label", "其他")
         focus_notes = info.get("focus", cfg.DEFAULT_REVIEW_FOCUS)
-        effective_batch = 1 if prefix == "ae2guide:" else batch_size
+        effective_batch = 1 if prefix == GUIDEME_PREFIX else batch_size
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
             header = cfg.PROMPT_REVIEW_HEADER.format(
@@ -325,7 +326,7 @@ def build_filter_prompt(
     for prefix, group_entries in groups.items():
         info = KEY_PREFIX_PROMPTS.get(prefix, {})
         cat_label = info.get("label", "其他")
-        effective_batch = 1 if prefix == "ae2guide:" else batch_size
+        effective_batch = 1 if prefix == GUIDEME_PREFIX else batch_size
 
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
@@ -341,7 +342,7 @@ def build_filter_prompt(
                 verdict = v.get("verdict", "")
                 reason = v.get("reason", "")
                 suggestion = v.get("suggestion", "")
-                is_guideme = key.startswith("ae2guide:")
+                is_guideme = key.startswith(GUIDEME_PREFIX)
                 block = cfg.PROMPT_FILTER_ENTRY_BLOCK.format(
                     index=j + 1,
                     key=key,

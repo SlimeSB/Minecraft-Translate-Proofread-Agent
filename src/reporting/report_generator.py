@@ -7,25 +7,11 @@
     rg.collect(format_v, term_v, llm_v)
     rg.generate(output_dir)
 """
-import sys
 from collections import defaultdict
 from collections.abc import Sequence
 
-
-def _print(*args, **kwargs) -> None:
-    """安全打印，应对 Windows GBK 终端无法输出 emoji 的情况。"""
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        encoding = sys.stdout.encoding or "utf-8"
-        safe = [
-            str(a).encode(encoding, errors="replace").decode(encoding)
-            for a in args
-        ]
-        print(*safe, **kwargs)
-
-
-from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY  # noqa: E402
+from src.cli import safe_print as _print
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY
 
 # ═══════════════════════════════════════════════════════════
 # Verdict 优先级与去重

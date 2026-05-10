@@ -5,6 +5,7 @@
     is_valid_term(term: str) -> bool — 统一术语有效性检查
 """
 import re
+import sys
 
 _STOP_WORDS_CACHE: set[str] | None = None
 
@@ -17,6 +18,7 @@ def _load_stop_words() -> set[str]:
         from src import config as cfg
         _STOP_WORDS_CACHE = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
     except ImportError:
+        print("[term_validation] 无法加载配置，停用词为空", file=sys.stderr)
         _STOP_WORDS_CACHE = set()
     return _STOP_WORDS_CACHE
 
@@ -32,13 +34,10 @@ def is_valid_term(term: str) -> bool:
         return False
     if re.fullmatch(r"[0-9._-]+", t):
         return False
-    try:
-        stop = _load_stop_words()
-        if t in stop:
+    stop = _load_stop_words()
+    if t in stop:
+        return False
+    for word in t.split():
+        if word in stop:
             return False
-        for word in t.split():
-            if word in stop:
-                return False
-        return True
-    except ImportError:
-        return True
+    return True

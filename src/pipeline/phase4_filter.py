@@ -52,7 +52,7 @@ def run_phase4(ctx: PipelineContext) -> None:
         if uncached:
             filtered_uncached, passes_uncached = bridge.filter_verdicts(uncached)
 
-            uncached_pass: set[str] = {d["key"] for d in passes_uncached}
+            pass_keys: set[str] = {d["key"] for d in passes_uncached}
             uncached_reasons: dict[str, str] = {}
             for v in filtered_uncached:
                 k = v["key"]
@@ -63,16 +63,16 @@ def run_phase4(ctx: PipelineContext) -> None:
             for v in uncached:
                 ck = _cache_key(v)
                 k = v["key"]
-                if k in uncached_pass:
+                if k in pass_keys:
                     db.store_filter_cache(ck, "PASS", "")
                 else:
                     db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
             db.commit_filter_cache()
         else:
-            uncached_pass = set()
+            pass_keys = set()
             uncached_reasons = {}
 
-        all_pass = cached_pass_keys | uncached_pass
+        all_pass = cached_pass_keys | pass_keys
         all_reasons = {**cached_clean_reasons, **uncached_reasons}
 
         for v in verdicts:

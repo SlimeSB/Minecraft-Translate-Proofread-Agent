@@ -56,7 +56,7 @@ class AlignmentStats(TypedDict):
     total_zh: int
 
 
-class AlignmentDict(TypedDict):
+class AlignmentDict(TypedDict, total=False):
     """键对齐结果。Phase 1 产出。"""
     matched_entries: list[EntryDict]
     missing_zh: list[MissingEntryDict]
@@ -191,7 +191,6 @@ VERDICT_PRIORITY: dict[str, int] = {
     VERDICT_PASS:    1,
 }
 
-ALL_VERDICTS = frozenset([VERDICT_PASS, VERDICT_SUGGEST, VERDICT_REVIEW, VERDICT_FAIL])
 
 # ═══════════════════════════════════════════════════════════
 # 管道上下文 (dataclass)

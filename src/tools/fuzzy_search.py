@@ -10,7 +10,6 @@
 """
 import json
 import sqlite3
-import sys
 from src import config as cfg
 from src.models import FuzzyResultDict
 
@@ -161,43 +160,8 @@ def fuzzy_search_lines(
     return db.search(query, zh_entries, top_n, threshold)
 
 
-def load_json(path: str) -> dict:
+def load_json(path: str) -> dict[str, str]:
+    """加载 JSON 语言文件。"""
     with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
-
-
-# ═══════════════════════════════════════════════════════════
-# CLI 入口
-# ═══════════════════════════════════════════════════════════
-
-def main() -> None:
-    import argparse
-    parser = argparse.ArgumentParser(description="在翻译记忆库中模糊搜索相似翻译")
-    parser.add_argument("--query", required=True, help="待查找的英文原文")
-    parser.add_argument("--en", required=True, help="en_us.json 路径")
-    parser.add_argument("--zh", required=True, help="zh_cn.json 路径")
-    parser.add_argument("--threshold", type=float, default=50.0, help="相似度阈值 (0-100)，默认50")
-    parser.add_argument("--top", type=int, default=5, help="返回最相似的前N条，默认5")
-
-    args = parser.parse_args()
-
-    try:
-        en_entries = load_json(args.en)
-        zh_entries = load_json(args.zh)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        sys.exit(1)
-
-    matches = fuzzy_search_lines(
-        query=args.query,
-        en_entries=en_entries,
-        zh_entries=zh_entries,
-        top_n=args.top,
-        threshold=args.threshold,
-    )
-    print(json.dumps({"similar_lines": matches}, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()
 

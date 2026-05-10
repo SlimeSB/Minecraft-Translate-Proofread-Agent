@@ -11,11 +11,11 @@ def run_phase2(ctx: PipelineContext) -> None:
 
     # GuideME 条目不参与术语提取
     if ctx.pr_mode and ctx.pr_full_en_data:
-        lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not k.startswith("ae2guide:")}
-        lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not k.startswith("ae2guide:")}
+        lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
+        lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
     else:
-        lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith("ae2guide:")}
-        lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith("ae2guide:")}
+        lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
+        lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
 
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)
