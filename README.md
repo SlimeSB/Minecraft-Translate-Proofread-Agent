@@ -1,5 +1,5 @@
 ![DEEPSEEK](img/image-1.png)
-> 本仓库完全使用 **GitHub Copilot (DeepSeek-V4-Pro)** 辅助开发。
+> 本仓库使用 **DeepSeek-V4-Pro/Flash** 辅助开发。
 
 # Minecraft Mod Translation Proofread Agent
 
