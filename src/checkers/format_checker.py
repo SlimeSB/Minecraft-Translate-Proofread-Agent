@@ -146,7 +146,15 @@ class FormatChecker:
     def _check_empty_translation(
         self, key: str, en: str, zh: str
     ) -> VerdictDict | None:
-        """检查空翻译：zh == en 且原文非代码/专有名词。"""
+        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。"""
+        if zh == "" and en != "":
+            if "music_disc" in key and key.endswith(".desc"):
+                return None  # 唱片名(.desc)不翻译
+            if not is_likely_code_or_proper_noun(en):
+                return self._verdict(key, en, zh, "❌ FAIL",
+                    reason=f"翻译为空，原文'{en[:_EN_PREVIEW_LEN]}'未翻译",
+                )
+            return None
         if en == zh and en != "":
             if "music_disc" in key and key.endswith(".desc"):
                 return None  # 唱片名(.desc)不翻译
@@ -365,7 +373,7 @@ class FormatChecker:
         """检查省略号格式：不应使用三个英文句号 ..."""
         if RE_ELLIPSIS_WRONG.search(zh):
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
-                reason="使用了三个英文句号'...'作为省略号，应使用'⋯⋯'（居中省略号）",
+                reason="使用了三个英文句号'...'作为省略号，应使用'……'（中文省略号）",
             )
         return None
 
