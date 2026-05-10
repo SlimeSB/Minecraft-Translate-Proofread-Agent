@@ -10,7 +10,7 @@
 
 ## 目前待办
 
----
+- [ ] Windows 终端 GBK 编码问题 — `cli.py:configure_utf8_output()` 有 `isatty()` 检测，但 PowerShell 管道场景（`python run.py ... | tee output.log`）仍可能乱码。可增加 `--utf8` 参数或 `WT_SESSION` 自动检测。
 
 ## 未计划
 
@@ -26,9 +26,12 @@
 
 - [ ] 消除 `asyncio.run()` 反模式（`bridge.py` 同步方法内调 async，无法在已有事件循环中复用）— 波及 LLMBridge 全部公有方法 + 所有 Phase 调用方，改后需全量回归
 - [ ] LLM 并发改用真异步 IO（当前通过线程池包装，非真异步）— 当前 threading + semaphore 虽非真异步但工作稳定，重构收益不确定
+- [ ] Config 从全局单例重构为可注入 — `config.py` 是模块级全局单例，`llm/prompts.py` 等 15 个文件硬编码 `from src import config as cfg`。后续可将 Config 类注入 Phase 函数，改善测试隔离性。（工程大，延期）
 
 ## 已完成
 
+- [x] 原版 key 列表：从 JSON 迁移到 SQLite（`data/Minecraft.db`，11618 条），`check_vanilla_collisions()` 通过运行时查询检测碰撞
+- [x] Pipeline 级别集成测试：`tests/test_pipeline_integration.py`（10 个测试方法，134 行），`--no-llm` 模式 CI 安全
 - [x] `terminology_extract.py:23` — 导入风格已统一为绝对导入
 - [x] `phase3c_review.py:28` — `run_phase3c()` 拆为 `_filter_and_prepare()` + `_review_entries()` + 薄编排（11 行）
 - [x] `_is_useful_term` / `_is_valid_term` 词法 check 逻辑重复 → 合并为 `src/tools/term_validation.py`
@@ -57,3 +60,4 @@
 - [x] `_write_pr_output()` 10 参数 — 仅有 1 个调用方的 pure 输出函数，10 个参数避免隐式依赖，改 dataclass 反而多跳转一层
 - [x] `extract_terms()` 107 行 — 纯函数、流程线性（tokenize → unigram → bigram → trigram → 组装），拆分打断阅读流
 - [x] `create_openai_llm_call()` 93 行 — 闭包工厂模式，外层配置 + 内层 call() 逻辑紧凑，拆分意义不大
+
