@@ -10,7 +10,7 @@
 
 ## 目前待办
 
-- [ ] Windows 终端 GBK 编码问题 — `cli.py:configure_utf8_output()` 有 `isatty()` 检测，但 PowerShell 管道场景（`python run.py ... | tee output.log`）仍可能乱码。可增加 `--utf8` 参数或 `WT_SESSION` 自动检测。
+- [x] Windows 终端 GBK 编码问题 — `safe_print()` 增加 buffer.write fallback；`run.py` 全部 `print()` 替换为 `safe_print()`。
 
 ## 未计划
 

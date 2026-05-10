@@ -77,7 +77,7 @@ def main() -> None:
 
     # ── 运行流水线 ──
     _start = time.time()
-    print(f"\n⏱ 开始: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    safe_print(f"\n⏱ 开始: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     pipeline = ReviewPipeline(
         en_path=args.en or "",
@@ -97,7 +97,7 @@ def main() -> None:
     pipeline.run()
 
     _elapsed = time.time() - _start
-    print(f"\n⏱ 结束: {time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
+    safe_print(f"\n⏱ 结束: {time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
 
     _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
 
@@ -114,15 +114,15 @@ def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
     if total_calls == 0:
         return
 
-    print(f"\n{'='*40}")
-    print("Token 用量")
-    print(f"{'='*40}")
+    safe_print(f"\n{'='*40}")
+    safe_print("Token 用量")
+    safe_print(f"{'='*40}")
     if review_u.get("calls", 0):
-        print(f"  LLM 审校 (Phase 3c):         {review_u['calls']} 次调用, "
+        safe_print(f"  LLM 审校 (Phase 3c):         {review_u['calls']} 次调用, "
               f"{review_u['total_tokens']:,} tokens "
               f"(prompt: {review_u['prompt_tokens']:,}, completion: {review_u['completion_tokens']:,})")
     if filter_u.get("calls", 0):
-        print(f"  最终过滤 (Phase 4):           {filter_u['calls']} 次调用, "
+        safe_print(f"  最终过滤 (Phase 4):           {filter_u['calls']} 次调用, "
               f"{filter_u['total_tokens']:,} tokens "
               f"(prompt: {filter_u['prompt_tokens']:,}, completion: {filter_u['completion_tokens']:,})")
 
@@ -134,12 +134,12 @@ def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
         cached_verdicts_per_call = (cache_total - cache_hits) / filter_u["calls"] if filter_u["calls"] else 1
         if cached_verdicts_per_call > 0:
             saved = int(cache_hits / cached_verdicts_per_call * avg_per_call)
-            print(f"  缓存命中 (Phase 4):            {cache_hits}/{cache_total} 条, 节省约 {saved:,} tokens")
+            safe_print(f"  缓存命中 (Phase 4):            {cache_hits}/{cache_total} 条, 节省约 {saved:,} tokens")
 
-    print(f"  {'─' * 38}")
-    print(f"  实际消耗:                     {total_calls} 次调用, {total_tokens:,} tokens "
+    safe_print(f"  {'─' * 38}")
+    safe_print(f"  实际消耗:                     {total_calls} 次调用, {total_tokens:,} tokens "
           f"(prompt: {total_prompt:,}, completion: {total_completion:,})")
-    print(f"{'='*40}")
+    safe_print(f"{'='*40}")
 
 
 def _add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -164,10 +164,10 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _validate_input_files(en_path: str, zh_path: str) -> None:
     if not os.path.exists(en_path):
-        print(f"错误: EN 文件不存在: {en_path}", file=sys.stderr)
+        safe_print(f"错误: EN 文件不存在: {en_path}", file=sys.stderr)
         sys.exit(1)
     if not os.path.exists(zh_path):
-        print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
+        safe_print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -175,12 +175,12 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     output_dir = Path(output_dir_str)
     db_path = output_dir / "pipeline.db"
     if not db_path.exists():
-        print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
+        safe_print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
         sys.exit(1)
 
     api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
     if not api_key:
-        print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
+        safe_print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
         sys.exit(1)
 
     base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
@@ -197,7 +197,7 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     db.close()
 
     if not verdicts:
-        print("无待过滤 verdict")
+        safe_print("无待过滤 verdict")
         sys.exit(0)
 
     ctx = PipelineContext(
@@ -213,10 +213,10 @@ def _run_filter_only(args, output_dir_str: str) -> None:
 
 def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str) -> PRAlignmentWrapper | None:
     if is_pr_alignment:
-        print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
+        safe_print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
         with open(args.pr_alignment, "r", encoding="utf-8") as f:
             pr_alignment = json.load(f)
-        print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
+        safe_print(f"  已加载: {len(pr_alignment.get('all_entries', []))} 条变更, "
               f"{len(pr_alignment.get('all_warnings', []))} 条警告")
         return pr_alignment
 
@@ -247,13 +247,13 @@ def _build_llm_calls(args) -> tuple:
     model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
 
     if not api_key:
-        print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
+        safe_print("警告: 未设置 REVIEW_OPENAI_API_KEY，将跳过 LLM 审校", file=sys.stderr)
         return llm_call, filter_llm_call
 
-    print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
+    safe_print(f"[Pre-flight] 检查 API: {base_url} (模型: {model})")
     if not check_api_health(base_url, api_key):
-        print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
-        print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
+        safe_print("  提示: 可设置 REVIEW_OPENAI_BASE_URL / REVIEW_OPENAI_MODEL 更换端点", file=sys.stderr)
+        safe_print("  将继续运行，但 LLM 调用可能失败", file=sys.stderr)
 
     llm_call = create_openai_llm_call(api_key, model, base_url,
                                       system_prompt=cfg.REVIEW_SYSTEM_PROMPT,

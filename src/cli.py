@@ -27,13 +27,15 @@ def configure_utf8_output() -> None:
 
 
 def safe_print(*args, **kwargs) -> None:
-    """GBK 安全打印。"""
+    """GBK 安全打印。fallback 用 buffer.write 绕过编码层。"""
     try:
         print(*args, **kwargs)
     except UnicodeEncodeError:
-        enc = sys.stdout.encoding or "utf-8"
-        for a in args:
-            print(str(a).encode(enc, errors="replace").decode(enc), **kwargs)
+        f = kwargs.get("file", sys.stdout)
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        text = sep.join(str(a) for a in args) + end
+        f.buffer.write(text.encode("utf-8", errors="replace"))
 
 
 def check_api_health(base_url: str, api_key: str) -> bool:
