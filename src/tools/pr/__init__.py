@@ -65,9 +65,9 @@ def _align_json_mods(
             lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
 
         try:
-            old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token)
+            old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token) if mod_data["en_base"] is not None else ""
             new_en_text = _http.raw_get(f"{raw_head}/{lang_dir}/en_us.json", token) if en_head is not None else ""
-            old_zh_text = _http.raw_get(f"{raw_base}/{lang_dir}/zh_cn.json", token)
+            old_zh_text = _http.raw_get(f"{raw_base}/{lang_dir}/zh_cn.json", token) if mod_data["zh_base"] is not None else ""
             new_zh_text = _http.raw_get(f"{raw_head}/{lang_dir}/zh_cn.json", token) if mod_data["zh_head"] is not None else ""
         except RuntimeError as e:
             warn(f"  警告: 模组 {resolved_mod_key} 拉取失败: {e}")
