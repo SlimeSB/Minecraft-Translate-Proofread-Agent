@@ -16,6 +16,7 @@ def run_phase5(ctx: PipelineContext) -> None:
         kept: list[VerdictDict] = db.load_verdicts(phase="merged", filtered=1)  # type: ignore[assignment]
         if not kept:
             kept = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
+        glossary = ctx.glossary if ctx.glossary else db.load_glossary()
 
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
@@ -36,6 +37,12 @@ def run_phase5(ctx: PipelineContext) -> None:
     json_path = ctx.output_dir / "report.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, ensure_ascii=False, indent=2)
+
+    # ── glossary.json ──
+    glossary_path = ctx.output_dir / "glossary.json"
+    with open(glossary_path, "w", encoding="utf-8") as f:
+        json.dump(glossary, f, ensure_ascii=False, indent=2)
+    info(f"  术语表: {glossary_path}")
 
     # ── report.md（整体 PR 摘要）──
     _generate_summary_md(ctx, kept, ns_groups)
