@@ -113,7 +113,6 @@
         "## 问题列表 ({count}条)"
       ],
       "filter_entry_block": [
-        "### 条目 {index}",
         "key: `{key}`",
         "EN: \"{en}\"",
         "ZH: \"{zh}\"",

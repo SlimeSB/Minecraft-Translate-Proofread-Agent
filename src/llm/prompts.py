@@ -172,7 +172,6 @@ def filter_for_llm(
 
 def build_entry_block(
     entry: EntryDict,
-    index: int = 0,
     fuzzy_results: list[FuzzyResultDict] | None = None,
     auto_verdicts: list[VerdictDict] | None = None,
     glossary_entries: list[GlossaryDict] | None = None,
@@ -295,14 +294,14 @@ def build_review_prompt(
                     input_guidance=input_guidance,
                 )
             blocks = [header]
-            for j, entry in enumerate(batch):
+            for entry in batch:
                 key = entry["key"]
                 auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
                 full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
                 en_for_hints = full_en or entry.get("en", "")
                 external_hints = external_dict_store.lookup(en_for_hints) if external_dict_store else ""
-                block = build_entry_block(entry, j + 1, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)
+                block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)
                 blocks.append(block)
             prompts.append("\n\n".join(blocks))
     return prompts
@@ -335,7 +334,7 @@ def build_filter_prompt(
                 count=len(batch),
             )
             lines: list[str] = []
-            for j, v in enumerate(batch):
+            for v in batch:
                 key = v.get("key", "")
                 en = v.get("en_current", "")
                 zh = v.get("zh_current", "")
@@ -344,7 +343,6 @@ def build_filter_prompt(
                 suggestion = v.get("suggestion", "")
                 is_guideme = key.startswith(GUIDEME_PREFIX)
                 block = cfg.PROMPT_FILTER_ENTRY_BLOCK.format(
-                    index=j + 1,
                     key=key,
                     en=en if is_guideme else en[:200],
                     zh=zh if is_guideme else zh[:200],

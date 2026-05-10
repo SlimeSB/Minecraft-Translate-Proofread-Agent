@@ -302,25 +302,25 @@ class TestBuildFilterPrompt(unittest.TestCase):
 class TestBuildEntryBlock(unittest.TestCase):
     def test_basic_block(self):
         entry = _entry("block.test", "Copper Block", "铜方块")
-        block = build_entry_block(entry, 1)
+        block = build_entry_block(entry)
         self.assertIn("block.test", block)
         self.assertIn("Copper Block", block)
 
     def test_block_with_fuzzy_results(self):
         entry = _entry("block.test", "Copper", "铜")
         fuzzy = [{"similarity": 90.0, "en": "Copper Ore", "zh": "铜矿石", "key": "other.key"}]
-        block = build_entry_block(entry, 1, fuzzy_results=fuzzy)
+        block = build_entry_block(entry, fuzzy_results=fuzzy)
         self.assertIn("90.0", block)
 
     def test_block_with_auto_verdicts(self):
         entry = _entry("block.test", "Copper", "铜")
         auto = [_verdict("block.test", verdict="❌ FAIL", reason="缺少占位符")]
-        block = build_entry_block(entry, 1, auto_verdicts=auto)
+        block = build_entry_block(entry, auto_verdicts=auto)
         self.assertIn("❌ FAIL", block)
 
     def test_block_with_full_context(self):
         entry = _entry("book.page.0", "Short", "短")
-        block = build_entry_block(entry, 1, full_en="FullEN0FullEN1", full_zh="FullZH0FullZH1")
+        block = build_entry_block(entry, full_en="FullEN0FullEN1", full_zh="FullZH0FullZH1")
         self.assertIn("FullEN0", block)
         self.assertIn("完整上下文", block)
 
