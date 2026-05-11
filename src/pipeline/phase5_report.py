@@ -18,6 +18,20 @@ def run_phase5(ctx: PipelineContext) -> None:
             kept = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
         glossary = ctx.glossary if ctx.glossary else db.load_glossary()
 
+    # ── 从对齐数据回填 version/file_path（verdict 构造时未设置）──
+    used_meta: dict[str, dict[str, str]] = {}
+    for e in (ctx.alignment.get("matched_entries") or []):
+        used_meta[e["key"]] = {"version": e.get("version", ""), "file_path": e.get("file_path", "")}
+    enriched: list[dict] = []
+    for v in kept:
+        meta = used_meta.get(v.get("key", ""), {})
+        enriched.append({
+            **v,
+            "version": v.get("version") or meta.get("version", ""),
+            "file_path": v.get("file_path") or meta.get("file_path", ""),
+        })
+    kept = enriched  # type: ignore[assignment]
+
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
     rg.load_alignment(ctx.alignment)

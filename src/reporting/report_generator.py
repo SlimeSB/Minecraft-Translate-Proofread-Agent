@@ -125,12 +125,20 @@ class ReportGenerator:
 
         en_zh_map: dict[str, dict[str, str]] = {}
         namespace_map: dict[str, str] = {}
+        version_map: dict[str, str] = {}
+        filepath_map: dict[str, str] = {}
         for entry in self.matched_entries:
             key = entry["key"]
             en_zh_map[key] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
             ns = entry.get("namespace", "")
             if ns:
                 namespace_map[key] = ns
+            ver = entry.get("version", "")
+            if ver:
+                version_map[key] = ver
+            fp = entry.get("file_path", "")
+            if fp:
+                filepath_map[key] = fp
 
         _VERDICT_MAP = {
             "FAIL": "❌ FAIL", "REVIEW": "🔶 REVIEW", "SUGGEST": "⚠️ SUGGEST",
@@ -147,8 +155,8 @@ class ReportGenerator:
                 "reason":     v.get("reason", ""),
                 "source":     v.get("source", ""),
                 "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
-                "version":    v.get("version", ""),
-                "file_path":  v.get("file_path", ""),
+                "version":    v.get("version") or version_map.get(v.get("key", ""), ""),
+                "file_path":  v.get("file_path") or filepath_map.get(v.get("key", ""), ""),
             }
             if not out["en_current"] and not out["zh_current"]:
                 pair = en_zh_map.get(out["key"], {})
