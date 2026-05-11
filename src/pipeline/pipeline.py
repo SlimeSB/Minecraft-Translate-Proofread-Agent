@@ -17,6 +17,7 @@ from src.pipeline.phase5_report import run_phase5
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 from src.dictionary.external import ExternalDictStore
+from src.dictionary.minecraft_dict import MinecraftDictStore
 from src import config as cfg
 
 
@@ -59,7 +60,14 @@ class ReviewPipeline:
             pr_mode=pr_alignment is not None,
             pr_alignment=pr_alignment,
         )
-        self.ctx.external_dict_store = ExternalDictStore() if external_dict else None
+        ext_store = ExternalDictStore() if external_dict else None
+        mc_store = MinecraftDictStore()
+        self.ctx.external_dict_store = ext_store
+        stores: list = []
+        if ext_store is not None:
+            stores.append(ext_store)
+        stores.append(mc_store)
+        self.ctx.dict_stores = stores
         self.ctx.ensure_output_dir()
 
     def run(self) -> None:
@@ -82,19 +90,26 @@ class ReviewPipeline:
         info(f"{'='*60}")
 
         try:
-            run_phase1(ctx)       # 键对齐 / PR 数据加载
-            run_phase2(ctx)       # 术语提取与一致性检查
-            run_phase3a(ctx)      # 全自动格式检查
-            run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
+            try:
+                run_phase1(ctx)       # 键对齐 / PR 数据加载
+                run_phase2(ctx)       # 术语提取与一致性检查
+                run_phase3a(ctx)      # 全自动格式检查
+                run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
 
-            # 合并 verdict 写入 DB（供 P4 过滤使用）
-            _save_merged_verdicts(ctx)
+                # 合并 verdict 写入 DB（供 P4 过滤使用）
+                _save_merged_verdicts(ctx)
 
-            run_phase4(ctx)       # 最终 LLM 过滤
-            run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
-        except Exception as e:
-            warn(f"\n错误: {e}")
-            raise
+                run_phase4(ctx)       # 最终 LLM 过滤
+                run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
+            except Exception as e:
+                warn(f"\n错误: {e}")
+                raise
+        finally:
+            for store in ctx.dict_stores:
+                try:
+                    store.close()
+                except Exception:
+                    pass
 
 
 def _save_merged_verdicts(ctx: PipelineContext) -> None:

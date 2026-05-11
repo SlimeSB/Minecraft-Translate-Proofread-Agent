@@ -324,5 +324,43 @@ class TestTerminologyBuilder(unittest.TestCase):
         self.assertIn("术语不一致", verdicts[0]["reason"])
 
 
+class TestLlmVerifyGlossaryWithDictStores(unittest.TestCase):
+
+    def test_dict_stores_raises_not_provided(self):
+        """term_hints=None 时行为不变，不额外注入参考。"""
+        glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
+        en_data = {"block.copper_ore": "Copper Ore", "block.iron_ore": "Iron Ore"}
+        zh_data = {"block.copper_ore": "铜矿石", "block.iron_ore": "铁矿石"}
+        mock_llm = lambda p: "[]"
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm, term_hints=None)
+        self.assertIs(result, glossary)
+        self.assertEqual(glossary[0]["zh"], "铜")
+
+    def test_dict_stores_injects_term_hints(self):
+        """term_hints 有值时在 prompt 中注入。"""
+        glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
+        en_data = {  # 至少需要 2 个不同来源才能触发 LLM 校验
+            "block.copper_ore": "Copper Ore",
+            "block.copper_block": "Copper Block",
+        }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.copper_block": "铜块",
+        }
+
+        captured_prompt: list[str] = []
+
+        def mock_llm(p: str) -> str:
+            captured_prompt.append(p)
+            return "[]"
+
+        term_hints = {"copper": "原版词典: \nCopper -> 铜 [1.20.0-1.21.0]"}
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm, term_hints=term_hints)
+        self.assertIs(result, glossary)
+        self.assertTrue(captured_prompt, "LLM 应该被调用")
+        self.assertIn("原版词典", captured_prompt[0],
+                      "term_hints 内容应出现在 prompt 中")
+
+
 if __name__ == "__main__":
     unittest.main()

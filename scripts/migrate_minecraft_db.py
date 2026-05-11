@@ -19,10 +19,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-
-def _parse_version(v: str) -> tuple[int, ...]:
-    parts = v.split(".")
-    return tuple(int(p) for p in parts)
+from src.tools.version_utils import parse_version as _parse_version
 
 
 def migrate(db_path: str) -> None:

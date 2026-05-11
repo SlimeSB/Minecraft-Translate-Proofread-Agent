@@ -7,8 +7,11 @@
 import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from src.logging import warn
+
+from src.dictionary.protocol import DictStore, LookupMode
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
@@ -27,6 +30,7 @@ class ExternalDictStore:
         self._loaded = False
         self._db_path = db_path
         self._lemma_cache_path = lemma_cache_path
+        self._use_fts = False
 
     def load(self) -> None:
         if self._loaded:
@@ -47,6 +51,17 @@ class ExternalDictStore:
             )
         except sqlite3.OperationalError:
             warn(f"[ExternalDict] 索引创建失败（可能为只读文件系统）")
+        # 尝试创建 FTS5 虚拟表
+        try:
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS dict_fts "
+                "USING fts5(ORIGIN_NAME, TRANS_NAME, MODID, content=dict, content_rowid=rowid)"
+            )
+            self._conn.execute("INSERT INTO dict_fts(dict_fts) VALUES('rebuild')")
+            self._use_fts = True
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            warn("[ExternalDict] FTS5 创建失败，降级为原始索引查询")
+            self._use_fts = False
         total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
         unique = self._conn.execute(
             "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"
@@ -71,6 +86,21 @@ class ExternalDictStore:
                 warn(f"[ExternalDict] lemma 缓存加载失败: {e}")
                 self._lemma_map = {}
 
+    def _query_word_fts(self, word: str) -> list[tuple[str, str, str]]:
+        """使用 FTS5 查询单个英文单词，返回 [(zh, modid, origin), ...]."""
+        if self._conn is None or not self._use_fts:
+            return []
+        try:
+            rows = self._conn.execute(
+                "SELECT TRANS_NAME, MODID, ORIGIN_NAME FROM dict_fts "
+                "WHERE dict_fts MATCH ?",
+                (word,),
+            ).fetchall()
+            return [(r["TRANS_NAME"], r["MODID"], r["ORIGIN_NAME"]) for r in rows]
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            self._use_fts = False
+            return []
+
     def _query_word(self, word_lower: str) -> list[tuple[str, str]]:
         """查询单个英文单词的翻译记录，返回 [(zh, modid), ...]."""
         if self._conn is None:
@@ -81,7 +111,17 @@ class ExternalDictStore:
         ).fetchall()
         return [(r["TRANS_NAME"], r["MODID"]) for r in rows]
 
-    def lookup(self, en_text: str, max_groups: int = 3, max_modids: int = 5) -> str:
+    def _query_word_with_origin(self, word_lower: str) -> list[tuple[str, str, str]]:
+        """查询返回 (zh, modid, origin)，用于统一格式输出。"""
+        if self._conn is None:
+            return []
+        rows = self._conn.execute(
+            "SELECT TRANS_NAME, MODID, ORIGIN_NAME FROM dict WHERE LOWER(ORIGIN_NAME) = ?",
+            (word_lower,),
+        ).fetchall()
+        return [(r["TRANS_NAME"], r["MODID"], r["ORIGIN_NAME"]) for r in rows]
+
+    def lookup(self, en_text: str, mode: str = "mixed", **kwargs: Any) -> str:
         """在 EN 原文中搜索已知翻译，返回注入文本（空串表示无匹配）。"""
         if not self._loaded:
             self.load()
@@ -93,24 +133,34 @@ class ExternalDictStore:
             return ""
 
         stop_words = STOP_WORDS
-        pairs: dict[tuple[str, str], set[str]] = {}  # (en_word, zh) -> {modids}
+        pairs: dict[tuple[str, str], set[str]] = {}
         seen: set[tuple[str, str]] = set()
 
         for w in words:
             w_lower = w.lower()
             if w_lower in stop_words:
                 continue
-            candidates = self._query_word(w_lower)
+
+            if self._use_fts:
+                candidates = self._query_word_fts(w)
+            else:
+                candidates_flat = self._query_word(w_lower)
+                candidates = [(zh, modid, "") for zh, modid in candidates_flat]
+
             if not candidates:
                 canon = self._lemma_map.get(w_lower)
                 if canon:
                     canon_lower = canon.lower()
                     if canon_lower != w_lower:
-                        candidates = self._query_word(canon_lower)
+                        if self._use_fts:
+                            candidates = self._query_word_fts(canon)
+                        else:
+                            candidates_flat = self._query_word(canon_lower)
+                            candidates = [(zh, modid, "") for zh, modid in candidates_flat]
             if not candidates:
                 continue
 
-            for zh, modid in candidates:
+            for zh, modid, origin in candidates:
                 pair_key = (w, zh)
                 if pair_key in seen:
                     pairs[pair_key].add(modid)
@@ -121,6 +171,9 @@ class ExternalDictStore:
         if not pairs:
             return ""
 
+        max_groups = kwargs.get("max_groups", 3)
+        max_modids = kwargs.get("max_modids", 5)
+
         sorted_pairs = sorted(pairs.items(), key=lambda x: -len(x[1]))
         lines: list[str] = []
         for (en_word, zh), modids in sorted_pairs[:max_groups]:
@@ -128,11 +181,11 @@ class ExternalDictStore:
             modid_str = ", ".join(modid_list)
             if len(modids) > max_modids:
                 modid_str += f" +{len(modids) - max_modids}"
-            lines.append(f"\"{en_word}\" -> \"{zh}\" 来源Mod: [{modid_str}]")
+            lines.append(f"{en_word} -> {zh} [{modid_str}]")
 
         if not lines:
             return ""
-        return "  外部词典: " + " | ".join(lines)
+        return "外部词典: \n" + "\n".join(lines)
 
     def close(self) -> None:
         if self._conn:

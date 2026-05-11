@@ -252,7 +252,8 @@ class PipelineContext:
 
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
-    external_dict_store: object = None  # ExternalDictStore | None
+    dict_stores: list = field(default_factory=list)  # list[DictStore]
+    external_dict_store: object = None  # ExternalDictStore | None (保留别名)
 
     config: dict = field(default_factory=dict)
 

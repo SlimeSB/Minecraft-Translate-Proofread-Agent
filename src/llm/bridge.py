@@ -189,7 +189,7 @@ class LLMBridge:
         fuzzy_results_map: FuzzyResultsMap | None = None,
         batch_size: int = 20,
         max_workers: int | None = None,
-        external_dict_store: object = None,
+        dict_stores: list | None = None,
     ) -> list[VerdictDict]:
         if not self.llm_call:
             raise RuntimeError("LLMBridge 未配置 llm_call 函数")
@@ -199,7 +199,7 @@ class LLMBridge:
         prompts = build_review_prompt(
             entries, glossary_entries, auto_verdicts_map,
             fuzzy_results_map, batch_size, merged_context=merged,
-            external_dict_store=external_dict_store,
+            dict_stores=dict_stores,
         )
 
         def _error_return(i: int) -> list[VerdictDict]:

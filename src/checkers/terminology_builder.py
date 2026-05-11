@@ -202,6 +202,7 @@ def llm_verify_glossary(
     en_data: dict[str, str],
     zh_data: dict[str, str],
     llm_call: Callable[[str], str] | None,
+    term_hints: dict[str, str] | None = None,
 ) -> list[GlossaryDict]:
     """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。
 
@@ -210,6 +211,7 @@ def llm_verify_glossary(
         en_data: 英文条目数据 (key -> en text)
         zh_data: 中文条目数据 (key -> zh text)
         llm_call: LLM 调用函数
+        term_hints: 预计算的词典参考，key 为术语英文原文小写，value 为已拼接提示文本
 
     Returns:
         修正后的术语表（与传入的 glossary 为同一列表对象）
@@ -247,6 +249,10 @@ def llm_verify_glossary(
         block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
         for j, (en_txt, zh_txt) in enumerate(ctx):
             block += '  [{}] "{}" -> "{}"\n'.format(j + 1, en_txt, zh_txt)
+        if term_hints:
+            hint = term_hints.get(en_lower, "")
+            if hint:
+                block += "\n" + hint
         lines.append(block)
         verify_items.append(g)
 

@@ -77,7 +77,7 @@ def _review_entries(
             prompts = build_review_prompt(
                 llm_entries, ctx.glossary, auto_map,
                 ctx.fuzzy_results_map, review_batch_size, merged_context=merged,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
             total_chars = sum(len(p) for p in prompts)
             info(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
@@ -94,7 +94,7 @@ def _review_entries(
             verdicts = bridge.review_batch(
                 llm_entries, ctx.glossary, auto_map,
                 ctx.fuzzy_results_map, review_batch_size,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
 
     if untranslated_llm:
@@ -103,7 +103,7 @@ def _review_entries(
             prompts = build_review_prompt(
                 untranslated_llm, ctx.glossary, auto_map,
                 ctx.fuzzy_results_map, 1, merged_context=None,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
             total_chars = sum(len(p) for p in prompts)
             info(f"  [未翻译-干运行] {len(untranslated_llm)} 条, ~{total_chars//4} tokens")
