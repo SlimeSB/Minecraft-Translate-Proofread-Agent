@@ -1,4 +1,4 @@
-"""迁移 MInecraft.db 从 (key, version) 每行格式 到 (key, version_start, version_end, changes) 格式。
+"""迁移 Minecraft.db 从 (key, version) 每行格式 到 (key, version_start, version_end, changes) 格式。
 
 原格式:
     key | en_us | zh_cn | version | category
@@ -12,7 +12,7 @@
 changes: 该 key 在全部版本中发生过变更则为 1，始终未变为 0。
 
 用法:
-    python scripts/migrate_minecraft_db.py [--db data/MInecraft.db]
+    python scripts/migrate_minecraft_db.py [--db data/Minecraft.db]
 """
 import argparse
 import sqlite3

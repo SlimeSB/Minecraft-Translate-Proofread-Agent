@@ -27,6 +27,7 @@ from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
 from src.storage.database import PipelineDB
 from src import config as cfg
+from src.dictionary.external import DEFAULT_DB_PATH
 
 load_dotenv()
 configure_utf8_output()
@@ -72,6 +73,10 @@ def main() -> None:
     # ── 构建 LLM（API 健康检查提前）──
     llm_call, filter_llm_call = _build_llm_calls(args)
 
+    # ── 确保外部词典 ──
+    if not args.no_external_dict:
+        _ensure_external_dict(args)
+
     # ── PR 对齐 ──
     pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
 
@@ -92,7 +97,7 @@ def main() -> None:
         fuzzy_threshold=args.fuzzy_threshold,
         batch_size=args.batch_size,
         pr_alignment=pr_alignment,
-        external_dict=args.external_dict,
+        external_dict=not args.no_external_dict,
     )
     pipeline.run()
 
@@ -158,8 +163,35 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--batch-size", type=int, default=25, help="LLM 每批条目数")
     parser.add_argument("--filter-only", action="store_true",
                         help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
-    parser.add_argument("--external-dict", action="store_true",
-                        help="加载外部社区翻译词典（data/Dict-Sqlite.db）")
+    parser.add_argument("--no-external-dict", action="store_true", default=False,
+                        help="不加载外部社区翻译词典（默认加载 data/Dict-Sqlite.db）")
+
+
+def _ensure_external_dict(args: argparse.Namespace) -> None:
+    """外部词典不存在时询问是否自动下载。下载失败时禁用词典。"""
+    dict_path = Path(DEFAULT_DB_PATH)
+    if dict_path.exists():
+        return
+    safe_print(f"\n[ExternalDict] 未找到本地词典: {dict_path}")
+    safe_print("  该词典包含约 90 万条社区历史翻译记录，可提升审校质量。")
+    answer = input("是否自动下载？(y/N): ").strip().lower()
+    if answer != "y":
+        safe_print("  跳过下载。可稍后通过 python scripts/download_external_dict.py 手动下载。")
+        args.no_external_dict = True
+        return
+    from scripts.download_external_dict import get_latest_release_asset, download_file
+    token = os.environ.get("GITHUB_TOKEN", "")
+    try:
+        url, filename, size = get_latest_release_asset(
+            "VM-Chinese-translate-group/i18n-Dict-Extender", token
+        )
+        safe_print(f"  文件: {filename} ({size // 1048576}MB)")
+        download_file(url, dict_path, size, token)
+        safe_print(f"  完成: {dict_path} ({dict_path.stat().st_size // 1048576}MB)")
+    except Exception as e:
+        safe_print(f"  下载失败: {e}", file=sys.stderr)
+        safe_print("  将跳过外部词典。稍后可通过 python scripts/download_external_dict.py 手动下载后重试。")
+        args.no_external_dict = True
 
 
 def _validate_input_files(en_path: str, zh_path: str) -> None:

@@ -40,7 +40,7 @@ class ReviewPipeline:
         fuzzy_top: int = 5,
         batch_size: int = 20,
         pr_alignment: PRAlignmentWrapper | None = None,
-        external_dict: bool = False,
+        external_dict: bool = True,
     ):
         self.ctx = PipelineContext(
             en_path=Path(en_path) if en_path else None,

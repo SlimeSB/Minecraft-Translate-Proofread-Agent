@@ -2,7 +2,7 @@
 
 快速运行：`python run.py --en tests/fixtures/en_us.json --zh tests/fixtures/zh_cn.json -o ./output/`
 
-`python run.py --pr 5979 -o ./output/ --external-dict`
+`python run.py --pr 5979 -o ./output/ --no-external-dict`
 
 > 291 个单元测试（18 个模块），全部通过。
 
@@ -10,7 +10,7 @@
 
 ## 目前待办
 
-- [x] Windows 终端 GBK 编码问题 — `safe_print()` 增加 buffer.write fallback；`run.py` 全部 `print()` 替换为 `safe_print()`。
+- [ ] 架构改用 vite react，调用 fastapi 接口
 
 ## 未计划
 
@@ -30,6 +30,8 @@
 
 ## 已完成
 
+- [x] 社区词典下载检查一下
+- [x] Windows 终端 GBK 编码问题 — `safe_print()` 增加 buffer.write fallback；`run.py` 全部 `print()` 替换为 `safe_print()`。
 - [x] 原版 key 列表：从 JSON 迁移到 SQLite（`data/Minecraft.db`，11618 条），`check_vanilla_collisions()` 通过运行时查询检测碰撞
 - [x] Pipeline 级别集成测试：`tests/test_pipeline_integration.py`（10 个测试方法，134 行），`--no-llm` 模式 CI 安全
 - [x] `terminology_extract.py:23` — 导入风格已统一为绝对导入

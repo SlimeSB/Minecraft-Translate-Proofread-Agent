@@ -44,10 +44,11 @@ pip install openai
 将 Dict-Sqlite.db 放入 data/ 目录
 
 ```bash
-python run.py --en en_us.json --zh zh_cn.json -o ./output/ --external-dict
+python run.py --en en_us.json --zh zh_cn.json -o ./output/
 ```
 
-> 按需 SQLite 查询模式，仅在 Phase 3c LLM 审校阶段生效，不再全量加载到内存。
+> 默认加载外部词典（data/Dict-Sqlite.db，不存在时自动提示下载），按需 SQLite 查询模式，仅在 Phase 3c LLM 审校阶段生效，不再全量加载到内存。
+> 使用 `--no-external-dict` 跳过。
 
 ## 配置
 
@@ -92,8 +93,8 @@ python run.py --en en_us.json --zh zh_cn.json -o ./output/ --interactive
 # PR 模式（--repo 可选，默认读配置）
 python run.py --pr 5979 -o ./output/
 
-# 启用外部社区翻译词典（需先下载 data/Dict-Sqlite.db）
-python run.py --en en_us.json --zh zh_cn.json -o ./output/ --external-dict
+# 跳过外部社区翻译词典
+python run.py --en en_us.json --zh zh_cn.json -o ./output/ --no-external-dict
 
 # 仅重跑最终过滤（使用 pipeline.db 数据）
 python run.py --filter-only -o ./output/
