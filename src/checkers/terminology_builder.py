@@ -8,7 +8,7 @@
     tb = TerminologyBuilder()
     tb.load(en_data, zh_data, alignment)
     glossary = tb.merge_and_build(llm_call=my_llm_fn)
-    glossary = llm_verify_glossary(glossary, tb.en_data, my_llm_fn)
+    glossary = llm_verify_glossary(glossary, tb.en_data, tb.zh_data, my_llm_fn)
     verdicts = check_consistency(glossary, tb.matched_entries, tb.merged)
 """
 import json
@@ -200,6 +200,7 @@ def _dedup_zh_conflicts(
 def llm_verify_glossary(
     glossary: Sequence[GlossaryDict],
     en_data: dict[str, str],
+    zh_data: dict[str, str],
     llm_call: Callable[[str], str] | None,
 ) -> list[GlossaryDict]:
     """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。
@@ -207,6 +208,7 @@ def llm_verify_glossary(
     Args:
         glossary: 术语表列表，每项含 "en" 和 "zh" 键
         en_data: 英文条目数据 (key -> en text)
+        zh_data: 中文条目数据 (key -> zh text)
         llm_call: LLM 调用函数
 
     Returns:
@@ -216,15 +218,20 @@ def llm_verify_glossary(
         return glossary
 
     import re
-    term_sources: dict[str, list[str]] = {}
+    term_sources: dict[str, list[tuple[str, str]]] = {}
     for g in glossary:
         en_lower = g["en"].lower()
         term_sources[en_lower] = []
-        for en_val in en_data.values():
+        seen_en: set[str] = set()
+        for key, en_val in en_data.items():
             if not isinstance(en_val, str):
                 continue
+            if en_val in seen_en:
+                continue
             if re.search(r"\b" + re.escape(en_lower) + r"\b", en_val, re.IGNORECASE):
-                term_sources[en_lower].append(en_val)
+                seen_en.add(en_val)
+                zh_val = zh_data.get(key, "")
+                term_sources[en_lower].append((en_val, zh_val))
 
     lines: list[str] = []
     verify_items: list[GlossaryDict] = []
@@ -233,14 +240,13 @@ def llm_verify_glossary(
         sources = term_sources.get(en_lower, [])
         if not sources:
             continue
-        unique = list(dict.fromkeys(sources))
-        if len(unique) < 2:
+        if len(sources) < 2:
             continue
-        sorted_len = sorted(unique, key=len)
-        ctx = [sorted_len[-1]] + sorted_len[:4]
+        sorted_sources = sorted(sources, key=lambda x: len(x[0]))
+        ctx = [sorted_sources[-1]] + sorted_sources[:4]
         block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
-        for j, txt in enumerate(ctx):
-            block += '  [' + str(j + 1) + '] "' + txt + '"\n'
+        for j, (en_txt, zh_txt) in enumerate(ctx):
+            block += '  [{}] "{}" -> "{}"\n'.format(j + 1, en_txt, zh_txt)
         lines.append(block)
         verify_items.append(g)
 

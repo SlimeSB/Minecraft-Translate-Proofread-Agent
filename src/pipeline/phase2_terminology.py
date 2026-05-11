@@ -23,7 +23,7 @@ def run_phase2(ctx: PipelineContext) -> None:
     tb.merge_lemmas(llm_call=ctx.llm_call)
     ctx.glossary = tb.build_glossary()
     if ctx.llm_call and not ctx.no_llm:
-        ctx.glossary = llm_verify_glossary(ctx.glossary, tb.en_data, ctx.llm_call)
+        ctx.glossary = llm_verify_glossary(ctx.glossary, tb.en_data, tb.zh_data, ctx.llm_call)
     ctx.term_verdicts = check_consistency(ctx.glossary, tb.matched_entries, tb.merged)
 
     info(f"  术语表: {len(ctx.glossary)} 条")

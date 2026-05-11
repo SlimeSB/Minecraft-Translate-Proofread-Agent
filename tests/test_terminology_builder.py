@@ -209,8 +209,12 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_ore": "Copper Ore",
             "block.iron_ore": "Iron Ore",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.iron_ore": "铁矿石",
+        }
         mock_llm = lambda p: "[]"
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜")
         self.assertEqual(glossary[1]["zh"], "铁")
@@ -224,8 +228,12 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_ore": "Copper Ore",
             "block.copper_block": "Copper Block",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.copper_block": "铜块",
+        }
         mock_llm = lambda p: '[{"en":"copper","old_zh":"铜","new_zh":"铜矿石","reason":"应包含材质名"}]'
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜矿石")
 
@@ -237,23 +245,26 @@ class TestTerminologyBuilder(unittest.TestCase):
         en_data = {
             "block.copper_ore": "Copper Ore",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+        }
 
         def mock_llm(_p):
             raise RuntimeError("网络错误")
 
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜")
 
     def test_llm_verify_glossary_empty_glossary(self):
         """空 glossary 直接返回。"""
-        result = llm_verify_glossary([], {}, lambda p: "[]")
+        result = llm_verify_glossary([], {}, {}, lambda p: "[]")
         self.assertEqual(result, [])
 
     def test_llm_verify_glossary_no_llm_call(self):
         """llm_call 为 None 时直接返回。"""
         glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
-        result = llm_verify_glossary(glossary, {}, None)  # type: ignore[arg-type]
+        result = llm_verify_glossary(glossary, {}, {}, None)  # type: ignore[arg-type]
         self.assertIs(result, glossary)
 
     def test_check_consistency_merged_none_downgrade(self):
