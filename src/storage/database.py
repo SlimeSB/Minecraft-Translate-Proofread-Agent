@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS alignment (
     format  TEXT DEFAULT '',
     namespace TEXT DEFAULT '',
     old_en  TEXT DEFAULT '',
-    old_zh  TEXT DEFAULT ''
+    old_zh  TEXT DEFAULT '',
+    version TEXT DEFAULT '',
+    file_path TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS glossary (
@@ -46,7 +48,9 @@ CREATE TABLE IF NOT EXISTS verdicts (
     reason      TEXT DEFAULT '',
     source      TEXT DEFAULT '',
     namespace   TEXT DEFAULT '',
-    filtered    INTEGER DEFAULT 0
+    filtered    INTEGER DEFAULT 0,
+    version     TEXT DEFAULT '',
+    file_path   TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_verdicts_key_phase ON verdicts(key, phase);
 CREATE INDEX IF NOT EXISTS ix_verdicts_phase ON verdicts(phase);
@@ -87,7 +91,22 @@ class PipelineDB:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate_schema()
         self._conn.commit()
+
+    def _migrate_schema(self) -> None:
+        """用 PRAGMA table_info 检查列是否存在，不存在则 ALTER TABLE ADD COLUMN。"""
+        cols_alignment = {r[1] for r in self._conn.execute("PRAGMA table_info(alignment)").fetchall()}
+        if "version" not in cols_alignment:
+            self._conn.execute("ALTER TABLE alignment ADD COLUMN version TEXT DEFAULT ''")
+        if "file_path" not in cols_alignment:
+            self._conn.execute("ALTER TABLE alignment ADD COLUMN file_path TEXT DEFAULT ''")
+
+        cols_verdicts = {r[1] for r in self._conn.execute("PRAGMA table_info(verdicts)").fetchall()}
+        if "version" not in cols_verdicts:
+            self._conn.execute("ALTER TABLE verdicts ADD COLUMN version TEXT DEFAULT ''")
+        if "file_path" not in cols_verdicts:
+            self._conn.execute("ALTER TABLE verdicts ADD COLUMN file_path TEXT DEFAULT ''")
 
     def close(self) -> None:
         self._conn.close()
@@ -107,11 +126,12 @@ class PipelineDB:
         for e in entries:
             chg = e.get("_change") or {}
             self._conn.execute(
-                "INSERT INTO alignment (key,en,zh,format,namespace,old_en,old_zh) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO alignment (key,en,zh,format,namespace,old_en,old_zh,version,file_path) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (e["key"], e.get("en", ""), e.get("zh", ""),
                  e.get("format", ""), e.get("namespace", ""),
-                 chg.get("old_en", ""), chg.get("old_zh", "")))
+                 chg.get("old_en", ""), chg.get("old_zh", ""),
+                 e.get("version", ""), e.get("file_path", "")))
         self._conn.commit()
 
     def load_alignment(self) -> AlignmentDict:
@@ -121,6 +141,7 @@ class PipelineDB:
             matched.append({
                 "key": r["key"], "en": r["en"], "zh": r["zh"],
                 "format": r["format"], "namespace": r["namespace"],
+                "version": r["version"], "file_path": r["file_path"],
             })
         return {"matched_entries": matched, "stats": {"matched": len(matched)}}
 
@@ -151,13 +172,14 @@ class PipelineDB:
                     return val.get("zh", "") or val.get("text", "") or val.get("value", "") or str(val)
                 return str(val) if val else default
             self._conn.execute(
-                "INSERT INTO verdicts (key,phase,en_current,zh_current,verdict,suggestion,reason,source,namespace) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO verdicts (key,phase,en_current,zh_current,verdict,suggestion,reason,source,namespace,version,file_path) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (_s("key"), phase,
                  _s("en_current"), _s("zh_current"),
                  _s("verdict"), _s("suggestion"),
                  _s("reason"), _s("source"),
-                 _s("namespace")))
+                 _s("namespace"),
+                 _s("version"), _s("file_path")))
         self._conn.commit()
 
     def load_verdicts(self, phase: str | None = None,
@@ -286,4 +308,6 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         "reason": row["reason"],
         "source": row["source"],
         "namespace": row["namespace"],
+        "version": row["version"],
+        "file_path": row["file_path"],
     }

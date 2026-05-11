@@ -105,6 +105,35 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
         if not issues:
             continue
         _generate_namespace_md(ns, issues, ns_groups.get(ns, {}), ns_dir)
+        _generate_namespace_json(ns, issues, ns_groups.get(ns, {}), ns_dir)
+
+
+def _generate_namespace_json(ns: str, verdicts: list[VerdictDict],
+                              ns_info: dict, ns_dir) -> None:
+    """生成 {ns}_report.json，按 version 分组。"""
+    version_groups: dict[str, dict] = {}
+    for v in verdicts:
+        ver = v.get("version", "") or "__default__"
+        if ver not in version_groups:
+            version_groups[ver] = {"count": 0, "verdicts": []}
+        version_groups[ver]["verdicts"].append(v)
+        version_groups[ver]["count"] += 1
+
+    data = {
+        "namespace": ns,
+        "stats": {
+            "total": ns_info.get("total", len(verdicts)),
+            "issues": ns_info.get("issues", len(verdicts)),
+            "fail": ns_info.get("fail", 0),
+            "suggest": ns_info.get("suggest", 0),
+            "review": ns_info.get("review", 0),
+        },
+        "version_groups": version_groups,
+    }
+
+    json_path = ns_dir / f"{ns}_report.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
@@ -118,23 +147,40 @@ def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
         f"- ⚠️ SUGGEST：{ns_info.get('suggest', 0)}",
         f"- 🔶 REVIEW：{ns_info.get('review', 0)}",
         "",
-        "## 问题清单",
-        "",
-        "| 判定 | 键名 | 问题 |",
-        "|------|------|------|",
     ]
 
-    # FAIL 在前，SUGGEST/REVIEW 在后
-    sorted_vs = sorted(verdicts, key=lambda v: (
-        0 if v.get("verdict") == VERDICT_FAIL else 1,
-        v.get("key", ""),
-    ))
+    # 按版本分组
+    by_version: dict[str, list[VerdictDict]] = {}
+    for v in verdicts:
+        ver = v.get("version", "") or ""
+        by_version.setdefault(ver, []).append(v)
 
-    for v in sorted_vs:
-        key = v.get("key", "")
-        verdict = v.get("verdict", "")
-        reason = v.get("reason", "")
-        lines.append(f"| {verdict} | `{key}` | {reason} |")
+    versions = sorted(by_version.keys())
+    multi_version = len(versions) > 1
+
+    for ver in versions:
+        vs = by_version[ver]
+        # 先 FAIL 后 SUGGEST/REVIEW
+        sorted_vs = sorted(vs, key=lambda v: (
+            0 if v.get("verdict") == VERDICT_FAIL else 1,
+            v.get("key", ""),
+        ))
+
+        if multi_version and ver:
+            lines.append(f"## 版本 {ver}")
+            lines.append("")
+
+        lines.append("| 判定 | 键名 | 文件路径 | 问题 |")
+        lines.append("|------|------|----------|------|")
+
+        for v in sorted_vs:
+            key = v.get("key", "")
+            verdict = v.get("verdict", "")
+            reason = v.get("reason", "")
+            file_path = v.get("file_path", "")
+            lines.append(f"| {verdict} | `{key}` | `{file_path}` | {reason} |")
+
+        lines.append("")
 
     md_path = ns_dir / f"{ns}_report.md"
     with open(md_path, "w", encoding="utf-8") as f:

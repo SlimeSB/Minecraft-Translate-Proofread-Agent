@@ -62,7 +62,13 @@ def _align_json_mods(
             sample = en_head or en_base
             lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
         else:
-            lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
+            zh_head = mod_data["zh_head"]
+            zh_base = mod_data["zh_base"]
+            if zh_head or zh_base:
+                sample = zh_head or zh_base
+                lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
+            else:
+                lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
 
         try:
             old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token) if mod_data["en_base"] is not None else ""
@@ -81,8 +87,11 @@ def _align_json_mods(
         entries, warnings = _lang.align(old_en, new_en, old_zh, new_zh)
 
         if entries:
+            file_path = en_head or en_base or ""
             for e in entries:
                 e["namespace"] = slug
+                e["version"] = version
+                e["file_path"] = file_path
             result_mods[resolved_mod_key] = {
                 "mod_info": mi,
                 "entries": entries,

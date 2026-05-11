@@ -147,6 +147,8 @@ class ReportGenerator:
                 "reason":     v.get("reason", ""),
                 "source":     v.get("source", ""),
                 "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
+                "version":    v.get("version", ""),
+                "file_path":  v.get("file_path", ""),
             }
             if not out["en_current"] and not out["zh_current"]:
                 pair = en_zh_map.get(out["key"], {})

@@ -47,7 +47,7 @@ def align(
 
         rel_path = info["rel_path"]
         if rel_path not in groups:
-            groups[rel_path] = {"paths": {"en_base": None, "en_head": None, "zh_base": None, "zh_head": None}, "namespace": info["slug"]}
+            groups[rel_path] = {"paths": {"en_base": None, "en_head": None, "zh_base": None, "zh_head": None}, "namespace": info["slug"], "version": info["version"]}
         g = groups[rel_path]
 
         status = f.get("status", "modified")
@@ -85,12 +85,15 @@ def align(
         if not en_changed and not zh_changed:
             continue
 
+        file_path = paths.get("en_head") or paths.get("en_base") or ""
         entry: dict[str, Any] = {
             "key": f"{GUIDEME_PREFIX}{rel_path}",
             "en": new_en,
             "zh": new_zh,
             "namespace": g["namespace"],
             "format": "guideme",
+            "version": g.get("version", ""),
+            "file_path": file_path,
         }
         if en_changed:
             entry["old_en"] = old_en

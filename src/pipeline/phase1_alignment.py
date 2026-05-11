@@ -33,6 +33,8 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
             "zh": entry["zh"],
             "namespace": entry.get("namespace", ""),
             "format": entry.get("format", "json"),
+            "version": entry.get("version", ""),
+            "file_path": entry.get("file_path", ""),
             "_change": {
                 "old_en": entry.get("old_en", ""),
                 "old_zh": entry.get("old_zh", ""),
@@ -62,6 +64,7 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
             "old_zh": entry.get("old_zh", ""),
             "warning": entry.get("review_type") == "en_changed_zh_unchanged",
             "review_type": entry.get("review_type", "normal"),
+            "version": entry.get("version", ""),
         }
         if entry.get("review_type") == "zh_only_change":
             ctx.zh_only_entries.append(entry)

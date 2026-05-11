@@ -83,6 +83,8 @@ class TestGuidemeAlign(unittest.TestCase):
         self.assertEqual(entries[0]["key"], "ae2guide:index.md")
         self.assertEqual(entries[0]["format"], "guideme")
         self.assertEqual(entries[0]["review_type"], "normal")
+        self.assertEqual(entries[0]["version"], "1.18")
+        self.assertEqual(entries[0]["file_path"], self.FP_EN)
 
     def test_en_changed_zh_unchanged_produces_warning(self):
         en_url = self._make_url(self.BASE, self.FP_EN)

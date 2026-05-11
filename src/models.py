@@ -18,6 +18,8 @@ class EntryDict(TypedDict, total=False):
     zh: str
     format: str         # "json" | "lang" | "guideme"
     namespace: str       # PR 模式
+    version: str
+    file_path: str
     _change: "ChangeDict"
 
 
@@ -74,6 +76,8 @@ class VerdictDict(TypedDict, total=False):
     suggestion: str
     reason: str
     source: str          # "format_check" | "terminology_check" | "llm_review" | "interactive" | "pr_warning" | "llm_error"
+    version: str
+    file_path: str
 
 
 class GlossaryDict(TypedDict):
@@ -97,6 +101,8 @@ class PRAlignmentEntryDict(TypedDict, total=False):
     zh: str
     namespace: str
     format: str
+    version: str
+    file_path: str
     old_en: str
     old_zh: str
     review_type: str     # "normal" | "en_changed_zh_unchanged" | "zh_only_change"
@@ -121,6 +127,7 @@ class PRChangeMetaDict(TypedDict):
     old_zh: str
     warning: bool
     review_type: str
+    version: str
 
 
 class ReviewStatsDict(TypedDict):
