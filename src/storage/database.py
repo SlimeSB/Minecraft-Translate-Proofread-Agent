@@ -182,6 +182,15 @@ class PipelineDB:
                  _s("version"), _s("file_path")))
         self._conn.commit()
 
+        # 从 alignment 表回填 version/file_path（PR 模式有数据，传统模式空对空）
+        self._conn.execute("""
+            UPDATE verdicts
+            SET version=(SELECT version FROM alignment WHERE alignment.key=verdicts.key),
+                file_path=(SELECT file_path FROM alignment WHERE alignment.key=verdicts.key)
+            WHERE phase=? AND (version='' OR file_path='')
+        """, (phase,))
+        self._conn.commit()
+
     def load_verdicts(self, phase: str | None = None,
                       namespace: str | None = None,
                       filtered: int | None = 0) -> list[dict]:
