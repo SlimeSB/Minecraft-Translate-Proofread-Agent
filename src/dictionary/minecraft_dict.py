@@ -12,22 +12,19 @@ from src.tools.version_utils import parse_version
 from src.tools.term_validation import STOP_WORDS
 
 VD_SIMILARITY_THRESHOLD: float = 60.0
-LEMMA_FALLBACK_MIN_KEYS: int = 3
-VD_MAX_LONG_ENTRY_LEN: int = 100
+VD_MAX_LONG_WORDS: int = 30
+VD_MAX_SHORT_WORDS: int = 10
 
 DEFAULT_DB_PATH = "data/Minecraft.db"
-DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 
 class MinecraftDictStore:
     """按需查询 Minecraft 原版翻译，SQLite FTS5 全文搜索。"""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._conn: sqlite3.Connection | None = None
-        self._lemma_map: dict[str, str] = {}
         self._loaded = False
         self._db_path = db_path
-        self._lemma_cache_path = lemma_cache_path
         self._use_fts = False
 
     def load(self) -> None:
@@ -66,25 +63,7 @@ class MinecraftDictStore:
                 )
             except sqlite3.OperationalError:
                 pass
-        self._load_lemma_cache()
         self._loaded = True
-
-    def _load_lemma_cache(self) -> None:
-        import json
-        cache_path = Path(self._lemma_cache_path)
-        if cache_path.exists():
-            try:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for canonical, entry in data.items():
-                    variants = entry.get("variants", [canonical])
-                    for v in variants:
-                        vk = v.lower().strip()
-                        if vk not in self._lemma_map:
-                            self._lemma_map[vk] = canonical
-            except (json.JSONDecodeError, IOError) as e:
-                warn(f"[MinecraftDict] lemma 缓存加载失败: {e}")
-                self._lemma_map = {}
 
     def _search_fts(self, term: str) -> list[dict[str, Any]]:
         if self._conn is None:
@@ -132,7 +111,7 @@ class MinecraftDictStore:
     def _version_key(self, row: dict[str, Any]) -> tuple[int, ...]:
         return parse_version(row.get("version_end", "0.0.0"))
 
-    def _format_rows(self, rows: list[dict[str, Any]], mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
+    def _format_rows(self, rows: list[dict[str, Any]], mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None, show_sim: bool = False) -> tuple[list[str], bool]:
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             k = r["key"]
@@ -162,14 +141,14 @@ class MinecraftDictStore:
             normal_picked = normal_picked[:max_total]
         else:
             if normal_picked:
-                short_enough = [e for e in normal_picked if len(e.get("en_us", "")) <= VD_MAX_LONG_ENTRY_LEN]
-                if short_enough:
-                    longest = max(short_enough, key=lambda e: len(e.get("en_us", "")))
-                    rest = [e for e in normal_picked if e is not longest]
+                long_candidates = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+                if long_candidates:
+                    longest = max(long_candidates, key=lambda e: len((e.get("en_us", "") or "").split()))
                 else:
                     longest = None
-                    rest = list(normal_picked)
-                rest.sort(key=lambda e: len(e.get("en_us", "")))
+                rest = [e for e in normal_picked if e is not longest]
+                rest = [e for e in rest if len((e.get("en_us", "") or "").split()) <= VD_MAX_SHORT_WORDS]
+                rest.sort(key=lambda e: len((e.get("en_us", "") or "").split()))
                 rest = rest[:max_total - (1 if longest else 0)]
                 normal_picked = ([longest] if longest else []) + rest
 
@@ -181,7 +160,8 @@ class MinecraftDictStore:
             return s.replace("\n", "\\n")
 
         def fmt_entry(r: dict[str, Any], prefix: str = "") -> str:
-            return f'{prefix}"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+            sim_part = f"sim={r['_sim']:.1f}% | " if show_sim and "_sim" in r else ""
+            return f'{sim_part}{prefix}"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
 
         longest_normal: dict[str, Any] | None = None
         shortest_normal: dict[str, Any] | None = None
@@ -190,13 +170,17 @@ class MinecraftDictStore:
             for r in normal_picked:
                 lines.append(fmt_entry(r))
         elif normal_picked:
-            short_enough_norm = [e for e in normal_picked if len(e.get("en_us", "")) <= VD_MAX_LONG_ENTRY_LEN]
-            if short_enough_norm:
-                longest_normal = max(short_enough_norm, key=lambda e: len(e.get("en_us", "")))
+            long_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+            if long_candidates_norm:
+                longest_normal = max(long_candidates_norm, key=lambda e: len((e.get("en_us", "") or "").split()))
             else:
                 longest_normal = None
-            shortest_normal = min(normal_picked, key=lambda e: len(e.get("en_us", "")))
-            if longest_normal is shortest_normal:
+            short_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_SHORT_WORDS]
+            if short_candidates_norm:
+                shortest_normal = min(short_candidates_norm, key=lambda e: len((e.get("en_us", "") or "").split()))
+            else:
+                shortest_normal = None
+            if longest_normal and shortest_normal and longest_normal is shortest_normal:
                 shortest_normal = None
 
         if changes1_rows:
@@ -221,6 +205,9 @@ class MinecraftDictStore:
             for entries in sorted_groups:
                 if sens_groups >= max_sensitive:
                     break
+                entries = [r for r in entries if len((r.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+                if not entries:
+                    continue
                 sens_groups += 1
                 entries.sort(key=self._version_key, reverse=True)
 
@@ -249,22 +236,8 @@ class MinecraftDictStore:
         if self._conn is None:
             return [], False
 
-        search_term = f'en_us:"{term}"' if self._use_fts else term
+        search_term = f'en_us:{term}*' if self._use_fts else term
         rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
-
-        if rows and self._lemma_map:
-            unique_keys = {r["key"] for r in rows}
-            if len(unique_keys) < LEMMA_FALLBACK_MIN_KEYS:
-                canon = self._lemma_map.get(term.lower())
-                if canon and canon.lower() != term.lower():
-                    canon_search = f'en_us:"{canon}"' if self._use_fts else canon
-                    canon_rows = self._search_fts(canon_search) if self._use_fts else self._search_like(canon_search)
-                    if canon_rows:
-                        for r in canon_rows:
-                            if r["key"] not in unique_keys:
-                                rows.append(r)
-                                unique_keys.add(r["key"])
-
         if not rows:
             return [], False
 
@@ -300,18 +273,20 @@ class MinecraftDictStore:
         key_has_per_word = any(t in entry_key for t in VD_PER_WORD_TRIGGERS)
         key_has_fuzzy = any(t in entry_key for t in VD_FUZZY_TRIGGERS)
         if not key_has_per_word and (key_has_fuzzy or word_set & VD_FUZZY_TRIGGERS or len(words) > VD_WORD_COUNT_THRESHOLD):
-            search_term = " OR ".join(f'en_us:"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
+            search_term = " OR ".join(f'en_us:{w}*' for w in filtered) if self._use_fts else " ".join(filtered)
             rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
             if not rows:
                 return ""
+            for r in rows:
+                r["_sim"] = calc_similarity(query, (r["en_us"] or "").lower())
             if len(filtered) > VD_WORD_COUNT_THRESHOLD:
-                rows = [r for r in rows if calc_similarity(query, (r["en_us"] or "").lower()) >= VD_SIMILARITY_THRESHOLD]
+                rows = [r for r in rows if r["_sim"] >= VD_SIMILARITY_THRESHOLD]
                 if not rows:
                     return ""
-            lines, has_sensitive = self._format_rows(rows, mode, 5, target_version)
+            lines, has_sensitive = self._format_rows(rows, mode, 5, target_version, show_sim=True)
             if not lines:
                 return ""
-            return self._make_result(lines, has_sensitive)
+            return self._make_result(lines, has_sensitive, sub_label="模糊匹配：")
 
         # 默认 / block&item 强制 → 逐词分组
         any_sensitive = False
@@ -334,11 +309,13 @@ class MinecraftDictStore:
 
         return self._make_result(all_lines, any_sensitive)
 
-    def _make_result(self, lines: list[str], has_sensitive: bool) -> str:
+    def _make_result(self, lines: list[str], has_sensitive: bool, sub_label: str = "") -> str:
         body = "\n".join(lines)
         header = "原版词典："
         if has_sensitive:
             header += "存在版本敏感译名，不同版本存在差异。"
+        if sub_label:
+            header += "\n" + sub_label
         return header + "\n" + body
 
     def _target_len(self, entries: list[dict[str, Any]]) -> int:

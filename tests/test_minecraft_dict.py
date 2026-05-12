@@ -460,45 +460,6 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
-    # 词形归并：原词 < 3 个 unique key 时 fallback 到词根
-    def test_lemma_fallback_kills_to_kill(self):
-        path, conn, store = self._make_store_and_conn()
-        try:
-            _insert(conn, "key.player_kills", "Player Kills", "玩家击杀数", "1.12.2", "1.12.2", changes=0)
-            _insert(conn, "key.player_kills", "Player Kills", "玩家击杀数", "1.16.5", "26.1.2", changes=0)
-            _insert(conn, "key.kill_entity", "Kill a Creeper", "击杀一只苦力怕", "1.20.0", "1.21.0", changes=0)
-            conn.commit()
-            store.load()
-            store._lemma_map = {"kills": "kill"}
-            result = store.lookup("kills")
-            self.assertIn("玩家击杀数", result)
-            self.assertIn("击杀一只苦力怕", result, "词形归并应找到 kill 的结果")
-        finally:
-            store.close()
-            conn.close()
-            Path(path).unlink(missing_ok=True)
-
-    # 词形归并：原词足够时不触发 fallback
-    def test_lemma_fallback_no_trigger_when_enough(self):
-        path, conn, store = self._make_store_and_conn()
-        try:
-            _insert(conn, "key.a", "Stone A", "石头A", "1.20.0", "1.21.0", changes=0)
-            _insert(conn, "key.b", "Stone B", "石头B", "1.20.0", "1.21.0", changes=0)
-            _insert(conn, "key.c", "Stone C", "石头C", "1.20.0", "1.21.0", changes=0)
-            _insert(conn, "key.stones_variant", "Stones", "石块", "1.20.0", "1.21.0", changes=0)
-            conn.commit()
-            store.load()
-            store._lemma_map = {"stones": "stone"}  # "stone" would match even more
-            result = store.lookup("stone")  # already ≥3 unique keys, no fallback needed
-            self.assertIn("石头A", result)
-            self.assertIn("石头B", result)
-            self.assertIn("石头C", result)
-            self.assertNotIn("石块", result, "原词已足够，不应触发词形归并")
-        finally:
-            store.close()
-            conn.close()
-            Path(path).unlink(missing_ok=True)
-
 
 if __name__ == "__main__":
     unittest.main()
