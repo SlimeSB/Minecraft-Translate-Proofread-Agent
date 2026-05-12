@@ -148,6 +148,14 @@ class TestEmptyTranslation(unittest.TestCase):
         """不同文本应 PASS。"""
         self.assertIsNone(self._check("Hello", "你好"))
 
+    def test_pass_indexed_key_empty_zh(self):
+        """带序号键（tooltip[1]）zh 为空应 PASS。"""
+        self.assertIsNone(self._check("Some text", "", key="mod.tooltip[1]"))
+
+    def test_pass_indexed_key_same_text(self):
+        """带序号键（tooltip.0）zh==en 应 PASS。"""
+        self.assertIsNone(self._check("Some text", "Some text", key="mod.tooltip.0"))
+
 
 class TestEnergyUnits(unittest.TestCase):
     def setUp(self):

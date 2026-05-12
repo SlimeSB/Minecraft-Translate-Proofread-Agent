@@ -4,6 +4,7 @@ review_config.json 使用嵌套分组结构，
 本模块在加载时展平为旧版扁平 API，保持所有消费者兼容。
 """
 import json
+import re
 import sys
 from typing import Any
 
@@ -149,6 +150,10 @@ MAX_WORKERS: int = get("max_workers", 4)
 KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
 LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
 GUIDEME_PREFIX: str = "ae2guide:"
+
+# 带序号键匹配，如 tooltip[0]、advancements.story.root.1
+# 用于检测多段条目的分段索引
+RE_INDEXED_KEY: re.Pattern = re.compile(r"^(.*?)(?:\.|\[)(\d+)\]?$")
 
 
 def _as_text(val: str | list[str]) -> str:

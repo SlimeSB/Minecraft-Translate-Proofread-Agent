@@ -5,7 +5,7 @@
 import re
 
 from src import config as cfg
-from src.config import GUIDEME_PREFIX
+from src.config import GUIDEME_PREFIX, RE_INDEXED_KEY
 from src.models import (
     AutoVerdictsMap,
     EntryDict,
@@ -225,13 +225,10 @@ def build_entry_block(
 # 多段条目合并
 # ═══════════════════════════════════════════════════════════
 
-_RE_MULTIPART = re.compile(r"^(.*?)(?:\.|\[)(\d+)\]?$")
-
-
 def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
-        m = _RE_MULTIPART.match(entry["key"])
+        m = RE_INDEXED_KEY.match(entry["key"])
         if m:
             base = m.group(1)
             groups.setdefault(base, []).append(entry)  # type: ignore[arg-type]
@@ -239,7 +236,7 @@ def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
     for base, group in groups.items():
         if len(group) < 2:
             continue
-        group.sort(key=lambda e: int(_RE_MULTIPART.match(e["key"]).group(2)))
+        group.sort(key=lambda e: int(RE_INDEXED_KEY.match(e["key"]).group(2)))
         full_en = "".join(e.get("en", "") for e in group)
         full_zh = "".join(e.get("zh", "") for e in group)
         for e in group:

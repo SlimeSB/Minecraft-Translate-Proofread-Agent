@@ -4,8 +4,9 @@
 import unittest
 from unittest.mock import patch
 
+from src.config import RE_INDEXED_KEY
+
 from src.llm.prompts import (
-    _RE_MULTIPART,
     build_entry_block,
     build_filter_prompt,
     build_review_prompt,
@@ -181,9 +182,9 @@ class TestMergeMultipartEntries(unittest.TestCase):
         self.assertEqual(full_en, "AB")
 
     def test_re_multipart_pattern(self):
-        self.assertTrue(_RE_MULTIPART.match("book.page.0"))
-        self.assertTrue(_RE_MULTIPART.match("tag[5]"))
-        self.assertIsNone(_RE_MULTIPART.match("block.copper"))
+        self.assertTrue(RE_INDEXED_KEY.match("book.page.0"))
+        self.assertTrue(RE_INDEXED_KEY.match("tag[5]"))
+        self.assertIsNone(RE_INDEXED_KEY.match("block.copper"))
 
 
 # ═══════════════════════════════════════════════════════════

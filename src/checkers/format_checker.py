@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from src import config as cfg
+from src.config import RE_INDEXED_KEY
 from src.models import EntryDict, VerdictDict
 from src.tools.code_detection import is_likely_code_or_proper_noun
 
@@ -58,6 +59,8 @@ RE_ELLIPSIS_WRONG = re.compile(r"\.{3}")  # 三个英文句号 ...
 
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
+
+
 
 def _compare_placeholder_lists(
     en_items: list[str],
@@ -146,7 +149,10 @@ class FormatChecker:
     def _check_empty_translation(
         self, key: str, en: str, zh: str
     ) -> VerdictDict | None:
-        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。"""
+        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。
+        跳过带序号的键（如 tooltip[0]、advancements.story.root.1）。"""
+        if RE_INDEXED_KEY.match(key):
+            return None
         if zh == "" and en != "":
             if "music_disc" in key and key.endswith(".desc"):
                 return None  # 唱片名(.desc)不翻译
