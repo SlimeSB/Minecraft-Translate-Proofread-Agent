@@ -10,6 +10,7 @@ from typing import Any
 
 from src.logging import warn
 from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
+from src.dictionary.protocol import LookupMode
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
@@ -153,7 +154,10 @@ class ExternalDictStore:
         max_groups = kwargs.get("max_groups", 3)
         max_modids = kwargs.get("max_modids", 5)
 
-        sorted_items = sorted(pairs.items(), key=lambda x: -len(x[1][1]))
+        if mode == LookupMode.SHORT:
+            sorted_items = sorted(pairs.items(), key=lambda x: (len(x[1][0]), -len(x[1][1])))
+        else:
+            sorted_items = sorted(pairs.items(), key=lambda x: -len(x[1][1]))
         lines: list[str] = []
         for (_, zh), (origin, modids) in sorted_items[:max_groups]:
             modid_list = sorted(modids)[:max_modids]

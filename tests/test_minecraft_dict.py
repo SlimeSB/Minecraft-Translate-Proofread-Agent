@@ -366,6 +366,103 @@ class TestMinecraftDictStore(unittest.TestCase):
         conn.close()
         Path(path).unlink(missing_ok=True)
 
+    # 长文本退化查询 — 相似度过低应被过滤
+    def test_similarity_filter_irrelevant(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.irrelevant", "A stone", "一块石头", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("this is a very long and specific query about stone mining enchantment")
+            self.assertEqual(result, "", "共享单词但文本不相关，低相似度应被过滤")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 长文本退化查询 — 相似度足够应保留
+    def test_similarity_filter_relevant(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.relevant", "Rare earth mineral mining deep stone", "稀土矿物开采深石", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("rare earth mineral mining deep stone with various ores")
+            self.assertIn("稀土矿物开采深石", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # desc 触发退化但词数未超阈值 → 不应用相似度过滤
+    def test_similarity_not_applied_to_short_desc(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.desc", "Stone desc", "石头描述", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("stone desc")
+            self.assertIn("石头描述", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # FTS5 仅搜索 en_us 列 → key 中含词但 en_us 不含的条目不应出现
+    def test_key_only_match_excluded(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "subtitles.entity.bee.gulping", "Gulping", "吞咽", "1.16.5", "26.1.2", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("bottle bee")
+            self.assertNotIn("吞咽", result, "key 含 bee 但 en_us 不含 bottle，不应匹配")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 跨词去重：同一 key 不在多个词组重复出现
+    def test_cross_word_dedup(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.shared", "Campfire bottle honey", "营火蜂蜜瓶", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.bee", "Bee", "蜜蜂", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("bottle bee campfire honey")
+            self.assertIn("营火蜂蜜瓶", result)
+            campfire_count = result.count("营火蜂蜜瓶")
+            self.assertEqual(campfire_count, 1, "同一 key 不应在多词组中重复出现")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 模拟用户场景：蜜蜂玻璃瓶收集蜂蜜
+    def test_bee_bottle_honey_scenario(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.bee", "Bee", "蜜蜂", "1.16.5", "26.1.2", changes=0)
+            _insert(conn, "key.glass", "Glass", "玻璃", "1.16.5", "26.1.2", changes=0)
+            _insert(conn, "key.honey_bottle", "Honey Bottle", "蜂蜜瓶", "1.16.5", "26.1.2", changes=0)
+            _insert(conn, "key.harvest_honey", "Use a Campfire to collect Honey from a Beehive using a Glass Bottle without aggravating the Bees",
+                    "利用营火在不惊动蜜蜂的情况下从蜂巢收集蜂蜜", "1.20.1", "26.1.2", changes=1)
+            _insert(conn, "key.harvest_honey", "Use a Campfire to collect Honey from a Beehive using a Bottle without aggravating the Bees",
+                    "利用营火在不惊动蜜蜂的情况下从蜂巢收集蜂蜜", "1.19.4", "1.19.4", changes=1)
+            _insert(conn, "key.use_vbos", "Use VBOs", "启用顶点缓冲器", "1.12.2", "1.16.5", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("Use a glass bottle on a Bee to collect honey")
+            self.assertIn("蜜蜂", result, "应出现 Bee → 蜜蜂")
+            self.assertIn("玻璃", result, "应出现 Glass → 玻璃")
+            self.assertIn("利用营火", result, "应出现营火收集蜂蜜的原版参考")
+            self.assertIn("启用顶点缓冲器", result, "'Use VBOs' 含 Use 但上下文不相关可接受")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()

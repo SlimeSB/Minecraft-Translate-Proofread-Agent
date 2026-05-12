@@ -6,6 +6,8 @@ import re
 
 from src import config as cfg
 from src.config import GUIDEME_PREFIX, RE_INDEXED_KEY
+from src.dictionary.external import ExternalDictStore
+from src.dictionary.protocol import LookupMode
 from src.models import (
     AutoVerdictsMap,
     EntryDict,
@@ -301,7 +303,8 @@ def build_review_prompt(
                 if dict_stores:
                     for store in dict_stores:
                         try:
-                            hint = store.lookup(en_for_hints, mode="mixed")
+                            store_mode = LookupMode.SHORT if isinstance(store, ExternalDictStore) else LookupMode.MIXED
+                            hint = store.lookup(en_for_hints, mode=store_mode)
                             if hint:
                                 hints_parts.append(hint)
                         except Exception:

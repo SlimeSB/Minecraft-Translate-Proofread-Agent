@@ -7,8 +7,11 @@ from typing import Any
 from src.logging import warn
 from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
 from src.dictionary.protocol import LookupMode
+from src.tools.fuzzy_search import calc_similarity
 from src.tools.version_utils import parse_version
 from src.tools.term_validation import STOP_WORDS
+
+VD_SIMILARITY_THRESHOLD: float = 60.0
 
 DEFAULT_DB_PATH = "data/Minecraft.db"
 
@@ -65,7 +68,7 @@ class MinecraftDictStore:
         try:
             rows = self._conn.execute(
                 "SELECT key, en_us, zh_cn, version_start, version_end, changes "
-                "FROM vanilla_keys_fts WHERE vanilla_keys_fts MATCH ?",
+                "FROM vanilla_keys_fts WHERE vanilla_keys_fts MATCH ? ORDER BY rank",
                 (term,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -207,14 +210,25 @@ class MinecraftDictStore:
 
         return lines, has_sensitive
 
-    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
+    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5,
+                           target_version: str | None = None,
+                           seen_keys: set[str] | None = None) -> tuple[list[str], bool]:
         if self._conn is None:
             return [], False
 
-        search_term = f'"{term}"' if self._use_fts else term
+        search_term = f'en_us:"{term}"' if self._use_fts else term
         rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
         if not rows:
             return [], False
+
+        if seen_keys is not None:
+            rows = [r for r in rows if r["key"] not in seen_keys]
+            if not rows:
+                return [], False
+
+        if seen_keys is not None:
+            for r in rows:
+                seen_keys.add(r["key"])
 
         return self._format_rows(rows, mode, max_total, target_version)
 
@@ -246,10 +260,14 @@ class MinecraftDictStore:
         # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
         # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）
         if not (raw_set & VD_PER_WORD_TRIGGERS) and (word_set & VD_FUZZY_TRIGGERS or len(filtered) > VD_WORD_COUNT_THRESHOLD):
-            search_term = " OR ".join(f'"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
+            search_term = " OR ".join(f'en_us:"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
             rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
             if not rows:
                 return ""
+            if len(filtered) > VD_WORD_COUNT_THRESHOLD:
+                rows = [r for r in rows if calc_similarity(query, (r["en_us"] or "").lower()) >= VD_SIMILARITY_THRESHOLD]
+                if not rows:
+                    return ""
             lines, has_sensitive = self._format_rows(rows, mode, 5, target_version)
             if not lines:
                 return ""
@@ -258,8 +276,9 @@ class MinecraftDictStore:
         # 默认 / block&item 强制 → 逐词分组
         any_sensitive = False
         all_lines: list[str] = []
+        seen_keys: set[str] = set()
         for word in filtered:
-            lines, has_sensitive = self._lookup_single_term(word, mode, 3, target_version)
+            lines, has_sensitive = self._lookup_single_term(word, mode, 5, target_version, seen_keys=seen_keys)
             if has_sensitive:
                 any_sensitive = True
             if lines:

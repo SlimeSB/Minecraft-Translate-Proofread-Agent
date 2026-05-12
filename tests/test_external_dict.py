@@ -330,6 +330,43 @@ class TestExternalDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
+    # short 模式按原文长度升序排序
+    def test_short_mode_sorts_by_length(self):
+        path, conn, store = self._make_store()
+        try:
+            _insert(conn, "Long Original Text", "长文本", "mod_a")
+            _insert(conn, "Short", "短文本", "mod_a")
+            _insert(conn, "Medium Text", "中文本", "mod_a")
+            conn.commit()
+            store.load()
+            result = store.lookup("Long Original Text Short Medium Text", mode="short")
+            lines = [l for l in result.split("\n") if " -> " in l]
+            self.assertEqual(len(lines), 3)
+            self.assertIn("Short", lines[0], "短模式最短原文应排第一")
+            self.assertIn("Long Original Text", lines[2], "短模式最长原文应排最后")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # mixed 模式保持 modid 数量降序（不受 short 影响）
+    def test_mixed_mode_keeps_modid_sort(self):
+        path, conn, store = self._make_store()
+        try:
+            _insert(conn, "Rare Term", "稀有", "mod_x")
+            _insert(conn, "Popular Term", "热门", "mod_a")
+            _insert(conn, "Popular Term", "热门", "mod_b")
+            _insert(conn, "Popular Term", "热门", "mod_c")
+            conn.commit()
+            store.load()
+            result = store.lookup("Rare Term Popular Term", mode="mixed")
+            lines = [l for l in result.split("\n") if " -> " in l]
+            self.assertIn("Popular Term", lines[0], "mixed 模式应按 modid 数量降序，热门优先")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()
