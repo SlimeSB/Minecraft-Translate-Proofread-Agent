@@ -12,17 +12,21 @@ from src.tools.version_utils import parse_version
 from src.tools.term_validation import STOP_WORDS
 
 VD_SIMILARITY_THRESHOLD: float = 60.0
+LEMMA_FALLBACK_MIN_KEYS: int = 3
 
 DEFAULT_DB_PATH = "data/Minecraft.db"
+DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 
 class MinecraftDictStore:
     """按需查询 Minecraft 原版翻译，SQLite FTS5 全文搜索。"""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
         self._conn: sqlite3.Connection | None = None
+        self._lemma_map: dict[str, str] = {}
         self._loaded = False
         self._db_path = db_path
+        self._lemma_cache_path = lemma_cache_path
         self._use_fts = False
 
     def load(self) -> None:
@@ -60,7 +64,25 @@ class MinecraftDictStore:
                 )
             except sqlite3.OperationalError:
                 pass
+        self._load_lemma_cache()
         self._loaded = True
+
+    def _load_lemma_cache(self) -> None:
+        import json
+        cache_path = Path(self._lemma_cache_path)
+        if cache_path.exists():
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for canonical, entry in data.items():
+                    variants = entry.get("variants", [canonical])
+                    for v in variants:
+                        vk = v.lower().strip()
+                        if vk not in self._lemma_map:
+                            self._lemma_map[vk] = canonical
+            except (json.JSONDecodeError, IOError) as e:
+                warn(f"[MinecraftDict] lemma 缓存加载失败: {e}")
+                self._lemma_map = {}
 
     def _search_fts(self, term: str) -> list[dict[str, Any]]:
         if self._conn is None:
@@ -218,6 +240,20 @@ class MinecraftDictStore:
 
         search_term = f'en_us:"{term}"' if self._use_fts else term
         rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
+
+        if rows and self._lemma_map:
+            unique_keys = {r["key"] for r in rows}
+            if len(unique_keys) < LEMMA_FALLBACK_MIN_KEYS:
+                canon = self._lemma_map.get(term.lower())
+                if canon and canon.lower() != term.lower():
+                    canon_search = f'en_us:"{canon}"' if self._use_fts else canon
+                    canon_rows = self._search_fts(canon_search) if self._use_fts else self._search_like(canon_search)
+                    if canon_rows:
+                        for r in canon_rows:
+                            if r["key"] not in unique_keys:
+                                rows.append(r)
+                                unique_keys.add(r["key"])
+
         if not rows:
             return [], False
 
@@ -255,7 +291,7 @@ class MinecraftDictStore:
             lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
             if not lines:
                 return ""
-            return self._make_result(lines, has_sensitive)
+            return self._make_result([f"{filtered[0].capitalize()}："] + lines, has_sensitive)
 
         # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
         # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）

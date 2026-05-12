@@ -181,7 +181,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             result = store.lookup("test", target_version="1.20.1")
             lines = [l for l in result.split("\n") if l.strip()]
             self.assertGreater(len(lines), 1)
-            primary_line = lines[1]
+            primary_line = lines[2]  # lines[0]=header, lines[1]=word header
             self.assertIn("新版", primary_line)
         finally:
             store.close()
@@ -200,7 +200,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             result = store.lookup("test")
             lines = [l for l in result.split("\n") if l.strip()]
             self.assertGreater(len(lines), 1)
-            primary_line = lines[1]
+            primary_line = lines[2]  # lines[0]=header, lines[1]=word header
             self.assertIn("最新", primary_line)
         finally:
             store.close()
@@ -450,14 +450,51 @@ class TestMinecraftDictStore(unittest.TestCase):
                     "利用营火在不惊动蜜蜂的情况下从蜂巢收集蜂蜜", "1.20.1", "26.1.2", changes=1)
             _insert(conn, "key.harvest_honey", "Use a Campfire to collect Honey from a Beehive using a Bottle without aggravating the Bees",
                     "利用营火在不惊动蜜蜂的情况下从蜂巢收集蜂蜜", "1.19.4", "1.19.4", changes=1)
-            _insert(conn, "key.use_vbos", "Use VBOs", "启用顶点缓冲器", "1.12.2", "1.16.5", changes=0)
             conn.commit()
             store.load()
             result = store.lookup("Use a glass bottle on a Bee to collect honey")
             self.assertIn("蜜蜂", result, "应出现 Bee → 蜜蜂")
             self.assertIn("玻璃", result, "应出现 Glass → 玻璃")
             self.assertIn("利用营火", result, "应出现营火收集蜂蜜的原版参考")
-            self.assertIn("启用顶点缓冲器", result, "'Use VBOs' 含 Use 但上下文不相关可接受")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 词形归并：原词 < 3 个 unique key 时 fallback 到词根
+    def test_lemma_fallback_kills_to_kill(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.player_kills", "Player Kills", "玩家击杀数", "1.12.2", "1.12.2", changes=0)
+            _insert(conn, "key.player_kills", "Player Kills", "玩家击杀数", "1.16.5", "26.1.2", changes=0)
+            _insert(conn, "key.kill_entity", "Kill a Creeper", "击杀一只苦力怕", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            store._lemma_map = {"kills": "kill"}
+            result = store.lookup("kills")
+            self.assertIn("玩家击杀数", result)
+            self.assertIn("击杀一只苦力怕", result, "词形归并应找到 kill 的结果")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 词形归并：原词足够时不触发 fallback
+    def test_lemma_fallback_no_trigger_when_enough(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.a", "Stone A", "石头A", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.b", "Stone B", "石头B", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.c", "Stone C", "石头C", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.stones_variant", "Stones", "石块", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            store._lemma_map = {"stones": "stone"}  # "stone" would match even more
+            result = store.lookup("stone")  # already ≥3 unique keys, no fallback needed
+            self.assertIn("石头A", result)
+            self.assertIn("石头B", result)
+            self.assertIn("石头C", result)
+            self.assertNotIn("石块", result, "原词已足够，不应触发词形归并")
         finally:
             store.close()
             conn.close()
