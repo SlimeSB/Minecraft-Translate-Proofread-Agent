@@ -171,25 +171,41 @@ class MinecraftDictStore:
         def escape_newlines(s: str) -> str:
             return s.replace("\n", "\\n")
 
+        def fmt_entry(r: dict[str, Any], prefix: str = "") -> str:
+            return f'{prefix}"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+
+        longest_normal: dict[str, Any] | None = None
+        shortest_normal: dict[str, Any] | None = None
+
         if not has_sensitive:
             for r in normal_picked:
-                lines.append(
-                    f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                )
+                lines.append(fmt_entry(r))
         elif normal_picked:
-            shortest = min(normal_picked, key=lambda e: len(e.get("en_us", "")))
-            lines.append(
-                f'"{escape_newlines(shortest["en_us"])}" -> "{escape_newlines(shortest["zh_cn"])}" [{shortest["version_start"]}-{shortest["version_end"]}]'
-            )
+            longest_normal = max(normal_picked, key=lambda e: len(e.get("en_us", "")))
+            shortest_normal = min(normal_picked, key=lambda e: len(e.get("en_us", "")))
+            if longest_normal is shortest_normal:
+                shortest_normal = None
 
         if changes1_rows:
             by_key: dict[str, list[dict[str, Any]]] = {}
             for r in changes1_rows:
                 by_key.setdefault(r["key"], []).append(r)
 
+            def _group_max_len(entries: list[dict[str, Any]]) -> int:
+                return max(len(e.get("en_us", "")) for e in entries)
+
+            sorted_groups = sorted(by_key.values(), key=_group_max_len, reverse=True)
+
+            reserved = 0
+            if longest_normal is not None:
+                reserved += 1
+            if shortest_normal is not None:
+                reserved += 1
+            max_sensitive = max(0, max_total - reserved)
+
             sens_lines: list[str] = []
-            for entries in by_key.values():
-                if len(sens_lines) >= max_total:
+            for entries in sorted_groups:
+                if len(sens_lines) >= max_sensitive:
                     break
                 entries.sort(key=self._version_key, reverse=True)
 
@@ -201,13 +217,16 @@ class MinecraftDictStore:
                 entries.sort(key=sort_key)
 
                 for i, r in enumerate(entries):
-                    if len(sens_lines) >= max_total:
+                    if len(sens_lines) >= max_sensitive:
                         break
                     prefix = "- " if i else ""
-                    sens_lines.append(
-                        f'{prefix}"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                    )
+                    sens_lines.append(fmt_entry(r, prefix))
+
+            if longest_normal is not None:
+                lines.append(fmt_entry(longest_normal))
             lines.extend(sens_lines)
+            if shortest_normal is not None and len(lines) < max_total:
+                lines.append(fmt_entry(shortest_normal))
 
         if not lines:
             return ""

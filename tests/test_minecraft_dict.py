@@ -237,6 +237,48 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
+    # changes=0 + changes=1 混合：最长+最短 normal 均保留，sensitive 居中
+    def test_changes_mixed_normal_both_ends(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.short", "Stone", "石头", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.long", "Polished Deepslate Brick", "磨制深板岩砖", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.sens", "Sensitive A", "敏感A", "1.19.0", "1.20.0", changes=1)
+            _insert(conn, "key.sens", "Sensitive B", "敏感B", "1.20.1", "1.21.0", changes=1)
+            conn.commit()
+            store.load()
+            result = store.lookup("stone polished sensitive")
+            lines = [l for l in result.split("\n") if l.strip() and not l.startswith("原版词典")]
+            self.assertGreaterEqual(len(lines), 4)
+            self.assertIn("磨制深板岩砖", lines[0])
+            self.assertIn("石头", lines[-1])
+            self.assertIn("敏感A", result)
+            self.assertIn("敏感B", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 只有一个 normal 条目时，不作为 shortest 重复出现
+    def test_changes_mixed_single_normal(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.only", "Stone", "石头", "1.20.0", "1.21.0", changes=0)
+            _insert(conn, "key.sens", "Sensitive A", "敏感A", "1.19.0", "1.20.0", changes=1)
+            _insert(conn, "key.sens", "Sensitive B", "敏感B", "1.20.1", "1.21.0", changes=1)
+            conn.commit()
+            store.load()
+            result = store.lookup("stone sensitive")
+            lines = [l for l in result.split("\n") if l.strip() and not l.startswith("原版词典")]
+            self.assertGreaterEqual(len(lines), 3)
+            self.assertIn("石头", lines[0])
+            stone_count = sum(1 for l in lines if "石头" in l)
+            self.assertEqual(stone_count, 1, "唯一的 normal 不应重复出现")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
     # close 方法
     def test_close(self):
         path, conn, store = self._make_store_and_conn()
