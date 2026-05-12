@@ -226,9 +226,9 @@ def check_vanilla_collisions(
     import sqlite3
     try:
         conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
     except sqlite3.OperationalError:
         return []
+    conn.row_factory = sqlite3.Row
 
     try:
         rows = conn.execute(

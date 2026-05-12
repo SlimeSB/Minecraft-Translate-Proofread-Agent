@@ -7,7 +7,7 @@ import re
 from src import config as cfg
 from src.config import GUIDEME_PREFIX
 from src.dictionary.external import ExternalDictStore
-from src.dictionary.protocol import LookupMode, collect_hints
+from src.dictionary.protocol import SHORT, MIXED, collect_hints
 from src.tools.key_alignment import iter_indexed_groups
 from src.models import (
     AutoVerdictsMap,
@@ -293,7 +293,7 @@ def build_review_prompt(
                 en_for_hints = full_en or entry.get("en", "")
                 external_hints = collect_hints(
                     en_for_hints, dict_stores, sep="\n",
-                    mode_fn=lambda s: LookupMode.SHORT if isinstance(s, ExternalDictStore) else LookupMode.MIXED,
+                    mode_fn=lambda s: SHORT if isinstance(s, ExternalDictStore) else MIXED,
                     entry_key=key,
                 ) if dict_stores else ""
                 block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)

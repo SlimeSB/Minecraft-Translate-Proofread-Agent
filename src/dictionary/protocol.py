@@ -6,15 +6,14 @@ from typing import Any, Callable, Literal, Protocol
 from src.logging import warn
 
 
-class LookupMode:
-    MIXED: Literal["mixed"] = "mixed"
-    SHORT: Literal["short"] = "short"
+MIXED: Literal["mixed"] = "mixed"
+SHORT: Literal["short"] = "short"
 
 LookupModeStr = Literal["mixed", "short"]
 
 
 class DictStore(Protocol):
-    def lookup(self, en_text: str, mode: LookupModeStr = LookupMode.MIXED, **kwargs: Any) -> str: ...
+    def lookup(self, en_text: str, mode: LookupModeStr = MIXED, **kwargs: Any) -> str: ...
 
     def load(self) -> None: ...
 
@@ -38,7 +37,7 @@ def collect_hints(
     parts: list[str] = []
     for store in stores:
         try:
-            store_mode = mode_fn(store) if mode_fn else (mode or LookupMode.MIXED)
+            store_mode = mode_fn(store) if mode_fn else (mode or MIXED)
             hint = store.lookup(en_text, mode=store_mode, **kwargs)
             if hint:
                 parts.append(hint)

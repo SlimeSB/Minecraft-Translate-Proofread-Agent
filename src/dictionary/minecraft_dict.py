@@ -6,7 +6,7 @@ from typing import Any
 
 from src.logging import warn
 from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
-from src.dictionary.protocol import LookupMode, LookupModeStr, setup_fts
+from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.tools.fuzzy_search import calc_similarity
 from src.tools.term_validation import STOP_WORDS
 
@@ -101,7 +101,7 @@ class MinecraftDictStore:
     def _version_key(self, row: dict[str, Any]) -> tuple[int, ...]:
         return _parse_version(row.get("version_end", "0.0.0"))
 
-    def _format_rows(self, rows: list[dict[str, Any]], mode: LookupModeStr = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None, show_sim: bool = False) -> tuple[list[str], bool]:
+    def _format_rows(self, rows: list[dict[str, Any]], mode: LookupModeStr = MIXED, max_total: int = 5, target_version: str | None = None, show_sim: bool = False) -> tuple[list[str], bool]:
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             k = r["key"]
@@ -126,7 +126,7 @@ class MinecraftDictStore:
             best = min(entries, key=lambda e: abs(len(e.get("en_us", "")) - self._target_len(entries)))
             normal_picked.append(best)
 
-        if mode == LookupMode.SHORT:
+        if mode == SHORT:
             normal_picked.sort(key=lambda e: len(e.get("en_us", "")))
             normal_picked = normal_picked[:max_total]
         else:
@@ -170,7 +170,7 @@ class MinecraftDictStore:
                 shortest_normal = min(short_candidates_norm, key=lambda e: len((e.get("en_us", "") or "").split()))
             else:
                 shortest_normal = None
-            if longest_normal and shortest_normal and longest_normal is shortest_normal:
+            if longest_normal is not None and longest_normal["key"] == shortest_normal["key"]:
                 shortest_normal = None
 
         if changes1_rows:
@@ -220,7 +220,7 @@ class MinecraftDictStore:
 
         return lines, has_sensitive
 
-    def _lookup_single_term(self, term: str, mode: LookupModeStr = LookupMode.MIXED, max_total: int = 5,
+    def _lookup_single_term(self, term: str, mode: LookupModeStr = MIXED, max_total: int = 5,
                            target_version: str | None = None,
                            seen_keys: set[str] | None = None) -> tuple[list[str], bool]:
         if self._conn is None:
@@ -242,7 +242,7 @@ class MinecraftDictStore:
 
         return self._format_rows(rows, mode, max_total, target_version)
 
-    def lookup(self, en_text: str, mode: LookupModeStr = LookupMode.MIXED, **kwargs: Any) -> str:
+    def lookup(self, en_text: str, mode: LookupModeStr = MIXED, **kwargs: Any) -> str:
         if not self._loaded:
             self.load()
         if self._conn is None:

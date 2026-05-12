@@ -8,9 +8,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.logging import warn
+from src.logging import info, warn
 from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
-from src.dictionary.protocol import LookupMode, LookupModeStr, setup_fts
+from src.dictionary.protocol import SHORT, LookupModeStr, setup_fts
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
@@ -35,7 +35,7 @@ class ExternalDictStore:
         self._load_lemma_cache()
         db_path = Path(self._db_path)
         if not db_path.exists():
-            print(f"[ExternalDict] 词典文件不存在: {db_path}")
+            info(f"[ExternalDict] 词典文件不存在: {db_path}")
             self._loaded = True
             return
         self._conn = sqlite3.connect(str(db_path))
@@ -58,7 +58,7 @@ class ExternalDictStore:
             "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"
         ).fetchone()[0]
         self._loaded = True
-        print(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
+        info(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
 
     def _load_lemma_cache(self) -> None:
         import json
@@ -150,7 +150,7 @@ class ExternalDictStore:
         max_groups = kwargs.get("max_groups", 3)
         max_modids = kwargs.get("max_modids", 5)
 
-        if mode == LookupMode.SHORT:
+        if mode == SHORT:
             sorted_items = sorted(pairs.items(), key=lambda x: (len(x[1][0]), -len(x[1][1])))
         else:
             sorted_items = sorted(pairs.items(), key=lambda x: -len(x[1][1]))
