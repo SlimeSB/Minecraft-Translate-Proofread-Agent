@@ -13,6 +13,7 @@ from src.tools.term_validation import STOP_WORDS
 
 VD_SIMILARITY_THRESHOLD: float = 60.0
 LEMMA_FALLBACK_MIN_KEYS: int = 3
+VD_MAX_LONG_ENTRY_LEN: int = 100
 
 DEFAULT_DB_PATH = "data/Minecraft.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
@@ -38,6 +39,7 @@ class MinecraftDictStore:
             return
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         try:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ix_vanilla_keys_en_us "
@@ -160,11 +162,16 @@ class MinecraftDictStore:
             normal_picked = normal_picked[:max_total]
         else:
             if normal_picked:
-                longest = max(normal_picked, key=lambda e: len(e.get("en_us", "")))
-                rest = [e for e in normal_picked if e is not longest]
+                short_enough = [e for e in normal_picked if len(e.get("en_us", "")) <= VD_MAX_LONG_ENTRY_LEN]
+                if short_enough:
+                    longest = max(short_enough, key=lambda e: len(e.get("en_us", "")))
+                    rest = [e for e in normal_picked if e is not longest]
+                else:
+                    longest = None
+                    rest = list(normal_picked)
                 rest.sort(key=lambda e: len(e.get("en_us", "")))
-                rest = rest[:max_total - 1]
-                normal_picked = [longest] + rest
+                rest = rest[:max_total - (1 if longest else 0)]
+                normal_picked = ([longest] if longest else []) + rest
 
         has_sensitive = bool(changes1_rows)
 
@@ -183,7 +190,11 @@ class MinecraftDictStore:
             for r in normal_picked:
                 lines.append(fmt_entry(r))
         elif normal_picked:
-            longest_normal = max(normal_picked, key=lambda e: len(e.get("en_us", "")))
+            short_enough_norm = [e for e in normal_picked if len(e.get("en_us", "")) <= VD_MAX_LONG_ENTRY_LEN]
+            if short_enough_norm:
+                longest_normal = max(short_enough_norm, key=lambda e: len(e.get("en_us", "")))
+            else:
+                longest_normal = None
             shortest_normal = min(normal_picked, key=lambda e: len(e.get("en_us", "")))
             if longest_normal is shortest_normal:
                 shortest_normal = None
@@ -206,9 +217,11 @@ class MinecraftDictStore:
             max_sensitive = max(0, max_total - reserved)
 
             sens_lines: list[str] = []
+            sens_groups = 0
             for entries in sorted_groups:
-                if len(sens_lines) >= max_sensitive:
+                if sens_groups >= max_sensitive:
                     break
+                sens_groups += 1
                 entries.sort(key=self._version_key, reverse=True)
 
                 def sort_key(r: dict[str, Any]) -> tuple[int, int]:
@@ -219,8 +232,6 @@ class MinecraftDictStore:
                 entries.sort(key=sort_key)
 
                 for i, r in enumerate(entries):
-                    if len(sens_lines) >= max_sensitive:
-                        break
                     prefix = "- " if i else ""
                     sens_lines.append(fmt_entry(r, prefix))
 
@@ -279,13 +290,14 @@ class MinecraftDictStore:
             return ""
         query = RE_FORMAT_SPECIFIER_STRIP.sub(" ", query)
         words = WORD_EXTRACT_PATTERN.findall(query)
-        raw_set = set(words)
         filtered = [w for w in words if len(w) > 1 and w not in STOP_WORDS]
         if not filtered:
             return ""
 
         target_version: str | None = kwargs.get("target_version")
+        entry_key: str = kwargs.get("entry_key", "")
         word_set = set(filtered)
+        key_has_per_word = any(t in entry_key for t in VD_PER_WORD_TRIGGERS)
 
         if len(filtered) == 1:
             lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
@@ -295,7 +307,7 @@ class MinecraftDictStore:
 
         # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
         # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）
-        if not (raw_set & VD_PER_WORD_TRIGGERS) and (word_set & VD_FUZZY_TRIGGERS or len(filtered) > VD_WORD_COUNT_THRESHOLD):
+        if not key_has_per_word and (word_set & VD_FUZZY_TRIGGERS or len(filtered) > VD_WORD_COUNT_THRESHOLD):
             search_term = " OR ".join(f'en_us:"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
             rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
             if not rows:

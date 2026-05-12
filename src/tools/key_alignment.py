@@ -32,6 +32,7 @@ import json
 import re
 from pathlib import Path
 from src.tools.code_detection import is_likely_code_or_proper_noun
+from src.config import RE_INDEXED_KEY
 from src.models import AlignmentDict, EntryDict, VerdictDict
 
 _COMMENT_KEY_RE = re.compile(r"^_comment")
@@ -119,6 +120,76 @@ def align_keys(en_data: dict[str, str], zh_data: dict[str, str]) -> AlignmentDic
         },
     }
 
+
+def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
+    """合并多段序号条目（tooltip[0], tooltip[1]...），仅保留首 key 并拼接全文。
+
+    对 matched_entries / suspicious_untranslated 生效。
+    missing_zh / extra_zh 不改动（它们不成组）。
+    """
+    from src.logging import info
+
+    def _merge(entries: list, label: str) -> list:
+        groups: dict[str, list[dict]] = {}
+        standalone: list[dict] = []
+        for e in entries:
+            m = RE_INDEXED_KEY.match(e.get("key", ""))
+            if m:
+                base = m.group(1)
+                groups.setdefault(base, []).append(e)
+            else:
+                standalone.append(e)
+
+        merged_count = 0
+        for base, group in groups.items():
+            if len(group) < 2:
+                standalone.extend(group)
+                continue
+            group.sort(key=lambda e: int(RE_INDEXED_KEY.match(e["key"]).group(2)))
+            full_en = "".join(e.get("en", "") for e in group)
+            full_zh = "".join(e.get("zh", "") for e in group)
+            merged_count += len(group) - 1
+            group[0]["en"] = full_en
+            group[0]["zh"] = full_zh
+            standalone.append(group[0])
+
+        if merged_count:
+            info(f"  [合并序号条目] {label}: {merged_count} 条合并到 {len(standalone)} 条（原 {len(entries)} 条）")
+        return standalone
+
+    matched = _merge(alignment["matched_entries"], "matched")
+    suspicious = []
+    for e in alignment.get("suspicious_untranslated", []):
+        m = RE_INDEXED_KEY.match(e.get("key", ""))
+        if m:
+            base = m.group(1)
+            full_en = ""
+            full_zh = ""
+            found = False
+            for me in matched:
+                if me.get("key", "").startswith(base):
+                    full_en = me.get("en", "")
+                    full_zh = me.get("zh", "")
+                    found = True
+                    break
+            if found and full_en == full_zh:
+                e["en"] = full_en
+                e["zh"] = full_zh
+                suspicious.append(e)
+        else:
+            suspicious.append(e)
+
+    stats = alignment.get("stats", {})
+    stats["matched"] = len(matched)
+    stats["suspicious_untranslated"] = len(suspicious)
+
+    return {
+        "matched_entries": matched,
+        "missing_zh": alignment["missing_zh"],
+        "extra_zh": alignment["extra_zh"],
+        "suspicious_untranslated": suspicious,
+        "stats": stats,
+    }
 
 
 def check_vanilla_collisions(

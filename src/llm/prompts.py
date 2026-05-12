@@ -304,7 +304,7 @@ def build_review_prompt(
                     for store in dict_stores:
                         try:
                             store_mode = LookupMode.SHORT if isinstance(store, ExternalDictStore) else LookupMode.MIXED
-                            hint = store.lookup(en_for_hints, mode=store_mode)
+                            hint = store.lookup(en_for_hints, mode=store_mode, entry_key=key)
                             if hint:
                                 hints_parts.append(hint)
                         except Exception:

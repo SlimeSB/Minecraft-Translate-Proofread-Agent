@@ -11,7 +11,7 @@ from src.models import (
     PRWarningDict,
 )
 from src.storage.database import PipelineDB
-from src.tools.key_alignment import align_keys, load_json_clean
+from src.tools.key_alignment import align_keys, load_json_clean, merge_indexed_entries
 
 
 def run_phase1(ctx: PipelineContext) -> None:
@@ -51,6 +51,8 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
             "suspicious_untranslated": 0, "total_en": len(matched), "total_zh": len(matched),
         },
     }
+    ctx.alignment = merge_indexed_entries(ctx.alignment)
+    matched = ctx.alignment["matched_entries"]
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
         db.save_alignment(ctx.alignment)
@@ -105,6 +107,7 @@ def _align_keys(ctx: PipelineContext) -> None:
     fmt = "lang" if is_lang else "json"
     for e in ctx.alignment.get("matched_entries", []):
         e["format"] = fmt
+    ctx.alignment = merge_indexed_entries(ctx.alignment)
 
     stats = ctx.alignment["stats"]
     info(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "

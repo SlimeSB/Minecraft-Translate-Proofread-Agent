@@ -342,15 +342,15 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
-    # block 强制逐词分组（即使超 6 词也不退化；block 虽在停用词表仍作为策略依据）
+    # block 强制逐词分组（即使超 6 词也不退化；通过 key 含 block 触发）
     def test_block_item_force_per_word(self):
         path, conn, store = self._make_store_and_conn()
         try:
             _insert(conn, "key.thing", "Thing", "东西", "1.20.0", "1.21.0", changes=0)
             conn.commit()
             store.load()
-            result = store.lookup("this block thing with a very long search text for test")
-            self.assertIn("Thing：", result, "block→per-word mode, should have word headers")
+            result = store.lookup("this block thing with a very long search text for test query", entry_key="block.minecraft.thing")
+            self.assertIn("Thing：", result, "key 含 block → per-word mode, should have word headers")
             self.assertIn("东西", result)
         finally:
             store.close()

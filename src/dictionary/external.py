@@ -40,6 +40,7 @@ class ExternalDictStore:
             return
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         try:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ix_dict_origin_lower "
@@ -54,8 +55,8 @@ class ExternalDictStore:
             )
             self._conn.execute("INSERT INTO dict_fts(dict_fts) VALUES('rebuild')")
             self._use_fts = True
-        except (sqlite3.OperationalError, sqlite3.DatabaseError):
-            warn("[ExternalDict] FTS5 创建失败，降级为原始索引查询")
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+            warn(f"[ExternalDict] FTS5 创建失败 ({e})，降级为原始索引查询")
             self._use_fts = False
         total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
         unique = self._conn.execute(
