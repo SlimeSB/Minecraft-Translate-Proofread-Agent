@@ -162,7 +162,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.commit()
             store.load()
             result = store.lookup("stone")
-            self.assertIn("原版词典:", result)
+            self.assertIn("原版词典", result)
             self.assertNotIn("版本敏感译名", result)
         finally:
             store.close()

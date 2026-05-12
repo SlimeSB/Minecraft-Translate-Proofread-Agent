@@ -168,10 +168,14 @@ class MinecraftDictStore:
 
         lines: list[str] = []
 
-        for r in normal_picked:
-            lines.append(
-                f'"{r["en_us"]}" -> "{r["zh_cn"]}" [{r["version_start"]}-{r["version_end"]}]'
-            )
+        def escape_newlines(s: str) -> str:
+            return s.replace("\n", "\\n")
+
+        if not has_sensitive:
+            for r in normal_picked:
+                lines.append(
+                    f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+                )
 
         if changes1_rows:
             changes1_rows.sort(key=self._version_key, reverse=True)
@@ -187,11 +191,11 @@ class MinecraftDictStore:
             for i, r in enumerate(changes1_rows):
                 if i == primary_idx:
                     lines.append(
-                        f'"{r["en_us"]}" -> "{r["zh_cn"]}" [{r["version_start"]}-{r["version_end"]}]'
+                        f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
                     )
                 else:
                     lines.append(
-                        f'- "{r["en_us"]}" -> "{r["zh_cn"]}" [{r["version_start"]}-{r["version_end"]}]'
+                        f'- "{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
                     )
 
         if not lines:
