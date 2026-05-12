@@ -187,7 +187,10 @@ class MinecraftDictStore:
             for r in changes1_rows:
                 by_key.setdefault(r["key"], []).append(r)
 
-            for key, entries in by_key.items():
+            sens_lines: list[str] = []
+            for entries in by_key.values():
+                if len(sens_lines) >= max_total:
+                    break
                 entries.sort(key=self._version_key, reverse=True)
 
                 def sort_key(r: dict[str, Any]) -> tuple[int, int]:
@@ -198,14 +201,13 @@ class MinecraftDictStore:
                 entries.sort(key=sort_key)
 
                 for i, r in enumerate(entries):
-                    if i == 0:
-                        lines.append(
-                            f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                        )
-                    else:
-                        lines.append(
-                            f'- "{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                        )
+                    if len(sens_lines) >= max_total:
+                        break
+                    prefix = "- " if i else ""
+                    sens_lines.append(
+                        f'{prefix}"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+                    )
+            lines.extend(sens_lines)
 
         if not lines:
             return ""
