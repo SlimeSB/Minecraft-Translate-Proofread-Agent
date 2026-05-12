@@ -176,27 +176,36 @@ class MinecraftDictStore:
                 lines.append(
                     f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
                 )
+        elif normal_picked:
+            shortest = min(normal_picked, key=lambda e: len(e.get("en_us", "")))
+            lines.append(
+                f'"{escape_newlines(shortest["en_us"])}" -> "{escape_newlines(shortest["zh_cn"])}" [{shortest["version_start"]}-{shortest["version_end"]}]'
+            )
 
         if changes1_rows:
-            changes1_rows.sort(key=self._version_key, reverse=True)
+            by_key: dict[str, list[dict[str, Any]]] = {}
+            for r in changes1_rows:
+                by_key.setdefault(r["key"], []).append(r)
 
-            def sort_key(r: dict[str, Any]) -> tuple[int, int]:
-                if target_version and self._in_version_range(target_version, r["version_start"], r["version_end"]):
-                    return (0, 0)
-                return (1, 0)
+            for key, entries in by_key.items():
+                entries.sort(key=self._version_key, reverse=True)
 
-            changes1_rows.sort(key=sort_key)
-            primary_idx = 0
+                def sort_key(r: dict[str, Any]) -> tuple[int, int]:
+                    if target_version and self._in_version_range(target_version, r["version_start"], r["version_end"]):
+                        return (0, 0)
+                    return (1, 0)
 
-            for i, r in enumerate(changes1_rows):
-                if i == primary_idx:
-                    lines.append(
-                        f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                    )
-                else:
-                    lines.append(
-                        f'- "{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
-                    )
+                entries.sort(key=sort_key)
+
+                for i, r in enumerate(entries):
+                    if i == 0:
+                        lines.append(
+                            f'"{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+                        )
+                    else:
+                        lines.append(
+                            f'- "{escape_newlines(r["en_us"])}" -> "{escape_newlines(r["zh_cn"])}" [{r["version_start"]}-{r["version_end"]}]'
+                        )
 
         if not lines:
             return ""
