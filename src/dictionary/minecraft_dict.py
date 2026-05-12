@@ -104,36 +104,20 @@ class MinecraftDictStore:
     def _version_key(self, row: dict[str, Any]) -> tuple[int, ...]:
         return parse_version(row.get("version_end", "0.0.0"))
 
-    def lookup(self, en_text: str, mode: str = LookupMode.MIXED, **kwargs: Any) -> str:
-        if not self._loaded:
-            self.load()
+    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
         if self._conn is None:
-            return ""
+            return [], False
 
-        query = en_text.strip().lower()
-        if not query:
-            return ""
-        words = query.split()
-        filtered = [w for w in words if w not in STOP_WORDS]
-        if not filtered:
-            return ""
-        if len(filtered) == 1 and filtered[0] in STOP_WORDS:
-            return ""
-
-        search_term = " OR ".join(f'"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
-
+        search_term = f'"{term}"' if self._use_fts else term
         rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
         if not rows:
-            return ""
-
-        target_version: str | None = kwargs.get("target_version")
+            return [], False
 
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             k = r["key"]
             groups.setdefault(k, []).append(r)
 
-        max_total = 5
         changes1_keys: set[str] = set()
         normal_groups: dict[str, list[dict[str, Any]]] = {}
         for k, entries in groups.items():
@@ -228,12 +212,54 @@ class MinecraftDictStore:
             if shortest_normal is not None and len(lines) < max_total:
                 lines.append(fmt_entry(shortest_normal))
 
-        if not lines:
+        return lines, has_sensitive
+
+    def lookup(self, en_text: str, mode: str = LookupMode.MIXED, **kwargs: Any) -> str:
+        if not self._loaded:
+            self.load()
+        if self._conn is None:
             return ""
 
-        body = "\n".join(lines)
+        query = en_text.strip().lower()
+        if not query:
+            return ""
+        words = query.split()
+        filtered = [w for w in words if w not in STOP_WORDS]
+        if not filtered:
+            return ""
+
+        target_version: str | None = kwargs.get("target_version")
+
+        if len(filtered) == 1:
+            lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
+            if not lines:
+                return ""
+            body = "\n".join(lines)
+            header = "原版词典："
+            if has_sensitive:
+                header += "版本敏感译名（不同版本存在差异）"
+            return header + "\n" + body
+
+        any_sensitive = False
+        all_lines: list[str] = []
+        for word in filtered:
+            lines, has_sensitive = self._lookup_single_term(word, mode, 3, target_version)
+            if has_sensitive:
+                any_sensitive = True
+            if lines:
+                all_lines.append(f"{word.capitalize()}：")
+                all_lines.extend(lines)
+                all_lines.append("")
+
+        if not all_lines:
+            return ""
+
+        if all_lines and all_lines[-1] == "":
+            all_lines.pop()
+
+        body = "\n".join(all_lines)
         header = "原版词典："
-        if has_sensitive:
+        if any_sensitive:
             header += "版本敏感译名（不同版本存在差异）"
         return header + "\n" + body
 

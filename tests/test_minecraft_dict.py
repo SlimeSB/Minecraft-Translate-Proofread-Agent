@@ -237,7 +237,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
-    # changes=0 + changes=1 混合：最长+最短 normal 均保留，sensitive 居中
+    # 多词搜索：按匹配单词分组，每个词内 changes=0 + changes=1 混合
     def test_changes_mixed_normal_both_ends(self):
         path, conn, store = self._make_store_and_conn()
         try:
@@ -248,12 +248,15 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.commit()
             store.load()
             result = store.lookup("stone polished sensitive")
-            lines = [l for l in result.split("\n") if l.strip() and not l.startswith("原版词典")]
-            self.assertGreaterEqual(len(lines), 4)
-            self.assertIn("磨制深板岩砖", lines[0])
-            self.assertIn("石头", lines[-1])
+            self.assertIn("Stone：", result)
+            self.assertIn("Polished：", result)
+            self.assertIn("Sensitive：", result)
+            self.assertIn("磨制深板岩砖", result)
+            self.assertIn("石头", result)
             self.assertIn("敏感A", result)
             self.assertIn("敏感B", result)
+            stone_count = sum(1 for l in result.split("\n") if "石头" in l)
+            self.assertEqual(stone_count, 1, "Stone 不应重复出现")
         finally:
             store.close()
             conn.close()
@@ -269,10 +272,12 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.commit()
             store.load()
             result = store.lookup("stone sensitive")
-            lines = [l for l in result.split("\n") if l.strip() and not l.startswith("原版词典")]
-            self.assertGreaterEqual(len(lines), 3)
-            self.assertIn("石头", lines[0])
-            stone_count = sum(1 for l in lines if "石头" in l)
+            self.assertIn("Stone：", result)
+            self.assertIn("Sensitive：", result)
+            self.assertIn("石头", result)
+            self.assertIn("敏感A", result)
+            self.assertIn("敏感B", result)
+            stone_count = sum(1 for l in result.split("\n") if "石头" in l)
             self.assertEqual(stone_count, 1, "唯一的 normal 不应重复出现")
         finally:
             store.close()
