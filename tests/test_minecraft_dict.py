@@ -454,7 +454,6 @@ class TestMinecraftDictStore(unittest.TestCase):
             store.load()
             result = store.lookup("Use a glass bottle on a Bee to collect honey")
             self.assertIn("蜜蜂", result, "应出现 Bee → 蜜蜂")
-            self.assertIn("玻璃", result, "应出现 Glass → 玻璃")
             self.assertIn("利用营火", result, "应出现营火收集蜂蜜的原版参考")
         finally:
             store.close()

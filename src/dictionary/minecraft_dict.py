@@ -298,16 +298,8 @@ class MinecraftDictStore:
         entry_key: str = kwargs.get("entry_key", "")
         word_set = set(filtered)
         key_has_per_word = any(t in entry_key for t in VD_PER_WORD_TRIGGERS)
-
-        if len(filtered) == 1:
-            lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
-            if not lines:
-                return ""
-            return self._make_result([f"{filtered[0].capitalize()}："] + lines, has_sensitive)
-
-        # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
-        # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）
-        if not key_has_per_word and (word_set & VD_FUZZY_TRIGGERS or len(filtered) > VD_WORD_COUNT_THRESHOLD):
+        key_has_fuzzy = any(t in entry_key for t in VD_FUZZY_TRIGGERS)
+        if not key_has_per_word and (key_has_fuzzy or word_set & VD_FUZZY_TRIGGERS or len(words) > VD_WORD_COUNT_THRESHOLD):
             search_term = " OR ".join(f'en_us:"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
             rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
             if not rows:
