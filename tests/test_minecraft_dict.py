@@ -154,14 +154,15 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
-    # changes=0 无 header
-    def test_changes0_no_header(self):
+    # changes=0 也有 header
+    def test_changes0_header(self):
         path, conn, store = self._make_store_and_conn()
         try:
             _insert(conn, "key.stone", "Stone", "石头", "1.20.0", "1.21.0", changes=0)
             conn.commit()
             store.load()
             result = store.lookup("stone")
+            self.assertIn("原版词典:", result)
             self.assertNotIn("版本敏感译名", result)
         finally:
             store.close()

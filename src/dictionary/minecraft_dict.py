@@ -197,10 +197,11 @@ class MinecraftDictStore:
         if not lines:
             return ""
 
+        body = "\n".join(lines)
+        header = "原版词典："
         if has_sensitive:
-            header = "原版词典：版本敏感译名（不同版本存在差异）"
-            return header + "\n" + "\n".join(lines)
-        return "\n".join(lines)
+            header += "版本敏感译名（不同版本存在差异）"
+        return header + "\n" + body
 
     def _target_len(self, entries: list[dict[str, Any]]) -> int:
         if not entries:

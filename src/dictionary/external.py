@@ -133,8 +133,7 @@ class ExternalDictStore:
             return ""
 
         stop_words = STOP_WORDS
-        pairs: dict[tuple[str, str], set[str]] = {}
-        seen: set[tuple[str, str]] = set()
+        pairs: dict[tuple[str, str], tuple[str, set[str]]] = {}
 
         for w in words:
             w_lower = w.lower()
@@ -144,8 +143,7 @@ class ExternalDictStore:
             if self._use_fts:
                 candidates = self._query_word_fts(w)
             else:
-                candidates_flat = self._query_word(w_lower)
-                candidates = [(zh, modid, "") for zh, modid in candidates_flat]
+                candidates = self._query_word_with_origin(w_lower)
 
             if not candidates:
                 canon = self._lemma_map.get(w_lower)
@@ -155,18 +153,17 @@ class ExternalDictStore:
                         if self._use_fts:
                             candidates = self._query_word_fts(canon)
                         else:
-                            candidates_flat = self._query_word(canon_lower)
-                            candidates = [(zh, modid, "") for zh, modid in candidates_flat]
+                            candidates = self._query_word_with_origin(canon_lower)
             if not candidates:
                 continue
 
             for zh, modid, origin in candidates:
-                pair_key = (w, zh)
-                if pair_key in seen:
-                    pairs[pair_key].add(modid)
+                origin_normalized = origin.strip()
+                key = (origin_normalized.lower(), zh)
+                if key in pairs:
+                    pairs[key][1].add(modid)
                 else:
-                    seen.add(pair_key)
-                    pairs[pair_key] = {modid}
+                    pairs[key] = (origin_normalized, {modid})
 
         if not pairs:
             return ""
@@ -174,14 +171,14 @@ class ExternalDictStore:
         max_groups = kwargs.get("max_groups", 3)
         max_modids = kwargs.get("max_modids", 5)
 
-        sorted_pairs = sorted(pairs.items(), key=lambda x: -len(x[1]))
+        sorted_items = sorted(pairs.items(), key=lambda x: -len(x[1][1]))
         lines: list[str] = []
-        for (en_word, zh), modids in sorted_pairs[:max_groups]:
+        for (_key, (origin, modids)) in sorted_items[:max_groups]:
             modid_list = sorted(modids)[:max_modids]
             modid_str = ", ".join(modid_list)
             if len(modids) > max_modids:
                 modid_str += f" +{len(modids) - max_modids}"
-            lines.append(f"{en_word} -> {zh} [{modid_str}]")
+            lines.append(f"{origin} -> {zh} [{modid_str}]")
 
         if not lines:
             return ""
