@@ -241,11 +241,7 @@ class MinecraftDictStore:
             lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
             if not lines:
                 return ""
-            body = "\n".join(lines)
-            header = "原版词典："
-            if has_sensitive:
-                header += "版本敏感译名（不同版本存在差异）"
-            return header + "\n" + body
+            return self._make_result(lines, has_sensitive)
 
         # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
         # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）
@@ -257,11 +253,7 @@ class MinecraftDictStore:
             lines, has_sensitive = self._format_rows(rows, mode, 5, target_version)
             if not lines:
                 return ""
-            body = "\n".join(lines)
-            header = "原版词典："
-            if has_sensitive:
-                header += "版本敏感译名（不同版本存在差异）"
-            return header + "\n" + body
+            return self._make_result(lines, has_sensitive)
 
         # 默认 / block&item 强制 → 逐词分组
         any_sensitive = False
@@ -281,10 +273,13 @@ class MinecraftDictStore:
         if all_lines and all_lines[-1] == "":
             all_lines.pop()
 
-        body = "\n".join(all_lines)
+        return self._make_result(all_lines, any_sensitive)
+
+    def _make_result(self, lines: list[str], has_sensitive: bool) -> str:
+        body = "\n".join(lines)
         header = "原版词典："
-        if any_sensitive:
-            header += "版本敏感译名（不同版本存在差异）"
+        if has_sensitive:
+            header += "存在版本敏感译名，不同版本存在差异。"
         return header + "\n" + body
 
     def _target_len(self, entries: list[dict[str, Any]]) -> int:
