@@ -90,20 +90,16 @@ class ReviewPipeline:
         info(f"{'='*60}")
 
         try:
-            try:
-                run_phase1(ctx)       # 键对齐 / PR 数据加载
-                run_phase2(ctx)       # 术语提取与一致性检查
-                run_phase3a(ctx)      # 全自动格式检查
-                run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
+            run_phase1(ctx)       # 键对齐 / PR 数据加载
+            run_phase2(ctx)       # 术语提取与一致性检查
+            run_phase3a(ctx)      # 全自动格式检查
+            run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
 
-                # 合并 verdict 写入 DB（供 P4 过滤使用）
-                _save_merged_verdicts(ctx)
+            # 合并 verdict 写入 DB（供 P4 过滤使用）
+            _save_merged_verdicts(ctx)
 
-                run_phase4(ctx)       # 最终 LLM 过滤
-                run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
-            except Exception as e:
-                warn(f"\n错误: {e}")
-                raise
+            run_phase4(ctx)       # 最终 LLM 过滤
+            run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
         finally:
             for store in ctx.dict_stores:
                 try:

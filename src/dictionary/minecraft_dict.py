@@ -6,10 +6,14 @@ from typing import Any
 
 from src.logging import warn
 from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
-from src.dictionary.protocol import LookupMode
+from src.dictionary.protocol import LookupMode, LookupModeStr, setup_fts
 from src.tools.fuzzy_search import calc_similarity
-from src.tools.version_utils import parse_version
 from src.tools.term_validation import STOP_WORDS
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    parts = v.split(".")
+    return tuple(int(p) for p in parts)
 
 VD_SIMILARITY_THRESHOLD: float = 60.0
 VD_MAX_LONG_WORDS: int = 30
@@ -44,25 +48,11 @@ class MinecraftDictStore:
             )
         except sqlite3.OperationalError:
             pass
-        try:
-            self._conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS vanilla_keys_fts "
-                "USING fts5(en_us, zh_cn, key, version_start, version_end, "
-                "changes, content=vanilla_keys, content_rowid=rowid)"
-            )
-            self._conn.execute(
-                "INSERT INTO vanilla_keys_fts(vanilla_keys_fts) VALUES('rebuild')"
-            )
-            self._use_fts = True
-        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
-            warn(f"[MinecraftDict] FTS5 创建失败 ({e})，降级为 LIKE 查询")
-            self._use_fts = False
-            try:
-                self._conn.execute(
-                    "DROP TABLE IF EXISTS vanilla_keys_fts"
-                )
-            except sqlite3.OperationalError:
-                pass
+        self._use_fts = setup_fts(
+            self._conn, "vanilla_keys_fts",
+            "en_us, zh_cn, key, version_start, version_end, changes", "vanilla_keys",
+            label="MinecraftDict",
+        )
         self._loaded = True
 
     def _search_fts(self, term: str) -> list[dict[str, Any]]:
@@ -103,15 +93,15 @@ class MinecraftDictStore:
         return [dict(r) for r in rows]
 
     def _in_version_range(self, version: str, start: str, end: str) -> bool:
-        v = parse_version(version)
-        s = parse_version(start)
-        e = parse_version(end)
+        v = _parse_version(version)
+        s = _parse_version(start)
+        e = _parse_version(end)
         return s <= v <= e
 
     def _version_key(self, row: dict[str, Any]) -> tuple[int, ...]:
-        return parse_version(row.get("version_end", "0.0.0"))
+        return _parse_version(row.get("version_end", "0.0.0"))
 
-    def _format_rows(self, rows: list[dict[str, Any]], mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None, show_sim: bool = False) -> tuple[list[str], bool]:
+    def _format_rows(self, rows: list[dict[str, Any]], mode: LookupModeStr = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None, show_sim: bool = False) -> tuple[list[str], bool]:
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             k = r["key"]
@@ -230,7 +220,7 @@ class MinecraftDictStore:
 
         return lines, has_sensitive
 
-    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5,
+    def _lookup_single_term(self, term: str, mode: LookupModeStr = LookupMode.MIXED, max_total: int = 5,
                            target_version: str | None = None,
                            seen_keys: set[str] | None = None) -> tuple[list[str], bool]:
         if self._conn is None:
@@ -252,7 +242,7 @@ class MinecraftDictStore:
 
         return self._format_rows(rows, mode, max_total, target_version)
 
-    def lookup(self, en_text: str, mode: str = LookupMode.MIXED, **kwargs: Any) -> str:
+    def lookup(self, en_text: str, mode: LookupModeStr = LookupMode.MIXED, **kwargs: Any) -> str:
         if not self._loaded:
             self.load()
         if self._conn is None:
@@ -270,11 +260,22 @@ class MinecraftDictStore:
         target_version: str | None = kwargs.get("target_version")
         entry_key: str = kwargs.get("entry_key", "")
         word_set = set(filtered)
-        key_has_per_word = any(t in entry_key for t in VD_PER_WORD_TRIGGERS)
-        key_has_fuzzy = any(t in entry_key for t in VD_FUZZY_TRIGGERS)
-        if not key_has_per_word and (key_has_fuzzy or word_set & VD_FUZZY_TRIGGERS or len(words) > VD_WORD_COUNT_THRESHOLD):
-            search_term = " OR ".join(f'en_us:{w}*' for w in filtered) if self._use_fts else " ".join(filtered)
-            rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
+        key_forces_per_word = any(t in entry_key for t in VD_PER_WORD_TRIGGERS)
+        triggers_fuzzy = any(t in entry_key for t in VD_FUZZY_TRIGGERS) or bool(word_set & VD_FUZZY_TRIGGERS)
+        exceeds_threshold = len(words) > VD_WORD_COUNT_THRESHOLD
+        use_fuzzy = not key_forces_per_word and (triggers_fuzzy or exceeds_threshold)
+        if use_fuzzy:
+            if self._use_fts:
+                search_term = " OR ".join(f'en_us:{w}*' for w in filtered)
+                rows = self._search_fts(search_term)
+            else:
+                rows = []
+                seen: set[str] = set()
+                for w in filtered:
+                    for r in self._search_like(w):
+                        if r["key"] not in seen:
+                            seen.add(r["key"])
+                            rows.append(r)
             if not rows:
                 return ""
             for r in rows:

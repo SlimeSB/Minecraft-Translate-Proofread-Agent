@@ -10,7 +10,7 @@ from typing import Any
 
 from src.logging import warn
 from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
-from src.dictionary.protocol import LookupMode
+from src.dictionary.protocol import LookupMode, LookupModeStr, setup_fts
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
@@ -48,16 +48,11 @@ class ExternalDictStore:
             )
         except sqlite3.OperationalError:
             warn(f"[ExternalDict] 索引创建失败（可能为只读文件系统）")
-        try:
-            self._conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS dict_fts "
-                "USING fts5(ORIGIN_NAME, TRANS_NAME, MODID, content=dict, content_rowid=rowid)"
-            )
-            self._conn.execute("INSERT INTO dict_fts(dict_fts) VALUES('rebuild')")
-            self._use_fts = True
-        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
-            warn(f"[ExternalDict] FTS5 创建失败 ({e})，降级为原始索引查询")
-            self._use_fts = False
+        self._use_fts = setup_fts(
+            self._conn, "dict_fts",
+            "ORIGIN_NAME, TRANS_NAME, MODID", "dict",
+            label="ExternalDict",
+        )
         total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
         unique = self._conn.execute(
             "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"
@@ -107,7 +102,7 @@ class ExternalDictStore:
             self._use_fts = False
             return []
 
-    def lookup(self, en_text: str, mode: str = "mixed", **kwargs: Any) -> str:
+    def lookup(self, en_text: str, mode: LookupModeStr = "mixed", **kwargs: Any) -> str:
         if not self._loaded:
             self.load()
         if self._conn is None:

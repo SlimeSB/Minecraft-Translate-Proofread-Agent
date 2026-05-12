@@ -5,9 +5,10 @@
 import re
 
 from src import config as cfg
-from src.config import GUIDEME_PREFIX, RE_INDEXED_KEY
+from src.config import GUIDEME_PREFIX
 from src.dictionary.external import ExternalDictStore
-from src.dictionary.protocol import LookupMode
+from src.dictionary.protocol import LookupMode, collect_hints
+from src.tools.key_alignment import iter_indexed_groups
 from src.models import (
     AutoVerdictsMap,
     EntryDict,
@@ -228,17 +229,8 @@ def build_entry_block(
 # ═══════════════════════════════════════════════════════════
 
 def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
-    groups: dict[str, list[dict[str, str]]] = {}
-    for entry in entries:
-        m = RE_INDEXED_KEY.match(entry["key"])
-        if m:
-            base = m.group(1)
-            groups.setdefault(base, []).append(entry)  # type: ignore[arg-type]
     result: dict[str, tuple[str, str]] = {}
-    for base, group in groups.items():
-        if len(group) < 2:
-            continue
-        group.sort(key=lambda e: int(RE_INDEXED_KEY.match(e["key"]).group(2)))
+    for _base, group in iter_indexed_groups(entries):
         full_en = "".join(e.get("en", "") for e in group)
         full_zh = "".join(e.get("zh", "") for e in group)
         for e in group:
@@ -299,17 +291,11 @@ def build_review_prompt(
                 fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
                 full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
                 en_for_hints = full_en or entry.get("en", "")
-                hints_parts: list[str] = []
-                if dict_stores:
-                    for store in dict_stores:
-                        try:
-                            store_mode = LookupMode.SHORT if isinstance(store, ExternalDictStore) else LookupMode.MIXED
-                            hint = store.lookup(en_for_hints, mode=store_mode, entry_key=key)
-                            if hint:
-                                hints_parts.append(hint)
-                        except Exception:
-                            pass
-                external_hints = "\n".join(hints_parts) if hints_parts else ""
+                external_hints = collect_hints(
+                    en_for_hints, dict_stores, sep="\n",
+                    mode_fn=lambda s: LookupMode.SHORT if isinstance(s, ExternalDictStore) else LookupMode.MIXED,
+                    entry_key=key,
+                ) if dict_stores else ""
                 block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)
                 blocks.append(block)
             prompts.append("\n\n".join(blocks))

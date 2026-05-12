@@ -3,7 +3,7 @@ from src import config as cfg
 from src.logging import info
 from src.models import GlossaryDict, PipelineContext, VerdictDict
 from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
-from src.dictionary.protocol import LookupMode
+from src.dictionary.protocol import LookupMode, collect_hints
 from src.storage.database import PipelineDB
 
 
@@ -29,16 +29,9 @@ def run_phase2(ctx: PipelineContext) -> None:
             term_hints = {}
             for g in ctx.glossary:
                 en_term = g["en"].lower()
-                parts: list[str] = []
-                for store in ctx.dict_stores:
-                    try:
-                        hint = store.lookup(en_term, mode=LookupMode.SHORT)
-                        if hint:
-                            parts.append(hint)
-                    except Exception:
-                        pass
-                if parts:
-                    term_hints[en_term] = "\n".join(parts)
+                hint = collect_hints(en_term, ctx.dict_stores, mode=LookupMode.SHORT)
+                if hint:
+                    term_hints[en_term] = hint
         ctx.glossary = llm_verify_glossary(ctx.glossary, tb.en_data, tb.zh_data, ctx.llm_call, term_hints=term_hints)
     ctx.term_verdicts = check_consistency(ctx.glossary, tb.matched_entries, tb.merged)
 

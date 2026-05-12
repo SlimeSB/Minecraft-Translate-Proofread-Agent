@@ -31,6 +31,8 @@
 import json
 import re
 from pathlib import Path
+from typing import Any, Sequence
+
 from src.tools.code_detection import is_likely_code_or_proper_noun
 from src.config import RE_INDEXED_KEY
 from src.models import AlignmentDict, EntryDict, VerdictDict
@@ -121,6 +123,27 @@ def align_keys(en_data: dict[str, str], zh_data: dict[str, str]) -> AlignmentDic
     }
 
 
+def iter_indexed_groups(
+    entries: Sequence[Any],
+) -> list[tuple[str, list[Any]]]:
+    """按 RE_INDEXED_KEY 将多段序号条目（如 tooltip[0], tooltip[1]）分组并排序。
+
+    返回 [(base_key, sorted_group), ...]，仅含 size >= 2 的组。
+    """
+    groups: dict[str, list[Any]] = {}
+    for e in entries:
+        m = RE_INDEXED_KEY.match(str(e.get("key", "")))
+        if m:
+            groups.setdefault(m.group(1), []).append(e)
+    result: list[tuple[str, list[Any]]] = []
+    for base, group in groups.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda e: int(RE_INDEXED_KEY.match(str(e["key"])).group(2)))
+        result.append((base, group))
+    return result
+
+
 def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
     """合并多段序号条目（tooltip[0], tooltip[1]...），仅保留首 key 并拼接全文。
 
@@ -130,18 +153,18 @@ def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
     from src.logging import info
 
     def _merge(entries: list, label: str) -> list:
-        groups: dict[str, list[dict]] = {}
+        """Group indexed entries, merge multi-part groups, return flat list."""
         standalone: list[dict] = []
+        indexed: dict[str, list[dict]] = {}
         for e in entries:
             m = RE_INDEXED_KEY.match(e.get("key", ""))
             if m:
-                base = m.group(1)
-                groups.setdefault(base, []).append(e)
+                indexed.setdefault(m.group(1), []).append(e)
             else:
                 standalone.append(e)
 
         merged_count = 0
-        for base, group in groups.items():
+        for _base, group in indexed.items():
             if len(group) < 2:
                 standalone.extend(group)
                 continue

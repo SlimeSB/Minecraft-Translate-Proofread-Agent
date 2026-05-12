@@ -19,7 +19,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from src.tools.version_utils import parse_version as _parse_version
+from src.dictionary.minecraft_dict import _parse_version
 
 
 def migrate(db_path: str) -> None:
