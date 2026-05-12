@@ -4,17 +4,15 @@
 
 不再全量加载到内存，每次 lookup 直接查询 SQLite。
 """
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from src.logging import warn
+from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
 DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
-
-_RE_WORD = re.compile(r"[A-Za-z]+")
 
 from src.tools.term_validation import STOP_WORDS
 
@@ -113,7 +111,8 @@ class ExternalDictStore:
         if self._conn is None:
             return ""
 
-        words = _RE_WORD.findall(en_text)
+        clean_text = RE_FORMAT_SPECIFIER_STRIP.sub(" ", en_text)
+        words = WORD_EXTRACT_PATTERN.findall(clean_text)
         if not words:
             return ""
 

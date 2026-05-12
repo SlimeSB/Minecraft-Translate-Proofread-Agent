@@ -52,6 +52,12 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["fts_recall_multiplier"] = p.get("fts_recall_multiplier", 10)
     flat["fts_recall_min"] = p.get("fts_recall_min", 50)
     flat["fuzzy_trigger_patterns"] = p.get("fuzzy_trigger_patterns", [".desc", "death.attack.", "advancements."])
+    flat["format_specifier_pattern"] = p.get("format_specifier_pattern", "^%[a-zA-Z0-9_.$]+$")
+    flat["word_extract_pattern"] = p.get("word_extract_pattern", "[A-Za-z]+")
+    vd = p.get("vanilla_dict", {})
+    flat["vd_per_word_triggers"] = vd.get("per_word_trigger_words", ["block", "blocks", "item", "items"])
+    flat["vd_fuzzy_triggers"] = vd.get("fuzzy_trigger_words", ["desc"])
+    flat["vd_word_count_threshold"] = vd.get("word_count_threshold", 6)
 
     # ── key_prefixes ──
     # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
@@ -154,6 +160,22 @@ GUIDEME_PREFIX: str = "ae2guide:"
 # 带序号键匹配，如 tooltip[0]、advancements.story.root.1
 # 用于检测多段条目的分段索引
 RE_INDEXED_KEY: re.Pattern = re.compile(r"^(.*?)(?:\.|\[)(\d+)\]?$")
+
+# printf 风格格式占位符匹配，用于过滤 %d, %s, %1$s, %.2f 等无意义搜索词
+RE_FORMAT_SPECIFIER: re.Pattern = re.compile(get("format_specifier_pattern"))
+
+# 无锚点版本，用于从文本中剥离格式占位符（在单词提取前处理）
+_FORMAT_STRIP_RAW = get("format_specifier_pattern")
+_FORMAT_STRIP_RAW = _FORMAT_STRIP_RAW.removeprefix("^").removesuffix("$") if _FORMAT_STRIP_RAW else r"%[a-zA-Z0-9_.$]+"
+RE_FORMAT_SPECIFIER_STRIP: re.Pattern = re.compile(_FORMAT_STRIP_RAW)
+
+# 单词提取正则 — 用于词典查询时从文本中提取候选词
+WORD_EXTRACT_PATTERN: re.Pattern = re.compile(get("word_extract_pattern"))
+
+# vanilla_dict 搜索策略配置
+VD_PER_WORD_TRIGGERS: set[str] = set(get("vd_per_word_triggers"))
+VD_FUZZY_TRIGGERS: set[str] = set(get("vd_fuzzy_triggers"))
+VD_WORD_COUNT_THRESHOLD: int = get("vd_word_count_threshold")
 
 
 def _as_text(val: str | list[str]) -> str:

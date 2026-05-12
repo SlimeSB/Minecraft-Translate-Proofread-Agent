@@ -237,6 +237,34 @@ class TestMinecraftDictStore(unittest.TestCase):
             conn.close()
             Path(path).unlink(missing_ok=True)
 
+    # 格式占位符过滤：%d, %s 等不作为搜索词
+    def test_format_specifier_filtered(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.test", "Test", "测试", "1.20.0", "1.21.0")
+            conn.commit()
+            store.load()
+            result = store.lookup("%d")
+            self.assertEqual(result, "")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 标点剥离：Animals. 只去掉句点，搜到 animals 相关条目
+    def test_punctuation_stripped_word_in_multiword(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.animal", "Animals", "动物", "1.20.0", "1.21.0")
+            conn.commit()
+            store.load()
+            result = store.lookup("Animals.")
+            self.assertIn("动物", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
     # 多词搜索：按匹配单词分组，每个词内 changes=0 + changes=1 混合
     def test_changes_mixed_normal_both_ends(self):
         path, conn, store = self._make_store_and_conn()
@@ -279,6 +307,51 @@ class TestMinecraftDictStore(unittest.TestCase):
             self.assertIn("敏感B", result)
             stone_count = sum(1 for l in result.split("\n") if "石头" in l)
             self.assertEqual(stone_count, 1, "唯一的 normal 不应重复出现")
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 超 6 词退化模糊查询 → 无单词标题
+    def test_long_text_fuzzy_fallback(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.test", "Very long search query copper ore diamond", "测试长句", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("this is a very long search query about copper ore diamond")
+            self.assertIn("测试长句", result)
+            self.assertNotIn("Very：", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # 含 desc 退化模糊查询
+    def test_desc_triggers_fuzzy(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.test", "desc test", "描述测试", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("this is a desc test")
+            self.assertIn("描述测试", result)
+            self.assertNotIn("Desc：", result)
+        finally:
+            store.close()
+            conn.close()
+            Path(path).unlink(missing_ok=True)
+
+    # block 强制逐词分组（即使超 6 词也不退化；block 虽在停用词表仍作为策略依据）
+    def test_block_item_force_per_word(self):
+        path, conn, store = self._make_store_and_conn()
+        try:
+            _insert(conn, "key.thing", "Thing", "东西", "1.20.0", "1.21.0", changes=0)
+            conn.commit()
+            store.load()
+            result = store.lookup("this block thing with a very long search text for test")
+            self.assertIn("Thing：", result, "block→per-word mode, should have word headers")
+            self.assertIn("东西", result)
         finally:
             store.close()
             conn.close()

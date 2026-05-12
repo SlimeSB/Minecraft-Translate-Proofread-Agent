@@ -7,7 +7,14 @@
     "review_batch_size": 25,
     "fts_recall_multiplier": 10,
     "fts_recall_min": 50,
-    "fuzzy_trigger_patterns": [".desc", "death.", "advancements."]
+    "fuzzy_trigger_patterns": [".desc", "death.", "advancements."],
+    "format_specifier_pattern": "^%[a-zA-Z0-9_.$]+$",
+    "word_extract_pattern": "[A-Za-z]+",
+    "vanilla_dict": {
+      "per_word_trigger_words": ["block", "blocks", "item", "items"],
+      "fuzzy_trigger_words": ["desc"],
+      "word_count_threshold": 6
+    }
   },
 
   "key_prefixes": {

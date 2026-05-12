@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from src.logging import warn
+from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
 from src.dictionary.protocol import LookupMode
 from src.tools.version_utils import parse_version
 from src.tools.term_validation import STOP_WORDS
@@ -104,15 +105,7 @@ class MinecraftDictStore:
     def _version_key(self, row: dict[str, Any]) -> tuple[int, ...]:
         return parse_version(row.get("version_end", "0.0.0"))
 
-    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
-        if self._conn is None:
-            return [], False
-
-        search_term = f'"{term}"' if self._use_fts else term
-        rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
-        if not rows:
-            return [], False
-
+    def _format_rows(self, rows: list[dict[str, Any]], mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
         groups: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             k = r["key"]
@@ -214,6 +207,17 @@ class MinecraftDictStore:
 
         return lines, has_sensitive
 
+    def _lookup_single_term(self, term: str, mode: str = LookupMode.MIXED, max_total: int = 5, target_version: str | None = None) -> tuple[list[str], bool]:
+        if self._conn is None:
+            return [], False
+
+        search_term = f'"{term}"' if self._use_fts else term
+        rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
+        if not rows:
+            return [], False
+
+        return self._format_rows(rows, mode, max_total, target_version)
+
     def lookup(self, en_text: str, mode: str = LookupMode.MIXED, **kwargs: Any) -> str:
         if not self._loaded:
             self.load()
@@ -223,12 +227,15 @@ class MinecraftDictStore:
         query = en_text.strip().lower()
         if not query:
             return ""
-        words = query.split()
-        filtered = [w for w in words if w not in STOP_WORDS]
+        query = RE_FORMAT_SPECIFIER_STRIP.sub(" ", query)
+        words = WORD_EXTRACT_PATTERN.findall(query)
+        raw_set = set(words)
+        filtered = [w for w in words if len(w) > 1 and w not in STOP_WORDS]
         if not filtered:
             return ""
 
         target_version: str | None = kwargs.get("target_version")
+        word_set = set(filtered)
 
         if len(filtered) == 1:
             lines, has_sensitive = self._lookup_single_term(filtered[0], mode, 5, target_version)
@@ -240,6 +247,23 @@ class MinecraftDictStore:
                 header += "版本敏感译名（不同版本存在差异）"
             return header + "\n" + body
 
+        # 含 desc 或词数 > 阈值 → 退化单次 OR 查询，降低 prompt 体积
+        # block/item 在原文中出现时强制逐词（block/item 虽在停用词表，仍作为策略依据）
+        if not (raw_set & VD_PER_WORD_TRIGGERS) and (word_set & VD_FUZZY_TRIGGERS or len(filtered) > VD_WORD_COUNT_THRESHOLD):
+            search_term = " OR ".join(f'"{w}"' for w in filtered) if self._use_fts else " ".join(filtered)
+            rows = self._search_fts(search_term) if self._use_fts else self._search_like(search_term)
+            if not rows:
+                return ""
+            lines, has_sensitive = self._format_rows(rows, mode, 5, target_version)
+            if not lines:
+                return ""
+            body = "\n".join(lines)
+            header = "原版词典："
+            if has_sensitive:
+                header += "版本敏感译名（不同版本存在差异）"
+            return header + "\n" + body
+
+        # 默认 / block&item 强制 → 逐词分组
         any_sensitive = False
         all_lines: list[str] = []
         for word in filtered:
