@@ -4,7 +4,7 @@
 
 `python run.py --pr 5979 -o ./output/ --no-external-dict`
 
-> 291 个单元测试（18 个模块），全部通过。
+> 362 个单元测试（21 个模块），全部通过。
 
 ---
 
@@ -12,6 +12,7 @@
 
 - [ ] 架构改用 vite react，调用 fastapi 接口
 - [ ] **双词典注入 prompt 膨胀（原 Issue #4）** — 每条条目同时对 `ExternalDictStore` + `MinecraftDictStore` 调用 `lookup()`，每 batch ~75 tokens 开销。与 @anomaly 另有安排，暂不动。
+- [ ] **`minecraft_dict.py` 未接入管线（331 行）** — `MinecraftDictStore` 仅被 `scripts/migrate_minecraft_db.py` 和测试引用，管线实际使用 `VanillaTermsStore`。功能与 `vanilla_terms.py` 重叠，待双词典方案确定后决定合并或接入。
 - [ ] **`_format_rows()` 复杂度（原 Issue #5）** — `minecraft_dict.py:114-231` 约 65 行 6 层嵌套逻辑，longest/shortest/sensitive 选择 + reserved slots。有充分测试覆盖，重构风险可控但暂缓。
 
 ## 未计划

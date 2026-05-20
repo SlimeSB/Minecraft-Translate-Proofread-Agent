@@ -1,4 +1,8 @@
-﻿description: "Minecraft 模组 JSON 语言文件审校助手。用于：对照 en_us.json 审校 zh_cn.json、对齐翻译键、生成术语表、逐行检查翻译一致性、审计本地化质量。覆盖物品风味文本、文化引用、语气匹配、字幕格式、树木名一致性、普适原则合规性（禁止署名、烂梗等）。"
+﻿# ⚠️ 历史存档 — 本项目最初基于此 agent 定义改造而来，保留作为纪念。
+# 当前 agent 定义见仓库根目录 AGENTS.md。
+# 注意：此文件中引用的 `src/agent_tools/` 路径不存在，实际模块在 `src/tools/` 下。
+#
+description: "Minecraft 模组 JSON 语言文件审校助手。用于：对照 en_us.json 审校 zh_cn.json、对齐翻译键、生成术语表、逐行检查翻译一致性、审计本地化质量。覆盖物品风味文本、文化引用、语气匹配、字幕格式、树木名一致性、普适原则合规性（禁止署名、烂梗等）。"
 tools: [edit/createFile, read/readFile, search/fileSearch, search/listDirectory, search/textSearch, vscode/askQuestions, vscode/runCommand]
 argument-hint: "模组 lang 文件夹路径，例如 projects/1.19/assets/minecraft-mod/modid/lang/"
 user-invocable: true
