@@ -7,6 +7,7 @@ from unittest.mock import patch
 from src.config import RE_INDEXED_KEY
 
 from src.llm.prompts import (
+    _build_batch_references,
     build_entry_block,
     build_filter_prompt,
     build_review_prompt,
@@ -212,6 +213,7 @@ class TestBuildReviewPrompt(unittest.TestCase):
         auto_map = {}
         fuzzy_map = {}
         prompts = build_review_prompt([entry], glossary, auto_map, fuzzy_map, 25)
+        self.assertIn("### 术语表", prompts[0])
         self.assertIn("铜", prompts[0])
         self.assertIn("Copper", prompts[0])
 
@@ -225,12 +227,24 @@ class TestBuildReviewPrompt(unittest.TestCase):
         entry = _entry("block.copper", "Copper", "铜")
         fuzzy_map = {"block.copper": [{"similarity": 88.5, "key": "block.iron", "en": "Iron", "zh": "铁"}]}
         prompts = build_review_prompt([entry], None, None, fuzzy_map, 25)
+        self.assertIn("### 模糊匹配", prompts[0])
         self.assertIn("88.5", prompts[0])
 
     def test_ae2guide_batch_size_one(self):
         entries = [_entry("ae2guide:doc1", "D1", "文1"), _entry("ae2guide:doc2", "D2", "文2")]
         prompts = build_review_prompt(entries, batch_size=25)
         self.assertEqual(len(prompts), 2)
+
+    def test_shared_prefix_across_batches(self):
+        entries = self._entries(55)
+        prompts = build_review_prompt(entries, batch_size=25)
+        self.assertGreaterEqual(len(prompts), 2)
+        first_prefix_end = prompts[0].find("\n\nkey:")
+        self.assertNotEqual(first_prefix_end, -1, "Prompt should have entry block after prefix")
+        shared_prefix = prompts[0][:first_prefix_end]
+        for p in prompts[1:]:
+            self.assertTrue(p.startswith(shared_prefix),
+                            "All batches must share identical prefix for KV cache reuse")
 
     def test_empty_entries_returns_empty(self):
         prompts = build_review_prompt([])
@@ -307,12 +321,6 @@ class TestBuildEntryBlock(unittest.TestCase):
         self.assertIn("block.test", block)
         self.assertIn("Copper Block", block)
 
-    def test_block_with_fuzzy_results(self):
-        entry = _entry("block.test", "Copper", "铜")
-        fuzzy = [{"similarity": 90.0, "en": "Copper Ore", "zh": "铜矿石", "key": "other.key"}]
-        block = build_entry_block(entry, fuzzy_results=fuzzy)
-        self.assertIn("90.0", block)
-
     def test_block_with_auto_verdicts(self):
         entry = _entry("block.test", "Copper", "铜")
         auto = [_verdict("block.test", verdict="❌ FAIL", reason="缺少占位符")]
@@ -324,6 +332,138 @@ class TestBuildEntryBlock(unittest.TestCase):
         block = build_entry_block(entry, full_en="FullEN0FullEN1", full_zh="FullZH0FullZH1")
         self.assertIn("FullEN0", block)
         self.assertIn("完整上下文", block)
+
+
+class TestBuildBatchReferences(unittest.TestCase):
+    def test_empty_returns_empty(self):
+        result = _build_batch_references([])
+        self.assertEqual(result, "")
+
+    def test_glossary_section(self):
+        entries = [_entry("block.copper", "Copper Ore", "铜矿石")]
+        glossary = [{"en": "Copper", "zh": "铜"}, {"en": "Ore", "zh": "矿石"}]
+        result = _build_batch_references(entries, glossary=glossary)
+        self.assertIn("### 术语表", result)
+        self.assertIn('"Copper" → "铜"', result)
+        self.assertIn('"Ore" → "矿石"', result)
+
+    def test_glossary_dedup_by_lowercase(self):
+        entries = [_entry("key1", "Copper copper", "铜")]
+        glossary = [{"en": "Copper", "zh": "铜"}, {"en": "copper", "zh": "铜"}]
+        result = _build_batch_references(entries, glossary=glossary)
+        self.assertEqual(result.count('"Copper"'), 1)
+
+    def test_fuzzy_section(self):
+        entries = [_entry("block.copper", "Copper", "铜")]
+        fuzzy_map = {
+            "block.copper": [
+                {"similarity": 88.5, "key": "block.iron", "en": "Iron", "zh": "铁"}
+            ]
+        }
+        result = _build_batch_references(entries, fuzzy_map=fuzzy_map)
+        self.assertIn("### 模糊匹配", result)
+        self.assertIn("88.5", result)
+        self.assertIn("Iron", result)
+
+    def test_fuzzy_only_matching_keys(self):
+        entries = [_entry("block.copper", "Copper", "铜")]
+        fuzzy_map = {
+            "other.key": [{"similarity": 90.0, "key": "x", "en": "X", "zh": "X"}]
+        }
+        result = _build_batch_references(entries, fuzzy_map=fuzzy_map)
+        self.assertNotIn("### 模糊匹配", result)
+
+    def test_all_empty_returns_empty(self):
+        result = _build_batch_references([], glossary=None, fuzzy_map={}, dict_stores=[])
+        self.assertEqual(result, "")
+
+
+# ═══════════════════════════════════════════════════════════
+# TestVanillaTermsStore
+# ═══════════════════════════════════════════════════════════
+
+
+class TestVanillaTermsStore(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        sqlite3 = __import__("sqlite3")
+        self._tmpfile = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmpfile.close()
+        self._db_path = self._tmpfile.name
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("CREATE TABLE terms (en TEXT, zh TEXT, scope TEXT, labels TEXT)")
+        conn.execute(
+            "INSERT INTO terms VALUES "
+            "('[\"Absorption\"]', '[\"伤害吸收\"]', NULL, '[\"effect\"]'),"
+            "('[\"Armor\"]', '[\"护甲\", \"护甲值\"]', NULL, '[]'),"
+            "('[\"Beetroot\", \"Beetroots\"]', '[\"甜菜根\", \"甜菜\"]', NULL, '[\"food\"]'),"
+            "('[\"Armor\"]', '[\"护甲值\"]', '{\"key\": \"^attribute\"}', '[]'),"
+            "('[\"Cotton\"]', '[\"棉花\"]', '{\"version\": \"1.12.2\"}', '[]'),"
+            "('[\"Ab\"]', '[\"短\"]', NULL, '[]')"
+        )
+        conn.commit()
+        conn.close()
+        from src.dictionary.vanilla_terms import VanillaTermsStore
+        self.store = VanillaTermsStore(self._db_path)
+        self.store.load()
+
+    def tearDown(self):
+        self.store.close()
+        import os
+        try:
+            os.unlink(self._db_path)
+        except OSError:
+            pass
+
+    def test_basic_lookup(self):
+        result = self.store.lookup("Absorption", entry_key="effect.minecraft.absorption")
+        self.assertIn("伤害吸收", result)
+        self.assertIn("[effect]", result)
+
+    def test_multi_zh_format(self):
+        result = self.store.lookup("Armor")
+        self.assertIn("护甲 / 护甲值", result)
+
+    def test_multi_en_format(self):
+        result = self.store.lookup("Beetroot")
+        self.assertIn("Beetroot / Beetroots", result)
+
+    def test_scope_key_matches(self):
+        result = self.store.lookup("Armor", entry_key="attribute.armor")
+        self.assertIn("护甲值", result)
+
+    def test_scope_key_no_match(self):
+        result = self.store.lookup("Armor", entry_key="block.armor")
+        self.assertTrue("护甲值" not in result or '"护甲值"' not in result.split('"护甲"')[0])
+
+    def test_scope_version_match(self):
+        result = self.store.lookup("Cotton", version="1.12.2")
+        self.assertIn("棉花", result)
+
+    def test_scope_version_no_match(self):
+        result = self.store.lookup("Cotton", version="1.21")
+        self.assertNotIn("棉花", result)
+
+    def test_label_display(self):
+        result = self.store.lookup("Absorption")
+        self.assertIn("[effect]", result)
+
+    def test_multi_label_display(self):
+        result = self.store.lookup("Beetroot")
+        self.assertIn("[food]", result)
+
+    def test_no_label_no_bracket(self):
+        result = self.store.lookup("Ab")
+        self.assertNotIn("[", result)
+        self.assertNotIn("]", result)
+
+    def test_empty_query_returns_empty(self):
+        result = self.store.lookup("")
+        self.assertEqual(result, "")
+
+    def test_no_match_returns_empty(self):
+        result = self.store.lookup("XYZNotFoundTerm")
+        self.assertEqual(result, "")
 
 
 if __name__ == "__main__":

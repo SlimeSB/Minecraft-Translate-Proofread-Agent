@@ -17,7 +17,7 @@ from src.pipeline.phase5_report import run_phase5
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 from src.dictionary.external import ExternalDictStore
-from src.dictionary.minecraft_dict import MinecraftDictStore
+from src.dictionary.vanilla_terms import VanillaTermsStore
 from src import config as cfg
 
 
@@ -61,12 +61,12 @@ class ReviewPipeline:
             pr_alignment=pr_alignment,
         )
         ext_store = ExternalDictStore() if external_dict else None
-        mc_store = MinecraftDictStore()
+        vt_store = VanillaTermsStore()
         self.ctx.external_dict_store = ext_store
         stores: list = []
         if ext_store is not None:
             stores.append(ext_store)
-        stores.append(mc_store)
+        stores.append(vt_store)
         self.ctx.dict_stores = stores
         self.ctx.ensure_output_dir()
 

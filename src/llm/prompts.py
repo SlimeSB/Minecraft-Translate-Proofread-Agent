@@ -7,6 +7,7 @@ import re
 from src import config as cfg
 from src.config import GUIDEME_PREFIX
 from src.dictionary.external import ExternalDictStore
+from src.dictionary.vanilla_terms import VanillaTermsStore
 from src.dictionary.protocol import SHORT, MIXED, collect_hints
 from src.tools.key_alignment import iter_indexed_groups
 from src.models import (
@@ -175,12 +176,9 @@ def filter_for_llm(
 
 def build_entry_block(
     entry: EntryDict,
-    fuzzy_results: list[FuzzyResultDict] | None = None,
     auto_verdicts: list[VerdictDict] | None = None,
-    glossary_entries: list[GlossaryDict] | None = None,
     full_en: str = "",
     full_zh: str = "",
-    external_hints: str = "",
 ) -> str:
     key = entry["key"]
     en = full_en or entry.get("en", "")
@@ -207,20 +205,6 @@ def build_entry_block(
         lines.append("")
         for v in auto_verdicts:
             lines.append(f"  自动检查: {v['verdict']} — {v['reason']}")
-    if fuzzy_results:
-        lines.append("  模糊匹配:")
-        for fr in fuzzy_results[:3]:
-            lines.append(f"    sim={fr['similarity']}% | EN: \"{fr['en'][:100]}\" | ZH: \"{fr['zh'][:100]}\"")
-    if glossary_entries:
-        en_lower = en.lower()
-        hints: list[str] = []
-        for g in glossary_entries:
-            if g["en"].lower() in en_lower:
-                hints.append(f"\"{g['en']}\" → \"{g['zh']}\"")
-        if hints:
-            lines.append(f"  术语: {', '.join(hints[:5])}")
-    if external_hints:
-        lines.append(external_hints)
     return "\n".join(lines)
 
 
@@ -242,6 +226,100 @@ def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
 # 审校 Prompt
 # ═══════════════════════════════════════════════════════════
 
+def _build_batch_references(
+    entries: list[EntryDict],
+    glossary: list[GlossaryDict] | None = None,
+    fuzzy_map: FuzzyResultsMap | None = None,
+    dict_stores: list | None = None,
+    merged_context: MultipartContext | None = None,
+) -> str:
+    """从全部条目构建 batch 级参考信息节。
+    返回 "## 参考信息\\n\\n### 术语表\\n...\\n\\n### 模糊匹配\\n...\\n\\n### 原版词典\\n...\\n\\n### 词典\\n..."
+    无数据时返回空串。
+    """
+    sections: list[str] = []
+
+    # ── 术语表 ──
+    if glossary:
+        seen_term: set[str] = set()
+        term_lines: list[str] = []
+        for g in glossary:
+            en_key = g["en"].lower()
+            if en_key in seen_term:
+                continue
+            seen_term.add(en_key)
+            term_lines.append(f'"{g["en"]}" → "{g["zh"]}"')
+        if term_lines:
+            sections.append("### 术语表\n" + "\n".join(term_lines))
+
+    # ── 模糊匹配 ──
+    if fuzzy_map:
+        batch_keys = {e["key"] for e in entries}
+        seen_fuzzy: set[str] = set()
+        fuzzy_lines: list[str] = []
+        for key, results in fuzzy_map.items():
+            if key not in batch_keys:
+                continue
+            for fr in results:
+                sig = f"{key}|{fr['similarity']}|{fr.get('en','')[:60]}"
+                if sig in seen_fuzzy:
+                    continue
+                seen_fuzzy.add(sig)
+                fuzzy_lines.append(
+                    f"[{key}] sim={fr['similarity']}% | "
+                    f'EN: "{fr.get("en", "")[:100]}" | '
+                    f'ZH: "{fr.get("zh", "")[:100]}"'
+                )
+        if fuzzy_lines:
+            sections.append("### 模糊匹配\n" + "\n".join(fuzzy_lines))
+
+    # ── 原版词典 + 词典 ──
+    if dict_stores:
+        for store in dict_stores:
+            store_type = type(store).__qualname__
+            if store_type == "VanillaTermsStore":
+                heading = "### 原版词典"
+                mode = MIXED
+            elif store_type == "ExternalDictStore":
+                heading = "### 词典"
+                mode = SHORT
+            else:
+                continue
+
+            seen_store: set[str] = set()
+            store_lines: list[str] = []
+            for entry in entries:
+                key = entry["key"]
+                en_text = (merged_context or {}).get(key, ("", ""))[0] or entry.get("en", "")
+                try:
+                    hint = store.lookup(en_text, mode=mode, entry_key=key)
+                except Exception:
+                    continue
+                if not hint:
+                    continue
+                for line in hint.split("\n"):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    # strip known store-internal headers
+                    for prefix_hdr in ("外部词典:", "原版词典："):
+                        if stripped == prefix_hdr.strip():
+                            stripped = ""
+                            break
+                    if not stripped:
+                        continue
+                    if stripped not in seen_store:
+                        store_lines.append(stripped)
+                        seen_store.add(stripped)
+
+            if store_lines:
+                sections.append(heading + "\n" + "\n".join(store_lines))
+
+    if not sections:
+        return ""
+    return "## 参考信息\n\n" + "\n\n".join(sections)
+
+
 def build_review_prompt(
     entries: list[EntryDict],
     glossary_entries: list[GlossaryDict] | None = None,
@@ -251,54 +329,83 @@ def build_review_prompt(
     merged_context: MultipartContext | None = None,
     dict_stores: list | None = None,
 ) -> list[str]:
-    prompts: list[str] = []
-    groups = classify_entries(entries)
-    for prefix, group_entries in groups.items():
+    if not entries:
+        return []
+
+    # ── 1. 合并全部前缀的 focus_notes ──
+    present_prefixes: set[str] = set()
+    for entry in entries:
+        prefix = group_prefix(entry["key"])
+        present_prefixes.add(prefix)
+
+    focus_parts: list[str] = []
+    for prefix in sorted(present_prefixes):
         info = KEY_PREFIX_PROMPTS.get(prefix, {})
-        cat_label = info.get("label", "其他")
-        focus_notes = info.get("focus", cfg.DEFAULT_REVIEW_FOCUS)
-        effective_batch = 1 if prefix == GUIDEME_PREFIX else batch_size
-        for i in range(0, len(group_entries), effective_batch):
-            batch = group_entries[i:i + effective_batch]
-            header = cfg.PROMPT_REVIEW_HEADER.format(
-                header_prefix=cfg.REVIEW_HEADER_PREFIX,
-                cat_label=cat_label,
-                prefix=prefix,
-                focus_notes=focus_notes,
-                review_principles=cfg.REVIEW_PRINCIPLES,
-            )
-            has_change = any(
-                entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
-                for entry in batch
-            )
-            if has_change and cfg.PROMPT_REVIEW_PR_SECTION:
-                header += cfg.PROMPT_REVIEW_PR_SECTION.format(
-                    change_context=cfg.get("pr_change_context_prompt", "")
-                )
-            header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
-                count=len(batch),
-                review_instruction=cfg.REVIEW_INSTRUCTION,
-            )
-            input_guidance = detect_input_guidance(batch)
-            if input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
-                header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
-                    input_guidance=input_guidance,
-                )
-            blocks = [header]
-            for entry in batch:
-                key = entry["key"]
-                auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
-                fuzzy_r = fuzzy_results_map.get(key, []) if fuzzy_results_map else []
-                full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
-                en_for_hints = full_en or entry.get("en", "")
-                external_hints = collect_hints(
-                    en_for_hints, dict_stores, sep="\n",
-                    mode_fn=lambda s: SHORT if isinstance(s, ExternalDictStore) else MIXED,
-                    entry_key=key,
-                ) if dict_stores else ""
-                block = build_entry_block(entry, fuzzy_r, auto_v, glossary_entries, full_en, full_zh, external_hints=external_hints)
-                blocks.append(block)
-            prompts.append("\n\n".join(blocks))
+        focus = info.get("focus", "")
+        if focus and focus != cfg.DEFAULT_REVIEW_FOCUS:
+            label = info.get("label", prefix)
+            focus_parts.append(f"## {label}\n{focus}")
+    merged_focus = "\n\n".join(focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
+
+    # ── 2. 统一 header ──
+    header = cfg.PROMPT_REVIEW_HEADER.format(
+        header_prefix=cfg.REVIEW_HEADER_PREFIX,
+        cat_label="综合",
+        prefix="__all__",
+        focus_notes=merged_focus,
+        review_principles=cfg.REVIEW_PRINCIPLES,
+    )
+
+    has_change = any(
+        entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
+        for entry in entries
+    )
+    if has_change and cfg.PROMPT_REVIEW_PR_SECTION:
+        header += cfg.PROMPT_REVIEW_PR_SECTION.format(
+            change_context=cfg.get("pr_change_context_prompt", "")
+        )
+
+    header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
+        count=len(entries),
+        review_instruction=cfg.REVIEW_INSTRUCTION,
+    )
+
+    input_guidance = detect_input_guidance(entries)
+    if input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
+        header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
+            input_guidance=input_guidance,
+        )
+
+    # ── 3. 一次性从全部条目构建参考信息 ──
+    references = _build_batch_references(
+        entries, glossary_entries, fuzzy_results_map, dict_stores, merged_context
+    )
+
+    # ── 4. 组装共享前缀 ──
+    shared_prefix = f"{header}\n\n{references}" if references else header
+
+    # ── 5. 切分批，复写前缀 ──
+    prompts: list[str] = []
+    i = 0
+    while i < len(entries):
+        if entries[i]["key"].startswith(GUIDEME_PREFIX):
+            batch = [entries[i]]
+            i += 1
+        else:
+            batch = []
+            while i < len(entries) and len(batch) < batch_size and not entries[i]["key"].startswith(GUIDEME_PREFIX):
+                batch.append(entries[i])
+                i += 1
+
+        blocks = [shared_prefix]
+        for e in batch:
+            key = e["key"]
+            auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
+            full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
+            block = build_entry_block(e, auto_v, full_en, full_zh)
+            blocks.append(block)
+        prompts.append("\n\n".join(blocks))
+
     return prompts
 
 
