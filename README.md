@@ -16,6 +16,7 @@ Minecraft 模组简中翻译自动化审校工具。对照原文审查译文，�
 - **LLM 启发式审校** — 仅将歧义/语义问题提交 LLM，大幅降低 token 消耗
 - **模糊搜索翻译记忆** — SQLite FTS5 + Levenshtein 发现相似原文的不同翻译
 - **PR 模式** — 直接对 GitHub PR diff 做审校，支持 JSON/Lang/GuideME 三种文件类型；术语从 PR 内完整文件提取（非仅 diff）
+- **PR 多版本审校** — 跨版本差异检测，同一模组多版本 PR 自动比对新增/修改 key，生成版本间对比报告
 - **术语表 LLM 校验** — 程序提取术语后，取 1 最长 + 4 最短上下文交 LLM 复核修正
 - **原版 key 碰撞检测** — 从 `data/Minecraft.db`（含版本区间）检测模组是否覆盖原版 key
 - **外部社区词典** — 按需 SQLite 查询约 90 万条历史翻译，LLM 审校时自动注入参考
@@ -203,15 +204,19 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │       ├── terminology_extract.py # N-gram 术语提取
 │       ├── term_validation.py     # 共享停用词 & 术语有效性检查
 │       ├── fuzzy_search.py        # SQLite FTS5 模糊搜索
+│       ├── version_cmp.py         # Minecraft 版本号比较
 │       └── pr/                    # PR 对齐模块化架构
 │           ├── __init__.py        #   编排器
 │           ├── _http.py           #   GitHub API 拉取
 │           ├── _lang.py           #   JSON 语言文件对齐
-│           └── _guideme.py        #   GuideME 文档对齐
+│           ├── _guideme.py        #   GuideME 文档对齐
+│           └── cross_version_diff.py  # 跨版本差异检测
 ├── tests/
 │   ├── fixtures/                 # 测试数据
 │   ├── test_config.py
+│   ├── test_cross_version_diff.py
 │   ├── test_database.py
+│   ├── test_external_dict.py
 │   ├── test_format_checker.py
 │   ├── test_fuzzy_search.py
 │   ├── test_key_alignment.py
@@ -220,6 +225,7 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── test_llm_bridge.py
 │   ├── test_llm_client.py
 │   ├── test_llm_prompts.py
+│   ├── test_minecraft_dict.py
 │   ├── test_phase4_filter.py
 │   ├── test_pipeline_integration.py
 │   ├── test_pr_guideme.py
@@ -227,7 +233,8 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── test_report_generator.py
 │   ├── test_term_validation.py
 │   ├── test_terminology_builder.py
-│   └── test_terminology_extract.py
+│   ├── test_terminology_extract.py
+│   └── test_version_cmp.py
 ├── .github/workflows/            # CI: pytest + pyright (Python 3.11-3.13)
 └── output/                       # 输出目录
 ```

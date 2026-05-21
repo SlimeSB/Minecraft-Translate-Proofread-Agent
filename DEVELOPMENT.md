@@ -1,6 +1,6 @@
 # 开发文档
 
-> 源码总计约 5540 行 Python（43 个源文件），测试约 3312 行（20 个测试模块，355 个用例）。
+> 源码总计约 5964 行 Python（45 个源文件），测试约 3711 行（22 个测试模块，413 个用例）。
 
 ## 架构概览
 
@@ -20,7 +20,8 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   ├─ Phase  1: run_phase1()   ◄── phase1_alignment.py
   │   ├─ src/tools/key_alignment.py     (JSON: load_json_clean + align_keys)
   │   │   └─ check_vanilla_collisions()   (Minecraft.db 原版碰撞检测)
-  │   └─ src/tools/lang_parser.py       (Lang: load_lang → dict)
+  │   ├─ src/tools/lang_parser.py       (Lang: load_lang → dict)
+  │   └─ src/tools/pr/cross_version_diff.py (PR 跨版本差异检测)
   │
   ├─ Phase  2: run_phase2()   ◄── phase2_terminology.py
   │   ├─ src/checkers/terminology_builder.py  (主流程 + LLM术语校验)
@@ -60,7 +61,8 @@ run.py --pr 5979
        │
        ├─ pr/_http.py          # GitHub API / raw 拉取
        ├─ pr/_lang.py          # JSON 语言文件配对对齐
-       └─ pr/_guideme.py       # GuideME 文档配对对齐
+       ├─ pr/_guideme.py       # GuideME 文档配对对齐
+       └─ pr/cross_version_diff.py  # 跨版本差异检测
 ```
 
 ### 存储层架构
@@ -243,10 +245,11 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 
 ```
 src/tools/pr/
-├── __init__.py     # run_pr_aligner() 编排器 (268 行)
-├── _http.py        # GitHub API 拉取 + raw文件获取
-├── _lang.py        # JSON语言文件: match() + group_mod_files() + align()
-└── _guideme.py     # GuideME文档: match() + align()
+├── __init__.py              # run_pr_aligner() 编排器 (268 行)
+├── _http.py                 # GitHub API 拉取 + raw文件获取
+├── _lang.py                 # JSON语言文件: match() + group_mod_files() + align()
+├── _guideme.py              # GuideME文档: match() + align()
+└── cross_version_diff.py    # 跨版本差异检测: compute_cross_version_diff()
 ```
 
 **添加新对齐器**：在 `pr/` 下新建 `_xxx.py`，实现 `match(path) → dict|None` 和 `align(...)` 函数，然后在 `__init__.py` 的 `run_pr_aligner()` 中调用。
@@ -308,6 +311,8 @@ JSON/Lang文件
 
 加载 JSON/Lang → 过滤 `_comment*` key → en/zh key 集合比对。`en==zh` 且非代码 → `suspicious_untranslated`。可选原版碰撞检测（`data/Minecraft.db` 含版本区间）。
 
+**跨版本差异检测**（PR 模式）：`compute_cross_version_diff()` 对同一 slug 的多版本 PR 数据递归比对，每个低版本与紧邻高版本比对，产出新增 key 和修改 key 清单，跳过删除 key。数据载入 `ctx.cross_version_diffs` 供 Phase 5 输出跨版本差异报告。
+
 ### Phase 2 — 术语提取与一致性检查
 
 **N-gram 提取**：去 HTML/MC格式码/printf占位符 → 小写 → 过滤 60+ stop words（`term_validation.STOP_WORDS`，合并自四处独立逻辑）→ 产 unigram/bigram/trigram/全短语。`TERM_MIN_FREQ` 和 `TERM_MAX_NGRAM` 从配置读取。
@@ -352,7 +357,26 @@ LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → �
 
 ### Phase 5 — 报告生成
 
-加载 `filtered=1` verdict，PASS 计入统计但不列入问题清单。按 namespace 分组输出 `report.json`、`report.md`、`<ns>_report.md`、`glossary.json`（术语表 JSON 文件）。Console 输出摘要 + 表格（前 30 行）。
+加载 `filtered=1` verdict，PASS 计入统计但不列入问题清单。按 namespace 分组输出 `report.json`、`report.md`、`<ns>_report.md`、`glossary.json`（术语表 JSON 文件）。PR 模式额外输出跨版本差异报告（版本间新增/修改 key 清单）。Console 输出摘要 + 表格（前 30 行）。
+
+### 跨版本差异检测（PR 多版本审校）
+
+`cross_version_diff.py` 支持同一模组多版本 PR 的差异比对：
+
+- 每个低版本与紧邻高版本比对（如 v1 → v2, v2 → v3），最高版本无差异
+- `compute_cross_version_diff()`：计算单个版本对的新增 key（当前有、参考无）和修改 key（两版本都有但 en/zh 值不同）
+- `compute_all_cross_version_diffs()`：对所有版本执行全量递归对比
+- 删除的 key 跳过（不报告）
+- 值完全相同的 key 跳过
+- 差异数据通过 `PipelineContext.cross_version_diffs` 传递至 Phase 5 报告
+
+### 版本号比较 (`src/tools/version_cmp.py`)
+
+解析 `major.minor[.patch]` 格式（如 `1.20`、`1.20.1`），支持排序和 ≤ 比较：
+
+- `parse_mc_version()` → 整数元组 `(major, minor[, patch])`，非法版本返回空元组 `()`
+- `sort_versions_desc()` → 降序排列，非法版本排最后
+- `version_le(a, b)` → 判断 a ≤ b，用于 vanilla terms scope 匹配
 
 ### LLM 重试机制
 
@@ -367,7 +391,7 @@ python -m venv venv
 pip install openai pytest pyright
 cp .env.example .env
 
-# 运行测试 (355 tests, 20 个模块)
+# 运行测试 (413 tests, 22 个模块)
 pytest tests/ -v
 
 # 类型检查
