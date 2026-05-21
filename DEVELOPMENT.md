@@ -1,6 +1,6 @@
 # 开发文档
 
-> 源码总计约 5470 行 Python（40 个源文件），测试约 2911 行（19 个文件，291 个用例）。
+> 源码总计约 5540 行 Python（43 个源文件），测试约 3312 行（20 个测试模块，355 个用例）。
 
 ## 架构概览
 
@@ -37,10 +37,11 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   ├─ Phase 3c: run_phase3c()  ◄── phase3c_review.py
   │   ├─ _filter_and_prepare()     筛选+Phase 3b 模糊搜索
   │   ├─ _review_entries()         主线/未翻译审校
-  │   ├─ src/llm/prompts.py       (提示词构建、条目分类、术语覆盖)
-  │   ├─ src/llm/bridge.py        (LLMBridge: 异步批处理、过滤、解析)
+  │   ├─ src/llm/prompts.py       (提示词构建、批量参考信息架构)
+  │   ├─ src/llm/bridge.py        (LLMBridge: 异步批处理、warmup_first 暖场、过滤、解析)
   │   ├─ src/llm/client.py        (OpenAI 客户端工厂、日志、重试)
   │   ├─ src/dictionary/external.py  (外部社区词典按需查询)
+  │   ├─ src/dictionary/vanilla_terms.py (原版术语精筛, scope 预过滤)
   │   └─ 外部 LLM API
   │
   ├─ Phase  4: run_phase4()   ◄── phase4_filter.py
@@ -86,7 +87,7 @@ run.py --pr 5979
 
 ### 0. `src/models.py` — 领域模型
 
-`PipelineContext` 数据类承载所有 Phase 间的共享状态，各 Phase 是接收 ctx 的纯函数：
+`PipelineContext` 数据类承载所有 Phase 间的共享状态，各 Phase 是接收 ctx 的纯函数。包含类型安全的 `PhaseName`、`SourceType` 等 Literal 常量，避免字符串硬编码。
 
 ```python
 from dataclasses import dataclass
@@ -107,6 +108,8 @@ class PipelineContext:
 
     # PR 模式
     pr_mode: bool; pr_alignment: dict | None
+    pr_full_en_data: dict[str, str] | None
+    pr_full_zh_data: dict[str, str] | None
 
     # 中间结果（各 Phase 渐进填充）
     en_data: dict[str, str]
@@ -145,9 +148,10 @@ class ReviewPipeline:
 | 文件 | 职责 |
 |------|------|
 | `src/llm/client.py` (127 行) | `create_openai_llm_call()` — OpenAI 兼容客户端 + 指数退避重试 + 日志滚动；`label` 参数标记调用来源，日志带 `[label#N] [id=uuid]` 唯一标识 |
-| `src/llm/prompts.py` (378 行) | `build_review_prompt()`、`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。外部词典提示注入。 |
-| `src/llm/bridge.py` (358 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 响应解析（4层容错）。`interactive_entry_review()` — 交互模式。 |
-| `src/dictionary/external.py` (140 行) | `ExternalDictStore` — 按需 SQLite 查询社区词典，`lookup()` 按英文单词匹配历史翻译并注入 LLM 提示词。停用词从 `term_validation.STOP_WORDS` 导入。 |
+| `src/llm/prompts.py` (489 行) | `build_review_prompt()` — 批量参考信息架构，合并模糊匹配、术语表、外部词典、原版术语引用；`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。 |
+| `src/llm/bridge.py` (403 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校 + `warmup_first` 首条串行预热 KV cache）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 统一 JSON 解析入口（4层容错）。`interactive_entry_review()` — 交互模式。 |
+| `src/dictionary/external.py` (173 行) | `ExternalDictStore` — 按需 SQLite 查询社区词典，`lookup()` 按英文单词匹配历史翻译并注入 LLM 提示词。实现 `DictStore` Protocol 统一接口。 |
+| `src/dictionary/vanilla_terms.py` (162 行) | `VanillaTermsStore` — 查询 `data/vanilla_terms.db` 获取精筛原版术语，支持 scope 预过滤和 label 标注。实现 `DictStore` Protocol。 |
 
 所有 LLM 功能从 `src.llm` 包导入（`__init__.py` 统一重导出）。
 
@@ -204,7 +208,7 @@ is_valid_term(term) -> bool  # 统一术语有效性检查（长度/数字/停�
 
 ### 5. `src/checkers/format_checker.py` — 格式检查
 
-10 项确定性检查，全部纯规则：
+10 项确定性检查，全部纯规则。唱片名检测共用 `is_music_disc_desc()` 工具函数；阈值参数统一从 `review_config.json` 读取。
 
 | 检查项   | 方法                     | 规则                                                 |
 | 空翻译   | `_check_empty_translation` | zh 为空字符串 → FAIL                              |
@@ -239,7 +243,7 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 
 ```
 src/tools/pr/
-├── __init__.py     # run_pr_aligner() 编排器 (~259 行)
+├── __init__.py     # run_pr_aligner() 编排器 (268 行)
 ├── _http.py        # GitHub API 拉取 + raw文件获取
 ├── _lang.py        # JSON语言文件: match() + group_mod_files() + align()
 └── _guideme.py     # GuideME文档: match() + align()
@@ -328,7 +332,7 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 ### Phase 3c — LLM 审校
 
-**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。GuideME 条目（配置常量 `GUIDEME_PREFIX`，默认 `"ae2guide:"`）逐条发送（文档太长保质量），其余 20 条/批。
+**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。GuideME 条目（配置常量 `GUIDEME_PREFIX`，默认 `"ae2guide:"`）逐条发送（文档太长保质量），其余 50 条/批（`review_batch_size` 配置，可通过 `--batch-size` 覆盖）。
 
 **函数拆分**：`run_phase3c()` 拆为 `_filter_and_prepare()`（筛选+Phase 3b 模糊搜索）和 `_review_entries()`（主线/未翻译审校），提升可读性。
 
@@ -363,7 +367,7 @@ python -m venv venv
 pip install openai pytest pyright
 cp .env.example .env
 
-# 运行测试 (291 tests, 19 个模块)
+# 运行测试 (355 tests, 20 个模块)
 pytest tests/ -v
 
 # 类型检查
@@ -387,7 +391,11 @@ GitHub Actions (`.github/workflows/test.yml`): 每次 push/PR 在 Python 3.11/3.
 
 ### 外部词典模块 (`src/dictionary/`)
 
-`ExternalDictStore` 封装外部社区翻译词典查询，采用按需 SQLite 查询模式（替代早期全量内存加载）。`lookup(en_text)` 根据英文原文中的单词在词典中匹配历史翻译，按译文分组返回注入给 LLM 提示词的参考文本。
+所有词典存储实现 `DictStore` Protocol 统一接口（`protocol.py`），通过 `collect_hints()` 函数批量收集各词典的翻译参考并注入 LLM 提示词。
+
+- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。
+- `VanillaTermsStore` — 查询 `data/vanilla_terms.db`，支持 scope 预过滤和 label 标注，精筛原版术语参考。
+- `MinecraftDictStore` — 历史遗留，查询 `data/Minecraft.db` 原版翻译，已由 VanillaTermsStore 替代。
 
 ## 扩展指南
 
