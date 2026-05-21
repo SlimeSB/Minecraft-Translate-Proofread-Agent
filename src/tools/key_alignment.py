@@ -34,10 +34,10 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from src.tools.code_detection import is_likely_code_or_proper_noun
-from src.config import RE_INDEXED_KEY
+from src.config import RE_INDEXED_KEY, COMMENT_KEY_PATTERN
 from src.models import AlignmentDict, EntryDict, VerdictDict
 
-_COMMENT_KEY_RE = re.compile(r"^_comment")
+_COMMENT_KEY_RE = re.compile(COMMENT_KEY_PATTERN)
 
 
 def load_json_clean(path: str) -> tuple[dict[str, str], list[str]]:
@@ -150,7 +150,7 @@ def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
     对 matched_entries / suspicious_untranslated 生效。
     missing_zh / extra_zh 不改动（它们不成组）。
     """
-    from src.logging import info
+    from src.logging import info, warn
 
     def _merge(entries: list, label: str) -> list:
         """Group indexed entries, merge multi-part groups, return flat list."""
@@ -226,7 +226,8 @@ def check_vanilla_collisions(
     import sqlite3
     try:
         conn = sqlite3.connect(db_path)
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        warn(f"[vanilla_collision] 无法连接原版DB: {e}")
         return []
     conn.row_factory = sqlite3.Row
 
@@ -234,7 +235,8 @@ def check_vanilla_collisions(
         rows = conn.execute(
             "SELECT key, zh_cn, version_start, version_end, changes FROM vanilla_keys"
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        warn(f"[vanilla_collision] 原版DB查询失败: {e}")
         conn.close()
         return []
 

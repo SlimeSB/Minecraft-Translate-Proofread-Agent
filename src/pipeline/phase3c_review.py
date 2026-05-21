@@ -1,6 +1,6 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
 from src.logging import info
-from src.models import EntryDict, PipelineContext, VerdictDict
+from src.models import EntryDict, PHASE_LLM, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VerdictDict
 from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
@@ -19,7 +19,7 @@ def _collect_status_verdicts(untranslated_entries: list[EntryDict]) -> list[Verd
             "verdict": "🔶 REVIEW",
             "suggestion": "",
             "reason": "疑似未翻译（值相同，需人工判断）",
-            "source": "untranslated_review",
+            "source": SOURCE_UNTRANSLATED_REVIEW,
         })
     return results
 
@@ -35,7 +35,7 @@ def _filter_and_prepare(ctx: PipelineContext) -> tuple[list[EntryDict], list[Ent
 
     untranslated_keys: set[str] = {
         v.get("key", "") for v in ctx.format_verdicts
-        if "值相同" in v.get("reason", "")
+        if v.get("source") == SOURCE_UNTRANSLATED_REVIEW
     }
 
     llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys, ctx.glossary)
@@ -142,4 +142,4 @@ def run_phase3c(ctx: PipelineContext) -> None:
     info(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(ctx.llm_verdicts, "llm")
+        db.save_verdicts(ctx.llm_verdicts, PHASE_LLM)

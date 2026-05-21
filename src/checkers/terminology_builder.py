@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 
 from src.logging import info, warn
-from src.models import AlignmentDict, EntryDict, GlossaryDict, VerdictDict
+from src.models import AlignmentDict, EntryDict, GlossaryDict, SOURCE_TERMINOLOGY_CHECK, VerdictDict
 from src.tools.terminology_extract import extract_terms
 from src import config as cfg
 from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
@@ -31,7 +31,7 @@ from .lemma_merge import (
     apply_llm_merge,
     try_rescue_short_term,
 )
-from src.tools.term_validation import is_valid_term
+from src.tools.term_validation import is_valid_term, is_music_disc_desc
 
 
 # ═══════════════════════════════════════════════════════════
@@ -71,20 +71,8 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
 
 def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
     """解析 LLM 返回的术语修正 JSON 数组。"""
-    import json
-    import re
-    jt = response.strip()
-    if "```" in jt:
-        m = re.search(r"```(?:json)?\\s*\\n?(.*?)```", jt, re.DOTALL)
-        if m:
-            jt = m.group(1).strip()
-    try:
-        arr = json.loads(jt)
-    except json.JSONDecodeError as e:
-        from src.logging import warn; warn(f"[TerminologyBuilder] LLM 响应 JSON 解析失败: {e}")
-        arr = []
-    if not isinstance(arr, list):
-        return {}
+    from src.llm.bridge import parse_llm_json
+    arr = parse_llm_json(response, extract_code_block=True)
     result = {}
     for item in arr:
         if not isinstance(item, dict):
@@ -332,7 +320,7 @@ def check_consistency(
         if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
             continue
 
-        if "music_disc" in key and key.endswith(".desc"):
+        if is_music_disc_desc(key):
             continue
 
         for en_term, std_zh, pattern in term_info:
@@ -347,7 +335,7 @@ def check_consistency(
                 "verdict": "❌ FAIL",
                 "suggestion": std_zh,
                 "reason": f'术语不一致——“{en_term}”在术语表中译为“{std_zh}”，此处未使用',
-                "source": "terminology_check",
+                "source": SOURCE_TERMINOLOGY_CHECK,
             })
 
     return verdicts

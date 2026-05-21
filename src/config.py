@@ -16,6 +16,9 @@ _cfg_cache: dict[str, Any] | None = None
 # 顶层分组键
 _TOP_GROUPS = {"pipeline", "key_prefixes", "llm", "terminology", "format", "pr", "_comment"}
 
+# 语言文件元数据键前缀正则 — 加载 JSON 时过滤 _comment* 键
+COMMENT_KEY_PATTERN = r"^_comment"
+
 
 def _load() -> dict[str, Any]:
     global _cfg_cache
@@ -58,6 +61,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["vd_per_word_triggers"] = vd.get("per_word_trigger_words", ["block", "blocks", "item", "items"])
     flat["vd_fuzzy_triggers"] = vd.get("fuzzy_trigger_words", ["desc"])
     flat["vd_word_count_threshold"] = vd.get("word_count_threshold", 6)
+    flat["vd_similarity_threshold"] = vd.get("vd_similarity_threshold", 60.0)
 
     # ── key_prefixes ──
     # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
@@ -156,6 +160,9 @@ MAX_WORKERS: int = get("max_workers", 4)
 KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
 LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
 GUIDEME_PREFIX: str = "ae2guide:"
+
+# 无名空间哨兵 — 键分类和报告生成中共用
+DEFAULT_NAMESPACE = "__default__"
 
 # 带序号键匹配，如 tooltip[0]、advancements.story.root.1
 # 用于检测多段条目的分段索引

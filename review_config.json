@@ -13,7 +13,8 @@
     "vanilla_dict": {
       "per_word_trigger_words": ["block", "blocks", "item", "items"],
       "fuzzy_trigger_words": ["desc"],
-      "word_count_threshold": 6
+      "word_count_threshold": 6,
+      "vd_similarity_threshold": 60.0
     }
   },
 
@@ -36,7 +37,7 @@
     "chat.":         { "label": "聊天消息", "focus": "消息需简洁自然; 占位符顺序需对照原文" },
     "commands.":     { "label": "命令",     "focus": "命令描述/反馈需准确; 语法参数保留原文" },
     "potion.":       { "label": "药水",     "focus": "药水名需与状态效果对应; 命名风格一致", "llm_required": true },
-    "ae2guide:":     { "label": "模组文档", "focus": "审查整篇markdown文档翻译质量; 注意格式标记完整性; 术语与lang文件一致" }
+    "ae2guide:":     { "label": "模组文档", "focus": "审查整篇markdown文档翻译质量; 注意格式标记完整性; 术语与lang文件一致", "batch_singleton": true, "exclude_terminology": true }
   },
 
   "llm": {

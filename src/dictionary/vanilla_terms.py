@@ -19,6 +19,9 @@ DEFAULT_VT_DB_PATH = "data/vanilla_terms.db"
 class VanillaTermsStore:
     """按需查询 vanilla_terms.db，scope 预过滤，label 标注，multi-en/zh 支持。"""
 
+    lookup_heading = "### 原版词典"
+    default_lookup_mode = MIXED
+
     def __init__(self, db_path: str = DEFAULT_VT_DB_PATH):
         self._conn: sqlite3.Connection | None = None
         self._loaded = False

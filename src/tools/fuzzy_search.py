@@ -11,6 +11,7 @@
 import json
 import sqlite3
 from src import config as cfg
+from src.logging import warn
 from src.models import FuzzyResultDict
 
 
@@ -111,7 +112,8 @@ class TranslationDB:
                 (fts_query, max(top_n * recall_mult, recall_min)),
             )
             candidates = [(row[0], row[1], row[2]) for row in cur.fetchall()]
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            warn(f"[FTS5] 模糊搜索查询失败: {e}")
             return []
 
         # 编辑距离精排

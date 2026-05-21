@@ -4,7 +4,33 @@
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, TypedDict
+from typing import Callable, Literal, TypedDict
+
+# ═══════════════════════════════════════════════════════════
+# 共享常量
+# ═══════════════════════════════════════════════════════════
+
+PhaseName = Literal["format", "terminology", "llm", "merged"]
+"""管道阶段标识符。拼写错误在类型检查时捕获。"""
+
+PHASE_FORMAT: PhaseName = "format"
+PHASE_TERMINOLOGY: PhaseName = "terminology"
+PHASE_LLM: PhaseName = "llm"
+PHASE_MERGED: PhaseName = "merged"
+
+SourceType = Literal[
+    "format_check", "terminology_check", "llm_review",
+    "untranslated_review", "interactive", "pr_warning", "llm_error",
+]
+"""审校判决来源标识符。"""
+
+SOURCE_FORMAT_CHECK: SourceType = "format_check"
+SOURCE_TERMINOLOGY_CHECK: SourceType = "terminology_check"
+SOURCE_LLM_REVIEW: SourceType = "llm_review"
+SOURCE_UNTRANSLATED_REVIEW: SourceType = "untranslated_review"
+SOURCE_INTERACTIVE: SourceType = "interactive"
+SOURCE_PR_WARNING: SourceType = "pr_warning"
+SOURCE_LLM_ERROR: SourceType = "llm_error"
 
 # ═══════════════════════════════════════════════════════════
 # TypedDict — 领域字典形状
@@ -155,6 +181,8 @@ class KeyPrefixConfig(TypedDict, total=False):
     label: str
     focus: str
     llm_required: bool
+    batch_singleton: bool
+    exclude_terminology: bool
 
 
 # ═══════════════════════════════════════════════════════════
@@ -181,6 +209,37 @@ KeyPrefixMap = dict[str, KeyPrefixConfig]
 
 # LLM 调用签名
 LLMCallable = Callable[[str], str]
+
+
+def normalize_verdict_field(val: object) -> str:
+    """将任意值规范化为字符串——dict→json, 非str→str。"""
+    import json as _json
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        zh = val.get("zh") or val.get("text") or val.get("value") or ""
+        return zh if isinstance(zh, str) and zh else _json.dumps(val, ensure_ascii=False)
+    return str(val) if val is not None else ""
+
+
+def normalize_verdict(v: dict, *, fields: tuple[str, ...] | None = None) -> dict:
+    """规范化 verdict dict 的所有文本字段类型。
+
+    默认规范化 VerdictDict 的 11 个已知字段。
+    传 fields 参数可按需限制字段集合。
+    """
+    import json as _json
+    if fields is None:
+        fields = ("key", "en_current", "zh_current", "verdict", "suggestion",
+                   "reason", "source", "namespace", "version", "file_path")
+    result: dict[str, str] = {}
+    for f in fields:
+        result[f] = normalize_verdict_field(v.get(f, ""))
+    # Carry over any extra keys verbatim (type-safe use only)
+    for k, val in v.items():
+        if k not in result:
+            result[k] = val if isinstance(val, str) else str(val)
+    return result
 
 # ═══════════════════════════════════════════════════════════
 # Verdict 枚举
@@ -228,7 +287,7 @@ class PipelineContext:
     min_term_freq: int = 3
     fuzzy_threshold: float = 60.0
     fuzzy_top: int = 5
-    batch_size: int = 20
+    batch_size: int = 0
 
     # ── PR 模式 ──
     pr_mode: bool = False
@@ -252,8 +311,8 @@ class PipelineContext:
 
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
-    dict_stores: list = field(default_factory=list)  # list[DictStore]
-    external_dict_store: object = None  # ExternalDictStore | None (保留别名)
+    dict_stores: list[object] = field(default_factory=list)  # list[DictStore]
+    external_dict_store: object | None = None  # ExternalDictStore | None (保留别名)
 
     config: dict = field(default_factory=dict)
 

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_health
 from src.llm.client import create_openai_llm_call
-from src.models import PipelineContext, PRAlignmentWrapper
+from src.models import PHASE_MERGED, PipelineContext, PRAlignmentWrapper
 from src.pipeline.pipeline import ReviewPipeline
 from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
@@ -224,7 +224,7 @@ def _run_filter_only(args, output_dir_str: str) -> None:
                                               label="Filter")
 
     db = PipelineDB(db_path)
-    verdicts = db.load_verdicts(phase="merged", filtered=0)
+    verdicts = db.load_verdicts(phase=PHASE_MERGED, filtered=0)
     alignment = db.load_alignment()
     db.close()
 

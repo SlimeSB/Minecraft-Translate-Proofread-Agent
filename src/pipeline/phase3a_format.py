@@ -1,6 +1,6 @@
 """Phase 3a: 全自动格式检查。"""
 from src.logging import info
-from src.models import EntryDict, PipelineContext, VerdictDict
+from src.models import EntryDict, PHASE_FORMAT, PipelineContext, SOURCE_PR_WARNING, VerdictDict
 from src.checkers.format_checker import FormatChecker
 from src.storage.database import PipelineDB
 
@@ -21,7 +21,7 @@ def run_phase3a(ctx: PipelineContext) -> None:
             all_v.append({
                 "key": key,
                 "verdict": "⚠️ SUGGEST",
-                "source": "pr_warning",
+                "source": SOURCE_PR_WARNING,
                 "reason": f"原文变更但翻译未变更。旧EN: {meta.get('old_en', '')[:60]!r} → 新EN: {ctx.en_data.get(key, '')[:60]!r}",
                 "suggestion": "",
             })
@@ -32,4 +32,4 @@ def run_phase3a(ctx: PipelineContext) -> None:
         info(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(all_v, "format")
+        db.save_verdicts(all_v, PHASE_FORMAT)

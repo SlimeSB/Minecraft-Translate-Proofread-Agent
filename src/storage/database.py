@@ -12,7 +12,7 @@ from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.models import AlignmentDict
+from src.models import AlignmentDict, PhaseName, normalize_verdict_field
 
 # ═══════════════════════════════════════════════════════════
 # Schema
@@ -160,17 +160,12 @@ class PipelineDB:
 
     # ── Verdicts ───────────────────────────────────────
 
-    def save_verdicts(self, verdicts: Sequence[Mapping[str, Any]], phase: str) -> None:
+    def save_verdicts(self, verdicts: Sequence[Mapping[str, Any]], phase: PhaseName) -> None:
         """按 phase 保存判决（'format' / 'terminology' / 'llm' / 'merged'）。"""
         self._conn.execute("DELETE FROM verdicts WHERE phase=?", (phase,))
         for v in verdicts:
             def _s(key: str, default: str = "") -> str:
-                val = v.get(key, default)
-                if isinstance(val, str):
-                    return val
-                if isinstance(val, dict):
-                    return val.get("zh", "") or val.get("text", "") or val.get("value", "") or str(val)
-                return str(val) if val else default
+                return normalize_verdict_field(v.get(key, default)) or default
             self._conn.execute(
                 "INSERT INTO verdicts (key,phase,en_current,zh_current,verdict,suggestion,reason,source,namespace,version,file_path) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -191,7 +186,7 @@ class PipelineDB:
         """, (phase,))
         self._conn.commit()
 
-    def load_verdicts(self, phase: str | None = None,
+    def load_verdicts(self, phase: PhaseName | None = None,
                       namespace: str | None = None,
                       filtered: int | None = 0) -> list[dict]:
         """加载判决，可按 phase / namespace / filtered 筛选。
@@ -209,7 +204,7 @@ class PipelineDB:
             sql += " AND filtered=?"
             params.append(filtered)
         rows = self._conn.execute(sql, params).fetchall()
-        return [_row_to_dict(r) for r in rows]
+        return [dict(r) for r in rows]
 
     def set_filtered(self, key: str, verdict: str, reason: str) -> None:
         """标记 verdict 为已过滤，同时更新判决（PASS 表示驳回）。"""
@@ -305,18 +300,3 @@ class PipelineDB:
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
-
-
-def _row_to_dict(row: sqlite3.Row) -> dict:
-    return {
-        "key": row["key"],
-        "en_current": row["en_current"],
-        "zh_current": row["zh_current"],
-        "verdict": row["verdict"],
-        "suggestion": row["suggestion"],
-        "reason": row["reason"],
-        "source": row["source"],
-        "namespace": row["namespace"],
-        "version": row["version"],
-        "file_path": row["file_path"],
-    }

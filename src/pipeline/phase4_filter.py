@@ -9,7 +9,7 @@ from typing import Any
 
 from src.logging import info
 from src.models import (
-    FilterDiscardRecord, PipelineContext, VerdictDict,
+    FilterDiscardRecord, PHASE_MERGED, PipelineContext, VerdictDict,
 )
 from src.llm.bridge import LLMBridge
 from src.storage.database import PipelineDB
@@ -21,7 +21,7 @@ def run_phase4(ctx: PipelineContext) -> None:
 
     info("[Phase 4] 最终 LLM 过滤...")
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        verdicts: list[VerdictDict] = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
+        verdicts: list[VerdictDict] = db.load_verdicts(phase=PHASE_MERGED, filtered=0)  # type: ignore[assignment]
         if not verdicts:
             info("  无 verdict 需要过滤")
             return

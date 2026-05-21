@@ -1,7 +1,8 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
 from src import config as cfg
 from src.logging import info
-from src.models import GlossaryDict, PipelineContext, VerdictDict
+from src.llm.prompts import is_excluded_from_terminology
+from src.models import GlossaryDict, PHASE_TERMINOLOGY, PipelineContext, VerdictDict
 from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
 from src.dictionary.protocol import SHORT, collect_hints
 from src.storage.database import PipelineDB
@@ -10,13 +11,12 @@ from src.storage.database import PipelineDB
 def run_phase2(ctx: PipelineContext) -> None:
     info("[Phase 2] 术语提取与一致性检查...")
 
-    # GuideME 条目不参与术语提取
     if ctx.pr_mode and ctx.pr_full_en_data:
-        lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
-        lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
+        lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not is_excluded_from_terminology(k)}
+        lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not is_excluded_from_terminology(k)}
     else:
-        lang_en = {k: v for k, v in ctx.en_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
-        lang_zh = {k: v for k, v in ctx.zh_data.items() if not k.startswith(cfg.GUIDEME_PREFIX)}
+        lang_en = {k: v for k, v in ctx.en_data.items() if not is_excluded_from_terminology(k)}
+        lang_zh = {k: v for k, v in ctx.zh_data.items() if not is_excluded_from_terminology(k)}
 
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)
@@ -40,4 +40,4 @@ def run_phase2(ctx: PipelineContext) -> None:
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
         db.save_glossary(ctx.glossary)
-        db.save_verdicts(ctx.term_verdicts, "terminology")
+        db.save_verdicts(ctx.term_verdicts, PHASE_TERMINOLOGY)

@@ -3,9 +3,10 @@ import json
 
 from src.logging import info
 from src.models import (
-    EntryDict, PipelineContext, VerdictDict,
+    EntryDict, PHASE_MERGED, PipelineContext, VerdictDict,
     VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
 )
+from src.config import DEFAULT_NAMESPACE
 from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 
@@ -13,9 +14,9 @@ from src.storage.database import PipelineDB
 def run_phase5(ctx: PipelineContext) -> None:
     info("[Phase 5] 报告生成...")
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        kept: list[VerdictDict] = db.load_verdicts(phase="merged", filtered=1)  # type: ignore[assignment]
+        kept: list[VerdictDict] = db.load_verdicts(phase=PHASE_MERGED, filtered=1)  # type: ignore[assignment]
         if not kept:
-            kept = db.load_verdicts(phase="merged", filtered=0)  # type: ignore[assignment]
+            kept = db.load_verdicts(phase=PHASE_MERGED, filtered=0)  # type: ignore[assignment]
         glossary = ctx.glossary if ctx.glossary else db.load_glossary()
 
     # ── console 摘要 + 表格 ──
@@ -61,7 +62,7 @@ def _build_ns_map(verdicts: list[VerdictDict], entries: list[EntryDict]) -> dict
         matched = next((e for e in entries if e["key"] == k), None)
         ns = (matched.get("namespace") if matched else "") or v.get("namespace", "")
         if not ns:
-            ns = "__default__"
+            ns = DEFAULT_NAMESPACE
         ns_map.setdefault(ns, []).append(v)
     return ns_map
 
@@ -73,7 +74,7 @@ def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext) -> di
     result = {}
     for ns, vs in sorted(ns_map.items()):
         ns_total = sum(1 for e in entries if
-                       (e.get("namespace") or "__default__") == ns
+                       (e.get("namespace") or DEFAULT_NAMESPACE) == ns
                        or (e["key"] in {vv.get("key") for vv in vs}))
         issues = [v for v in vs if v.get("verdict") != "PASS"]
         result[ns] = {
@@ -92,11 +93,11 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
     entries = ctx.alignment.get("matched_entries", [])
     ns_map = _build_ns_map(verdicts, entries)
 
-    if len(ns_map) <= 1 and "__default__" in ns_map:
+    if len(ns_map) <= 1 and DEFAULT_NAMESPACE in ns_map:
         return
 
     for ns, vs in sorted(ns_map.items()):
-        if ns == "__default__":
+        if ns == DEFAULT_NAMESPACE:
             continue
         issues = [v for v in vs if v.get("verdict") != "PASS"]
         if not issues:
@@ -112,7 +113,7 @@ def _generate_namespace_json(ns: str, verdicts: list[VerdictDict],
     """生成 {ns}_report.json，按 version 分组。"""
     version_groups: dict[str, dict] = {}
     for v in verdicts:
-        ver = v.get("version", "") or "__default__"
+        ver = v.get("version", "") or DEFAULT_NAMESPACE
         if ver not in version_groups:
             version_groups[ver] = {"count": 0, "verdicts": []}
         version_groups[ver]["verdicts"].append(v)
@@ -230,7 +231,7 @@ def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
     lines.append("## 各模组详细报告")
     lines.append("")
     for ns in sorted(ns_groups):
-        if ns == "__default__":
+        if ns == DEFAULT_NAMESPACE:
             continue
         lines.append(f"- [{ns}]({ns}/{ns}_report.md)")
     lines.append("")

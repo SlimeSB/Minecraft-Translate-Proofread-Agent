@@ -13,6 +13,9 @@ LookupModeStr = Literal["mixed", "short"]
 
 
 class DictStore(Protocol):
+    lookup_heading: str
+    default_lookup_mode: LookupModeStr
+
     def lookup(self, en_text: str, mode: LookupModeStr = MIXED, **kwargs: Any) -> str: ...
 
     def load(self) -> None: ...

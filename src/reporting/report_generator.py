@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from src.cli import safe_print as _print
-from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY, normalize_verdict
 
 # ═══════════════════════════════════════════════════════════
 # Verdict 优先级与去重
@@ -146,19 +146,12 @@ class ReportGenerator:
         }
 
         def _normalize(v: VerdictDict) -> VerdictDict | None:
-            out: VerdictDict = {
-                "key":        v.get("key", ""),
-                "en_current": v.get("en_current", ""),
-                "zh_current": v.get("zh_current", ""),
-                "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
-                "suggestion": v.get("suggestion", ""),
-                "reason":     v.get("reason", ""),
-                "source":     v.get("source", ""),
-                "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
-                "version":    v.get("version") or version_map.get(v.get("key", ""), ""),
-                "file_path":  v.get("file_path") or filepath_map.get(v.get("key", ""), ""),
-            }
-            if not out["en_current"] and not out["zh_current"]:
+            out = normalize_verdict(dict(v))
+            out["verdict"] = _VERDICT_MAP.get(out.get("verdict", ""), out.get("verdict", ""))
+            out["namespace"] = out["namespace"] or namespace_map.get(v.get("key", ""), "")
+            out["version"] = out["version"] or version_map.get(v.get("key", ""), "")
+            out["file_path"] = out["file_path"] or filepath_map.get(v.get("key", ""), "")
+            if not out.get("en_current") and not out.get("zh_current"):
                 pair = en_zh_map.get(out["key"], {})
                 out["en_current"] = pair.get("en", "")
                 out["zh_current"] = pair.get("zh", "")

@@ -6,6 +6,7 @@ from typing import Any
 
 from src.logging import warn
 from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
+from src import config as cfg
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.tools.fuzzy_search import calc_similarity
 from src.tools.term_validation import STOP_WORDS
@@ -15,7 +16,7 @@ def _parse_version(v: str) -> tuple[int, ...]:
     parts = v.split(".")
     return tuple(int(p) for p in parts)
 
-VD_SIMILARITY_THRESHOLD: float = 60.0
+VD_SIMILARITY_THRESHOLD: float = cfg.get("vd_similarity_threshold", 60.0)
 VD_MAX_LONG_WORDS: int = 30
 VD_MAX_SHORT_WORDS: int = 10
 
@@ -24,6 +25,9 @@ DEFAULT_DB_PATH = "data/Minecraft.db"
 
 class MinecraftDictStore:
     """按需查询 Minecraft 原版翻译，SQLite FTS5 全文搜索。"""
+
+    lookup_heading = "### 原版翻译"
+    default_lookup_mode = MIXED
 
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._conn: sqlite3.Connection | None = None
@@ -46,8 +50,8 @@ class MinecraftDictStore:
                 "CREATE INDEX IF NOT EXISTS ix_vanilla_keys_en_us "
                 "ON vanilla_keys(en_us)"
             )
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.OperationalError as e:
+            warn(f"[MinecraftDict] 索引创建失败: {e}")
         self._use_fts = setup_fts(
             self._conn, "vanilla_keys_fts",
             "en_us, zh_cn, key, version_start, version_end, changes", "vanilla_keys",

@@ -26,6 +26,11 @@ def _load_stop_words() -> set[str]:
 STOP_WORDS: set[str] = _load_stop_words()
 
 
+def is_music_disc_desc(key: str) -> bool:
+    """唱片描述 (.desc) 不翻译——此规则多处复用。"""
+    return "music_disc" in key and key.endswith(".desc")
+
+
 def is_valid_term(term: str) -> bool:
     t = term.strip().lower()
     if not t or len(t) <= 2:

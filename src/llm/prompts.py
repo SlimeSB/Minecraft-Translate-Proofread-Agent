@@ -5,10 +5,10 @@
 import re
 
 from src import config as cfg
-from src.config import GUIDEME_PREFIX
+from src.config import DEFAULT_NAMESPACE
 from src.dictionary.external import ExternalDictStore
 from src.dictionary.vanilla_terms import VanillaTermsStore
-from src.dictionary.protocol import SHORT, MIXED, collect_hints
+from src.dictionary.protocol import collect_hints
 from src.tools.key_alignment import iter_indexed_groups
 from src.models import (
     AutoVerdictsMap,
@@ -23,6 +23,14 @@ from src.models import (
 )
 
 # ═══════════════════════════════════════════════════════════
+# 共享常量
+# ═══════════════════════════════════════════════════════════
+
+HDR_REFERENCES = "## 参考信息\n\n"
+HDR_GLOSSARY = "### 术语表\n"
+HDR_FUZZY = "### 模糊匹配\n"
+
+# ═══════════════════════════════════════════════════════════
 # 键名前缀分组
 # ═══════════════════════════════════════════════════════════
 
@@ -34,24 +42,35 @@ def group_prefix(key: str) -> str:
     for prefix in KEY_PREFIX_PROMPTS:
         if key.startswith(prefix) and len(prefix) > len(best):
             best = prefix
-    return best if best else "__default__"
+    return best if best else DEFAULT_NAMESPACE
+
+
+def prefix_config(key: str) -> KeyPrefixConfig:
+    """返回 key 匹配键前缀的配置字典（未匹配返回空 dict）。"""
+    return KEY_PREFIX_PROMPTS.get(group_prefix(key), {})
+
+
+def is_batch_singleton(key: str) -> bool:
+    """该 key 所属前缀是否要求逐条单独批处理（如长文本文档）。"""
+    return prefix_config(key).get("batch_singleton", False)
+
+
+def is_excluded_from_terminology(key: str) -> bool:
+    """该 key 所属前缀是否应排除在术语提取之外。"""
+    return prefix_config(key).get("exclude_terminology", False)
 
 
 def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
     groups: dict[str, list[dict[str, str]]] = {}
     for entry in entries:
-        key = entry["key"]
-        if key.startswith(GUIDEME_PREFIX):
-            prefix = GUIDEME_PREFIX
-        else:
-            prefix = group_prefix(key)
+        prefix = group_prefix(entry["key"])
         groups.setdefault(prefix, []).append(entry)  # type: ignore[arg-type]
     return groups
 
 
 def classify_key(key: str) -> str:
     prefix = group_prefix(key)
-    if prefix == "__default__":
+    if prefix == DEFAULT_NAMESPACE:
         return "其他"
     return KEY_PREFIX_PROMPTS.get(prefix, {}).get("label", "其他")
 
@@ -246,7 +265,7 @@ def _build_batch_references(
             seen_term.add(en_key)
             term_lines.append(f'"{g["en"]}" → "{g["zh"]}"')
         if term_lines:
-            sections.append("### 术语表\n" + "\n".join(term_lines))
+            sections.append(HDR_GLOSSARY + "\n".join(term_lines))
 
     # ── 模糊匹配 ──
     if fuzzy_map:
@@ -267,19 +286,14 @@ def _build_batch_references(
                     f'ZH: "{fr.get("zh", "")[:100]}"'
                 )
         if fuzzy_lines:
-            sections.append("### 模糊匹配\n" + "\n".join(fuzzy_lines))
+            sections.append(HDR_FUZZY + "\n".join(fuzzy_lines))
 
     # ── 原版词典 + 词典 ──
     if dict_stores:
         for store in dict_stores:
-            store_type = type(store).__qualname__
-            if store_type == "VanillaTermsStore":
-                heading = "### 原版词典"
-                mode = MIXED
-            elif store_type == "ExternalDictStore":
-                heading = "### 词典"
-                mode = SHORT
-            else:
+            heading = getattr(store, "lookup_heading", "")
+            mode = getattr(store, "default_lookup_mode", None)
+            if not heading or mode is None:
                 continue
 
             seen_store: set[str] = set()
@@ -313,7 +327,7 @@ def _build_batch_references(
 
     if not sections:
         return ""
-    return "## 参考信息\n\n" + "\n\n".join(sections)
+    return HDR_REFERENCES + "\n\n".join(sections)
 
 
 def build_review_prompt(
@@ -321,7 +335,7 @@ def build_review_prompt(
     glossary_entries: list[GlossaryDict] | None = None,
     auto_verdicts_map: AutoVerdictsMap | None = None,
     fuzzy_results_map: FuzzyResultsMap | None = None,
-    batch_size: int = 20,
+    batch_size: int = 25,
     merged_context: MultipartContext | None = None,
     dict_stores: list | None = None,
 ) -> list[str]:
@@ -384,12 +398,12 @@ def build_review_prompt(
     prompts: list[str] = []
     i = 0
     while i < len(entries):
-        if entries[i]["key"].startswith(GUIDEME_PREFIX):
+        if is_batch_singleton(entries[i]["key"]):
             batch = [entries[i]]
             i += 1
         else:
             batch = []
-            while i < len(entries) and len(batch) < batch_size and not entries[i]["key"].startswith(GUIDEME_PREFIX):
+            while i < len(entries) and len(batch) < batch_size and not is_batch_singleton(entries[i]["key"]):
                 batch.append(entries[i])
                 i += 1
 
@@ -423,7 +437,7 @@ def build_filter_prompt(
     for prefix, group_entries in groups.items():
         info = KEY_PREFIX_PROMPTS.get(prefix, {})
         cat_label = info.get("label", "其他")
-        effective_batch = 1 if prefix == GUIDEME_PREFIX else batch_size
+        effective_batch = 1 if info.get("batch_singleton") else batch_size
 
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
@@ -439,11 +453,11 @@ def build_filter_prompt(
                 verdict = v.get("verdict", "")
                 reason = v.get("reason", "")
                 suggestion = v.get("suggestion", "")
-                is_guideme = key.startswith(GUIDEME_PREFIX)
+                is_singleton = is_batch_singleton(key)
                 block = cfg.PROMPT_FILTER_ENTRY_BLOCK.format(
                     key=key,
-                    en=en if is_guideme else en[:200],
-                    zh=zh if is_guideme else zh[:200],
+                    en=en if is_singleton else en[:200],
+                    zh=zh if is_singleton else zh[:200],
                     verdict=verdict,
                     reason=reason,
                 )

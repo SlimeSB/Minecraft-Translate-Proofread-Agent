@@ -21,6 +21,9 @@ from src.tools.term_validation import STOP_WORDS
 class ExternalDictStore:
     """按需查询外部 SQLite 词典，避免全量内存加载（~200-300MB）。"""
 
+    lookup_heading = "### 词典"
+    default_lookup_mode = SHORT
+
     def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
         self._conn: sqlite3.Connection | None = None
         self._lemma_map: dict[str, str] = {}

@@ -7,15 +7,25 @@ import shutil
 from pathlib import Path
 
 from src.logging import info, warn
-from src.models import LLMCallable, PipelineContext, PRAlignmentWrapper
+from src.models import LLMCallable, PHASE_MERGED, PipelineContext, PRAlignmentWrapper
+from src.reporting.report_generator import ReportGenerator
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
 from src.pipeline.phase3a_format import run_phase3a
 from src.pipeline.phase3c_review import run_phase3c
 from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
-from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
+
+# 阶段注册表 — 新增阶段只需在此追加，编排器自动按序调用
+PHASES = [
+    ("alignment",  run_phase1),
+    ("terminology", run_phase2),
+    ("format",     run_phase3a),
+    ("llm_review", run_phase3c),
+    ("filter",     run_phase4),
+    ("report",     run_phase5),
+]
 from src.dictionary.external import ExternalDictStore
 from src.dictionary.vanilla_terms import VanillaTermsStore
 from src import config as cfg
@@ -39,7 +49,7 @@ class ReviewPipeline:
         min_term_freq: int = 3,
         fuzzy_threshold: float = 60.0,
         fuzzy_top: int = 5,
-        batch_size: int = 20,
+        batch_size: int = 0,
         pr_alignment: PRAlignmentWrapper | None = None,
         external_dict: bool = True,
     ):
@@ -90,16 +100,10 @@ class ReviewPipeline:
         info(f"{'='*60}")
 
         try:
-            run_phase1(ctx)       # 键对齐 / PR 数据加载
-            run_phase2(ctx)       # 术语提取与一致性检查
-            run_phase3a(ctx)      # 全自动格式检查
-            run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
-
-            # 合并 verdict 写入 DB（供 P4 过滤使用）
-            _save_merged_verdicts(ctx)
-
-            run_phase4(ctx)       # 最终 LLM 过滤
-            run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
+            for name, phase_fn in PHASES:
+                if name == "filter":
+                    _save_merged_verdicts(ctx)
+                phase_fn(ctx)
         finally:
             for store in ctx.dict_stores:
                 try:
@@ -119,5 +123,5 @@ def _save_merged_verdicts(ctx: PipelineContext) -> None:
     stats = report.get("stats", {})
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(verdicts, "merged")
+        db.save_verdicts(verdicts, PHASE_MERGED)
         db.set_meta("stats", json.dumps(stats, ensure_ascii=False))

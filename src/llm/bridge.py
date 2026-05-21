@@ -12,7 +12,12 @@ from src.models import (
     FuzzyResultsMap,
     GlossaryDict,
     LLMCallable,
+    SOURCE_INTERACTIVE,
+    SOURCE_LLM_ERROR,
+    SOURCE_LLM_REVIEW,
+    SOURCE_UNTRANSLATED_REVIEW,
     VerdictDict,
+    normalize_verdict,
 )
 from src.llm.prompts import (
     build_filter_prompt,
@@ -28,17 +33,10 @@ from src.llm.prompts import (
 # ═══════════════════════════════════════════════════════════
 
 def _normalize_verdict(v: VerdictDict) -> None:
-    for field in ("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"):
-        val = v.get(field, "")
-        if isinstance(val, dict):
-            zh_val = val.get("zh", "") or val.get("text", "") or val.get("value", "")
-            if zh_val:
-                val = zh_val
-            else:
-                val = json.dumps(val, ensure_ascii=False)
-        elif not isinstance(val, str):
-            val = str(val)
-        v[field] = val
+    """桥内规范化——委托给共享 normalize_verdict 再写回。"""
+    nv = normalize_verdict(v, fields=("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"))
+    for k in ("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"):
+        v[k] = nv[k]
 
 
 def _is_truncated_json(response: str) -> bool:
@@ -53,35 +51,48 @@ def _is_truncated_json(response: str) -> bool:
     return False
 
 
-def parse_review_response(response: str) -> list[VerdictDict]:
-    # 直接解析整个响应
+def parse_llm_json(response: str, *, extract_code_block: bool = False) -> list[dict]:
+    """统一 LLM JSON 响应解析（三层回退：直接→正则提取→逐行）。
+
+    设 extract_code_block=True 时先剥离 markdown 围栏代码块。
+    返回 dict 列表；解析失败返回空列表。
+    """
+    text = response.strip()
+    if extract_code_block and "```" in text:
+        m = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+
     try:
-        data = json.loads(response)
+        data = json.loads(text)
         if isinstance(data, list):
             return data
         if isinstance(data, dict) and "verdicts" in data:
             return data["verdicts"]
-    except json.JSONDecodeError:  # Acceptable — three-tier parse chain (direct→regex→line-by-line)
+    except json.JSONDecodeError:
         pass
-    # 提取 JSON 数组
-    json_match = re.search(r"\[.*\]", response, re.DOTALL)
+
+    json_match = re.search(r"\[.*\]", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group())
-        except json.JSONDecodeError:  # Acceptable fallback
+        except json.JSONDecodeError:
             pass
-    # 逐行解析 JSON 对象
-    results: list[VerdictDict] = []
-    for line in response.split("\n"):
+
+    results: list[dict] = []
+    for line in text.split("\n"):
         line = line.strip()
         if line.startswith("{") and line.endswith("}"):
             try:
                 obj = json.loads(line)
-                if "key" in obj and "verdict" in obj:
-                    results.append(obj)
+                results.append(obj)
             except json.JSONDecodeError:
                 continue
     return results
+
+
+def parse_review_response(response: str) -> list[VerdictDict]:
+    return parse_llm_json(response)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -170,8 +181,8 @@ async def _batch_process(
         try:
             result = await _process(0, first, len(prompts))
             results.extend(result)
-        except Exception:
-            pass
+        except Exception as e:
+            warn(f"  [{label}] 暖场请求失败，跳过热身: {e}")
         prompts = prompts[1:]
         start_idx = 1
     else:
@@ -206,7 +217,7 @@ class LLMBridge:
         glossary_entries: list[GlossaryDict] | None = None,
         auto_verdicts_map: AutoVerdictsMap | None = None,
         fuzzy_results_map: FuzzyResultsMap | None = None,
-        batch_size: int = 20,
+        batch_size: int = 25,
         max_workers: int | None = None,
         dict_stores: list | None = None,
     ) -> list[VerdictDict]:
@@ -225,11 +236,11 @@ class LLMBridge:
             return [{
                 "key": "__llm_error__", "en_current": "", "zh_current": "",
                 "verdict": "🔶 REVIEW", "suggestion": "",
-                "reason": f"LLM调用失败 (批次{i+1}): error", "source": "llm_error",
+                "reason": f"LLM调用失败 (批次{i+1}): error", "source": SOURCE_LLM_ERROR,
             }]
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "LLM", "llm_review", _error_return,
+                                          "LLM", SOURCE_LLM_REVIEW, _error_return,
                                           warmup_first=True))
 
     # ── 未翻译审校 ────────────────────────────────────
@@ -248,7 +259,7 @@ class LLMBridge:
         prompts = build_untranslated_prompt(entries, batch_size)
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "未翻译", "untranslated_review",
+                                          "未翻译", SOURCE_UNTRANSLATED_REVIEW,
                                           warmup_first=True))
 
     # ── 最终过滤 ──────────────────────────────────────
@@ -319,8 +330,8 @@ class LLMBridge:
                     all_responded.update(responded)
                     remaining = prompts[1:]
                     tasks = [_process(i + 1, p) for i, p in enumerate(remaining)]
-                except Exception:
-                    pass
+                except Exception as e:
+                    warn(f"  [Filter] 暖场请求失败，继续处理剩余批次: {e}")
             for coro in asyncio.as_completed(tasks):
                 keys, records, reasons, responded = await coro
                 discarded_keys.update(keys)
@@ -385,7 +396,7 @@ def interactive_entry_review(
             verdicts.append({
                 "key": key, "en_current": en, "zh_current": zh,
                 "verdict": verdict, "suggestion": suggestion,
-                "reason": reason, "source": "interactive",
+                "reason": reason, "source": SOURCE_INTERACTIVE,
             })
         else:
             print("跳过")
