@@ -184,6 +184,32 @@ class TestPipelineDB(unittest.TestCase):
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0]["en"], "b")
 
+    def test_same_key_different_version_coexist(self):
+        a1 = {
+            "matched_entries": [
+                {"key": "item.sword", "version": "1.21", "en": "Sword", "zh": "剑", "slug": "mod_a"},
+                {"key": "item.sword", "version": "1.20.1", "en": "Blade", "zh": "刀", "slug": "mod_a"},
+            ]
+        }
+        self.db.save_alignment(a1)
+        loaded = self.db.load_alignment()
+        self.assertEqual(loaded["stats"]["matched"], 2)
+        entries = {e["version"]: e for e in loaded["matched_entries"]}
+        self.assertIn("1.21", entries)
+        self.assertIn("1.20.1", entries)
+        self.assertEqual(entries["1.21"]["en"], "Sword")
+        self.assertEqual(entries["1.20.1"]["en"], "Blade")
+
+    def test_slug_stored_and_loaded(self):
+        alignment = {
+            "matched_entries": [
+                {"key": "item.x", "version": "1.19", "en": "X", "zh": "某", "slug": "my_mod"},
+            ]
+        }
+        self.db.save_alignment(alignment)
+        loaded = self.db.load_alignment()
+        self.assertEqual(loaded["matched_entries"][0]["slug"], "my_mod")
+
 
 if __name__ == "__main__":
     unittest.main()

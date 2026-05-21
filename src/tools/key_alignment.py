@@ -132,13 +132,14 @@ def iter_indexed_groups(
 
     返回 [(base_key, sorted_group), ...]，仅含 size >= 2 的组。
     """
-    groups: dict[str, list[Any]] = {}
+    groups: dict[tuple[str, str], list[Any]] = {}
     for e in entries:
         m = RE_INDEXED_KEY.match(str(e.get("key", "")))
         if m:
-            groups.setdefault(m.group(1), []).append(e)
+            gk = (m.group(1), str(e.get("version", "")))
+            groups.setdefault(gk, []).append(e)
     result: list[tuple[str, list[Any]]] = []
-    for base, group in groups.items():
+    for (base, _ver), group in groups.items():
         if len(group) < 2:
             continue
         group.sort(key=lambda e: int(RE_INDEXED_KEY.match(str(e["key"])).group(2)))
@@ -157,16 +158,17 @@ def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
     def _merge(entries: list, label: str) -> list:
         """Group indexed entries, merge multi-part groups, return flat list."""
         standalone: list[dict] = []
-        indexed: dict[str, list[dict]] = {}
+        indexed: dict[tuple[str, str], list[dict]] = {}
         for e in entries:
             m = RE_INDEXED_KEY.match(e.get("key", ""))
             if m:
-                indexed.setdefault(m.group(1), []).append(e)
+                gk = (m.group(1), e.get("version", ""))
+                indexed.setdefault(gk, []).append(e)
             else:
                 standalone.append(e)
 
         merged_count = 0
-        for _base, group in indexed.items():
+        for (base, _ver), group in indexed.items():
             if len(group) < 2:
                 standalone.extend(group)
                 continue

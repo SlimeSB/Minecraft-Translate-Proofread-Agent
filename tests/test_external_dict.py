@@ -368,5 +368,66 @@ class TestExternalDictStore(unittest.TestCase):
             Path(path).unlink(missing_ok=True)
 
 
+class TestVanillaTermsVersionScope(unittest.TestCase):
+    def setUp(self):
+        from src.dictionary.vanilla_terms import VanillaTermsStore
+        self.store = VanillaTermsStore()
+        self.store._loaded = True
+
+    def test_scope_version_le_match(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2"}', "clay", "key", "1.12.2"
+        )
+        self.assertTrue(result)
+
+    def test_scope_version_le_lower_mod(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2"}', "clay", "key", "1.7.10"
+        )
+        self.assertTrue(result)
+
+    def test_scope_version_gt_rejected(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2"}', "clay", "key", "1.19.2"
+        )
+        self.assertFalse(result)
+
+    def test_scope_version_none_rejected(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2"}', "clay", "key", None
+        )
+        self.assertFalse(result)
+
+    def test_scope_no_version_passes(self):
+        result = self.store._scope_matches(
+            None, "clay", "key", "1.12.2"
+        )
+        self.assertTrue(result)
+
+    def test_scope_empty_json_passes(self):
+        result = self.store._scope_matches(
+            "{}", "clay", "key", "1.12.2"
+        )
+        self.assertTrue(result)
+
+    def test_scope_invalid_version_rejected(self):
+        result = self.store._scope_matches(
+            '{"version": "invalid"}', "clay", "key", "1.12.2"
+        )
+        self.assertFalse(result)
+
+    def test_scope_mixed_conditions(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2", "key": "block\\\\..*"}', "clay", "block.clay", "1.7.10"
+        )
+        self.assertTrue(result)
+
+    def test_scope_mixed_conditions_key_fail(self):
+        result = self.store._scope_matches(
+            '{"version": "1.12.2", "key": "block\\\\..*"}', "clay", "item.clay", "1.7.10"
+        )
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()

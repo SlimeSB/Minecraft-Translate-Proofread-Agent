@@ -22,15 +22,17 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS alignment (
-    key     TEXT PRIMARY KEY,
+    key     TEXT NOT NULL,
+    version TEXT NOT NULL DEFAULT '',
     en      TEXT DEFAULT '',
     zh      TEXT DEFAULT '',
     format  TEXT DEFAULT '',
     namespace TEXT DEFAULT '',
     old_en  TEXT DEFAULT '',
     old_zh  TEXT DEFAULT '',
-    version TEXT DEFAULT '',
-    file_path TEXT DEFAULT ''
+    file_path TEXT DEFAULT '',
+    slug    TEXT DEFAULT '',
+    PRIMARY KEY (key, version)
 );
 
 CREATE TABLE IF NOT EXISTS glossary (
@@ -101,6 +103,8 @@ class PipelineDB:
             self._conn.execute("ALTER TABLE alignment ADD COLUMN version TEXT DEFAULT ''")
         if "file_path" not in cols_alignment:
             self._conn.execute("ALTER TABLE alignment ADD COLUMN file_path TEXT DEFAULT ''")
+        if "slug" not in cols_alignment:
+            self._conn.execute("ALTER TABLE alignment ADD COLUMN slug TEXT DEFAULT ''")
 
         cols_verdicts = {r[1] for r in self._conn.execute("PRAGMA table_info(verdicts)").fetchall()}
         if "version" not in cols_verdicts:
@@ -126,12 +130,13 @@ class PipelineDB:
         for e in entries:
             chg = e.get("_change") or {}
             self._conn.execute(
-                "INSERT INTO alignment (key,en,zh,format,namespace,old_en,old_zh,version,file_path) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (e["key"], e.get("en", ""), e.get("zh", ""),
+                "INSERT INTO alignment (key,version,en,zh,format,namespace,old_en,old_zh,file_path,slug) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (e["key"], e.get("version", ""),
+                 e.get("en", ""), e.get("zh", ""),
                  e.get("format", ""), e.get("namespace", ""),
                  chg.get("old_en", ""), chg.get("old_zh", ""),
-                 e.get("version", ""), e.get("file_path", "")))
+                 e.get("file_path", ""), e.get("slug", "")))
         self._conn.commit()
 
     def load_alignment(self) -> AlignmentDict:
@@ -142,6 +147,7 @@ class PipelineDB:
                 "key": r["key"], "en": r["en"], "zh": r["zh"],
                 "format": r["format"], "namespace": r["namespace"],
                 "version": r["version"], "file_path": r["file_path"],
+                "slug": r["slug"],
             })
         return {"matched_entries": matched, "stats": {"matched": len(matched)}}
 

@@ -11,7 +11,20 @@ from src.storage.database import PipelineDB
 def run_phase2(ctx: PipelineContext) -> None:
     info("[Phase 2] 术语提取与一致性检查...")
 
-    if ctx.pr_mode and ctx.pr_full_en_data:
+    if ctx.pr_mode and ctx.pr_version_groups:
+        lang_en: dict[str, str] = {}
+        lang_zh: dict[str, str] = {}
+        for slug, g in ctx.pr_version_groups.items():
+            for ver, vd in g["version_data"].items():
+                for raw_key, en_val in vd["full_en"].items():
+                    if not is_excluded_from_terminology(raw_key):
+                        composite_key = f"{slug}/{ver}/{raw_key}"
+                        lang_en[composite_key] = en_val
+                for raw_key, zh_val in vd["full_zh"].items():
+                    if not is_excluded_from_terminology(raw_key):
+                        composite_key = f"{slug}/{ver}/{raw_key}"
+                        lang_zh[composite_key] = zh_val
+    elif ctx.pr_mode and ctx.pr_full_en_data:
         lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not is_excluded_from_terminology(k)}
         lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not is_excluded_from_terminology(k)}
     else:

@@ -53,6 +53,7 @@ class EntryDict(TypedDict, total=False):
     namespace: str       # PR 模式
     version: str
     file_path: str
+    slug: str            # 模组标识符（PR 模式）
     _change: "ChangeDict"
 
 
@@ -60,6 +61,9 @@ class ChangeDict(TypedDict, total=False):
     """PR 模式条目附带的变更上下文。"""
     old_en: str
     old_zh: str
+    ref_version: str
+    ref_en: str
+    ref_zh: str
 
 
 class MissingEntryDict(TypedDict):
@@ -183,6 +187,22 @@ class FilterDiscardRecord(TypedDict):
     reason: str
 
 
+class VersionGroupData(TypedDict):
+    """PR 模式中单版本的全量数据。"""
+    version: str
+    full_en: StrDict
+    full_zh: StrDict
+    entries: list[EntryDict]
+
+
+class PRVersionGroups(TypedDict):
+    """PR 模式按 slug 分组的版本数据。"""
+    slug: str
+    versions: list[str]           # 降序排列
+    version_data: dict[str, VersionGroupData]
+    cross_version_diffs: dict[str, Any]  # CrossVersionDiff 前向引用
+
+
 class KeyPrefixConfig(TypedDict, total=False):
     """key_prefixes 中每个前缀的配置。"""
     label: str
@@ -304,6 +324,9 @@ class PipelineContext:
     zh_only_entries: list[PRAlignmentEntryDict] = field(default_factory=list)
     pr_full_en_data: StrDict = field(default_factory=dict)
     pr_full_zh_data: StrDict = field(default_factory=dict)
+    pr_version_groups: dict[str, PRVersionGroups] = field(default_factory=dict)
+    pr_combined_full_en: StrDict = field(default_factory=dict)
+    pr_combined_full_zh: StrDict = field(default_factory=dict)
 
     # ── 中间结果 ──
     en_data: StrDict = field(default_factory=dict)

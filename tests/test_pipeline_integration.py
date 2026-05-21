@@ -91,7 +91,6 @@ class TestPipelineIntegration:
 
         assert "verdicts" in report
         assert "alignment_stats" in report
-        assert "by_namespace" in report
 
     def test_dry_run_no_crash(self):
         ctx = self._run_pipeline(dry_run=True)
@@ -132,3 +131,47 @@ class TestPipelineIntegration:
     def test_term_verdicts_produced(self):
         ctx = self._run_pipeline()
         assert isinstance(ctx.term_verdicts, list)
+
+    def test_pr_multi_version_groups(self):
+        """PR 多版本场景：验证 slug 分组、跨版本差异、ref 注入。"""
+        from src.pipeline.phase1_alignment import (
+            _regroup_mods_by_slug,
+            _build_combined_full_data,
+        )
+
+        mods = {
+            "1.21/12345/ironchest": {
+                "mod_info": {"version": "1.21", "curseforge_id": "12345", "slug": "ironchest"},
+                "full_en": {"key.a": "Iron Chest"},
+                "full_zh": {"key.a": "铁箱子"},
+                "entries": [
+                    {"key": "key.a", "en": "Iron Chest", "zh": "铁箱子",
+                     "namespace": "ironchest", "version": "1.21", "slug": "ironchest",
+                     "old_en": "Old", "old_zh": "旧"}
+                ],
+            },
+            "1.20.1/12345/ironchest": {
+                "mod_info": {"version": "1.20.1", "curseforge_id": "12345", "slug": "ironchest"},
+                "full_en": {"key.a": "Iron Chest", "key.b": "Diamond Chest"},
+                "full_zh": {"key.a": "铁质箱子", "key.b": "钻石箱子"},
+                "entries": [
+                    {"key": "key.a", "en": "Iron Chest", "zh": "铁质箱子",
+                     "namespace": "ironchest", "version": "1.20.1", "slug": "ironchest",
+                     "old_en": "", "old_zh": ""}
+                ],
+            },
+        }
+
+        groups = _regroup_mods_by_slug(mods)
+        assert "ironchest" in groups
+        g = groups["ironchest"]
+        assert g["versions"] == ["1.21", "1.20.1"]  # 降序
+        assert "1.21" in g["version_data"]
+        assert "1.20.1" in g["version_data"]
+
+        combined_en, combined_zh = _build_combined_full_data(groups)
+        assert "ironchest/1.21/key.a" in combined_en
+        assert "ironchest/1.20.1/key.a" in combined_en
+        assert "ironchest/1.20.1/key.b" in combined_en
+        assert combined_en["ironchest/1.20.1/key.b"] == "Diamond Chest"
+

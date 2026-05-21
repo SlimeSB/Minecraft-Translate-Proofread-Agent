@@ -94,6 +94,7 @@ def align(
             "format": "guideme",
             "version": g.get("version", ""),
             "file_path": file_path,
+            "slug": g["namespace"],
         }
         if en_changed:
             entry["old_en"] = old_en

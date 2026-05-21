@@ -92,6 +92,7 @@ def _align_json_mods(
                 e["namespace"] = slug
                 e["version"] = version
                 e["file_path"] = file_path
+                e["slug"] = slug
             result_mods[resolved_mod_key] = {
                 "mod_info": mi,
                 "entries": entries,

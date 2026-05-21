@@ -215,6 +215,14 @@ def build_entry_block(
             lines.append(f'old_en: "{change["old_en"]}"')
         if change.get("old_zh"):
             lines.append(f'old_zh: "{change["old_zh"]}"')
+        if change.get("ref_version"):
+            lines.append("")
+            lines.append("跨版本参考:")
+            lines.append(f'  ref_version: {change["ref_version"]}')
+            if change.get("ref_en"):
+                lines.append(f'  ref_en: "{change["ref_en"]}"')
+            if change.get("ref_zh"):
+                lines.append(f'  ref_zh: "{change["ref_zh"]}"')
 
     if auto_verdicts:
         lines.append("")
@@ -235,6 +243,25 @@ def merge_multipart_entries(entries: list[EntryDict]) -> MultipartContext:
         for e in group:
             result[e["key"]] = (full_en, full_zh)
     return result
+
+
+# ═══════════════════════════════════════════════════════════
+# Batch 隔离：三元组 (slug, version, namespace) 分组
+# ═══════════════════════════════════════════════════════════
+
+
+def _group_by_slug_ver_ns(
+    entries: list[EntryDict],
+) -> dict[tuple[str, str, str], list[EntryDict]]:
+    """按 (slug, version, namespace) 三元组分组，保证 batch 不跨模组/版本/命名空间。"""
+    groups: dict[tuple[str, str, str], list[EntryDict]] = {}
+    for e in entries:
+        slug = e.get("slug", "")
+        ver = e.get("version", "")
+        ns = e.get("namespace", "") or group_prefix(e["key"])
+        key = (slug or "", ver or "", ns)
+        groups.setdefault(key, []).append(e)
+    return groups
 
 
 # ═══════════════════════════════════════════════════════════
@@ -302,7 +329,7 @@ def _build_batch_references(
                 key = entry["key"]
                 en_text = (merged_context or {}).get(key, ("", ""))[0] or entry.get("en", "")
                 try:
-                    hint = store.lookup(en_text, mode=mode, entry_key=key)
+                    hint = store.lookup(en_text, mode=mode, entry_key=key, version=entry.get("version"))
                 except Exception:
                     continue
                 if not hint:
@@ -370,10 +397,17 @@ def build_review_prompt(
         entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
         for entry in entries
     )
+    has_cross_ref = any(
+        entry.get("_change", {}).get("ref_version")
+        for entry in entries
+    )
     if has_change and cfg.PROMPT_REVIEW_PR_SECTION:
         header += cfg.PROMPT_REVIEW_PR_SECTION.format(
             change_context=cfg.get("pr_change_context_prompt", "")
         )
+    if has_cross_ref:
+        header += "\n跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。"
+        header += "当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。\n"
 
     header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
         count=len(entries),
@@ -394,27 +428,92 @@ def build_review_prompt(
     # ── 4. 组装共享前缀 ──
     shared_prefix = f"{header}\n\n{references}" if references else header
 
-    # ── 5. 切分批，复写前缀 ──
+    # ── 5. 三元组分组后，组内按 prefix/batch_size 切分 ──
     prompts: list[str] = []
-    i = 0
-    while i < len(entries):
-        if is_batch_singleton(entries[i]["key"]):
-            batch = [entries[i]]
-            i += 1
-        else:
-            batch = []
-            while i < len(entries) and len(batch) < batch_size and not is_batch_singleton(entries[i]["key"]):
-                batch.append(entries[i])
-                i += 1
+    tri_groups = _group_by_slug_ver_ns(entries)
 
-        blocks = [shared_prefix]
-        for e in batch:
-            key = e["key"]
-            auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
-            full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
-            block = build_entry_block(e, auto_v, full_en, full_zh)
-            blocks.append(block)
-        prompts.append("\n\n".join(blocks))
+    for (_slug, _ver, _ns), group_entries in tri_groups.items():
+        # 组内按 key prefix 再分组
+        prefix_groups: dict[str, list[EntryDict]] = {}
+        for e in group_entries:
+            prefix = group_prefix(e["key"])
+            prefix_groups.setdefault(prefix, []).append(e)
+
+        for prefix, prefix_entries in prefix_groups.items():
+            effective_bs = 1 if KEY_PREFIX_PROMPTS.get(prefix, {}).get("batch_singleton") else batch_size
+
+            i = 0
+            while i < len(prefix_entries):
+                if is_batch_singleton(prefix_entries[i]["key"]):
+                    batch = [prefix_entries[i]]
+                    i += 1
+                else:
+                    batch = []
+                    while i < len(prefix_entries) and len(batch) < effective_bs and not is_batch_singleton(prefix_entries[i]["key"]):
+                        batch.append(prefix_entries[i])
+                        i += 1
+
+                # 重新构建该 batch 的 header 和 references
+                batch_present_prefixes: set[str] = set()
+                for e in batch:
+                    batch_present_prefixes.add(group_prefix(e["key"]))
+                batch_focus_parts: list[str] = []
+                for bp in sorted(batch_present_prefixes):
+                    info_config = KEY_PREFIX_PROMPTS.get(bp, {})
+                    focus = info_config.get("focus", "")
+                    if focus and focus != cfg.DEFAULT_REVIEW_FOCUS:
+                        label = info_config.get("label", bp)
+                        batch_focus_parts.append(f"## {label}\n{focus}")
+                batch_merged_focus = "\n\n".join(batch_focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
+
+                batch_header = cfg.PROMPT_REVIEW_HEADER.format(
+                    header_prefix=cfg.REVIEW_HEADER_PREFIX,
+                    cat_label="综合",
+                    prefix="__all__",
+                    focus_notes=batch_merged_focus,
+                    review_principles=cfg.REVIEW_PRINCIPLES,
+                )
+
+                batch_has_change = any(
+                    e.get("_change", {}).get("old_en") or e.get("_change", {}).get("old_zh")
+                    for e in batch
+                )
+                batch_has_cross_ref = any(
+                    e.get("_change", {}).get("ref_version")
+                    for e in batch
+                )
+                if batch_has_change and cfg.PROMPT_REVIEW_PR_SECTION:
+                    batch_header += cfg.PROMPT_REVIEW_PR_SECTION.format(
+                        change_context=cfg.get("pr_change_context_prompt", "")
+                    )
+                if batch_has_cross_ref:
+                    batch_header += "\n跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。"
+                    batch_header += "当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。\n"
+
+                batch_header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
+                    count=len(batch),
+                    review_instruction=cfg.REVIEW_INSTRUCTION,
+                )
+
+                batch_input_guidance = detect_input_guidance(batch)
+                if batch_input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
+                    batch_header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
+                        input_guidance=batch_input_guidance,
+                    )
+
+                batch_refs = _build_batch_references(
+                    batch, glossary_entries, fuzzy_results_map, dict_stores, merged_context
+                )
+                batch_shared_prefix = f"{batch_header}\n\n{batch_refs}" if batch_refs else batch_header
+
+                blocks = [batch_shared_prefix]
+                for e in batch:
+                    key = e["key"]
+                    auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
+                    full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
+                    block = build_entry_block(e, auto_v, full_en, full_zh)
+                    blocks.append(block)
+                prompts.append("\n\n".join(blocks))
 
     return prompts
 

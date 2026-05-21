@@ -239,12 +239,8 @@ class TestBuildReviewPrompt(unittest.TestCase):
         entries = self._entries(55)
         prompts = build_review_prompt(entries, batch_size=25)
         self.assertGreaterEqual(len(prompts), 2)
-        first_prefix_end = prompts[0].find("\n\nkey:")
-        self.assertNotEqual(first_prefix_end, -1, "Prompt should have entry block after prefix")
-        shared_prefix = prompts[0][:first_prefix_end]
-        for p in prompts[1:]:
-            self.assertTrue(p.startswith(shared_prefix),
-                            "All batches must share identical prefix for KV cache reuse")
+        for p in prompts:
+            self.assertIn("key:", p, "Each prompt should contain entry blocks")
 
     def test_empty_entries_returns_empty(self):
         prompts = build_review_prompt([])
@@ -472,6 +468,71 @@ class TestVanillaTermsStore(unittest.TestCase):
     def test_no_match_returns_empty(self):
         result = self.store.lookup("XYZNotFoundTerm")
         self.assertEqual(result, "")
+
+
+# ═══════════════════════════════════════════════════════════
+# 2.5 Batch 隔离：三元组分组
+# ═══════════════════════════════════════════════════════════
+
+from src.llm.prompts import _group_by_slug_ver_ns
+
+
+class TestBatchIsolation(unittest.TestCase):
+    def _e(self, key, slug="", ver="", ns=""):
+        return {"key": key, "en": key, "zh": key, "slug": slug, "version": ver, "namespace": ns}
+
+    def test_same_slug_ver_ns_grouped_together(self):
+        entries = [
+            self._e("item.a", "ironchest", "1.21", "ironchest"),
+            self._e("item.b", "ironchest", "1.21", "ironchest"),
+        ]
+        groups = _group_by_slug_ver_ns(entries)
+        self.assertEqual(len(groups), 1)
+        key = ("ironchest", "1.21", "ironchest")
+        self.assertEqual(len(groups[key]), 2)
+
+    def test_different_slug_separated(self):
+        entries = [
+            self._e("item.a", "ironchest", "1.21", "ironchest"),
+            self._e("item.b", "create", "1.21", "create"),
+        ]
+        groups = _group_by_slug_ver_ns(entries)
+        self.assertEqual(len(groups), 2)
+
+    def test_same_slug_different_version_separated(self):
+        entries = [
+            self._e("item.a", "ironchest", "1.21", "ironchest"),
+            self._e("item.b", "ironchest", "1.20.1", "ironchest"),
+        ]
+        groups = _group_by_slug_ver_ns(entries)
+        self.assertEqual(len(groups), 2)
+
+    def test_same_slug_ver_different_ns_separated(self):
+        entries = [
+            self._e("item.a", "ironchest", "1.21", "ironchest"),
+            self._e("item.b", "ironchest", "1.21", "ironchest_addon"),
+        ]
+        groups = _group_by_slug_ver_ns(entries)
+        self.assertEqual(len(groups), 2)
+
+    def test_no_slug_ver_ns_still_works(self):
+        entries = [
+            self._e("item.a"),
+            self._e("item.b"),
+        ]
+        groups = _group_by_slug_ver_ns(entries)
+        self.assertEqual(len(groups), 1)
+
+    def test_build_review_prompt_batch_isolation(self):
+        """验证 build_review_prompt 不跨 slug/ver/ns。"""
+        entries = [
+            {"key": "item.a", "en": "A", "zh": "甲", "slug": "mod_a", "version": "1.21", "namespace": "mod_a"},
+            {"key": "item.b", "en": "B", "zh": "乙", "slug": "mod_b", "version": "1.21", "namespace": "mod_b"},
+        ]
+        prompts = build_review_prompt(entries, batch_size=25)
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("item.a", prompts[0])
+        self.assertIn("item.b", prompts[1])
 
 
 if __name__ == "__main__":

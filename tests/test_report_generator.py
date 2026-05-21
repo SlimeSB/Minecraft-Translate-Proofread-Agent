@@ -146,5 +146,82 @@ class TestReportGenerator(unittest.TestCase):
         self.assertEqual(stats["🔶 REVIEW"], 0)
 
 
+class TestPhase5MultiVersion(unittest.TestCase):
+    """测试 Phase 5 多版本三级目录输出结构。"""
+
+    def test_build_slug_ver_ns_map_empty(self):
+        from src.pipeline.phase5_report import _build_slug_ver_ns_map
+        result = _build_slug_ver_ns_map([], [])
+        self.assertEqual(result, {})
+
+    def test_build_slug_ver_ns_map_single(self):
+        from src.pipeline.phase5_report import _build_slug_ver_ns_map
+        from src.models import EntryDict
+        verdicts: list[VerdictDict] = [
+            {"key": "item.a", "verdict": "❌ FAIL", "reason": "bad", "namespace": "mod_a", "version": "1.21"},
+        ]
+        entries: list[EntryDict] = [
+            {"key": "item.a", "slug": "mod_a", "version": "1.21", "namespace": "mod_a"},  # type: ignore[typeddict-item]
+        ]
+        result = _build_slug_ver_ns_map(verdicts, entries)
+        self.assertIn("mod_a", result)
+        self.assertIn("1.21", result["mod_a"])
+        self.assertIn("mod_a", result["mod_a"]["1.21"])
+        info = result["mod_a"]["1.21"]["mod_a"]
+        self.assertEqual(info["total"], 1)
+        self.assertEqual(info["issues"], 1)
+        self.assertEqual(info["fail"], 1)
+
+    def test_build_slug_ver_ns_map_multi_version(self):
+        from src.pipeline.phase5_report import _build_slug_ver_ns_map
+        from src.models import EntryDict
+        verdicts: list[VerdictDict] = [
+            {"key": "a", "verdict": "❌ FAIL", "reason": "bad", "namespace": "mod_a", "version": "1.21"},
+            {"key": "b", "verdict": "⚠️ SUGGEST", "reason": "meh", "namespace": "mod_a", "version": "1.20.1"},
+            {"key": "c", "verdict": "PASS", "reason": "", "namespace": "mod_a", "version": "1.20.1"},
+        ]
+        entries: list[EntryDict] = [
+            {"key": "a", "slug": "mod_a", "version": "1.21", "namespace": "mod_a"},  # type: ignore[typeddict-item]
+            {"key": "b", "slug": "mod_a", "version": "1.20.1", "namespace": "mod_a"},  # type: ignore[typeddict-item]
+            {"key": "c", "slug": "mod_a", "version": "1.20.1", "namespace": "mod_a"},  # type: ignore[typeddict-item]
+        ]
+        result = _build_slug_ver_ns_map(verdicts, entries)
+        self.assertIn("1.21", result["mod_a"])
+        self.assertIn("1.20.1", result["mod_a"])
+
+        info_v121 = result["mod_a"]["1.21"]["mod_a"]
+        self.assertEqual(info_v121["total"], 1)
+        self.assertEqual(info_v121["fail"], 1)
+
+        info_v1201 = result["mod_a"]["1.20.1"]["mod_a"]
+        self.assertEqual(info_v1201["total"], 2)
+        self.assertEqual(info_v1201["issues"], 1)
+        self.assertEqual(info_v1201["suggest"], 1)
+
+    def test_md_table_has_file_path_column(self):
+        import tempfile, os
+        from src.pipeline.phase5_report import _generate_namespace_md
+        tmpdir = tempfile.mkdtemp()
+        ns_dir = type("D", (), {"__truediv__": lambda s, x: type(s)(x)})()  # dummy
+        try:
+            # We just verify the function doesn't crash and produces expected headers
+            verdicts: list[VerdictDict] = [
+                {"key": "item.a", "verdict": "❌ FAIL", "reason": "test", "file_path": "path/to/file.json"},
+            ]
+            import pathlib
+            ns_dir = pathlib.Path(tmpdir)
+            _generate_namespace_md("test_ns", verdicts, {"total": 1, "issues": 1, "fail": 1, "suggest": 0, "review": 0}, ns_dir)
+            md_path = ns_dir / "report.md"
+            self.assertTrue(md_path.exists())
+            content = md_path.read_text(encoding="utf-8")
+            self.assertIn("| 判定 | 键名 | 文件路径 | 问题 |", content)
+            self.assertIn("| ❌ FAIL |", content)
+            self.assertIn("| `item.a` |", content)
+            self.assertIn("| `path/to/file.json` |", content)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

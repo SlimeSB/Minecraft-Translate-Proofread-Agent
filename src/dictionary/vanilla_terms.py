@@ -12,6 +12,7 @@ from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.logging import warn
 from src.tools.term_validation import STOP_WORDS
+from src.tools.version_cmp import version_le
 
 DEFAULT_VT_DB_PATH = "data/vanilla_terms.db"
 
@@ -68,7 +69,9 @@ class VanillaTermsStore:
                 except re.error:
                     return False
             elif head == "version":
-                if str(version or "") != pattern:
+                if version is None:
+                    return False
+                if not version_le(str(version), pattern):
                     return False
             elif head == "en":
                 try:
@@ -151,9 +154,21 @@ class VanillaTermsStore:
                 except json.JSONDecodeError:
                     pass
 
+                # 版本敏感标注
+                scope_dict: dict[str, str] = {}
+                if scope_str and scope_str != "NULL":
+                    try:
+                        scope_dict = json.loads(scope_str)
+                    except json.JSONDecodeError:
+                        scope_dict = {}
+                version_scope = scope_dict.get("version", "") if isinstance(scope_dict, dict) else ""
+
                 en_display = " / ".join(en_terms)
                 zh_display = " / ".join(zh_terms)
-                line = f'"{en_display}" → "{zh_display}"{label_str}'
+                if version_scope:
+                    line = f'"{en_display}" → "{zh_display}"[{version_scope}]{label_str}⚠️ 版本敏感译名'
+                else:
+                    line = f'"{en_display}" → "{zh_display}"{label_str}'
                 results.append((en_display.lower(), line, labels_raw))
 
         if not results:

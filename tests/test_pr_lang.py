@@ -175,6 +175,15 @@ class TestAlign(unittest.TestCase):
         self.assertNotIn("version", entries[0])
         self.assertNotIn("file_path", entries[0])
 
+    def test_entry_lacks_slug(self):
+        """slug 不由 _lang.align 设置，由 _align_json_mods 注入。"""
+        old_en = {"item.x": "X"}
+        new_en = {"item.x": "X2"}
+        old_zh = {"item.x": "某"}
+        new_zh = {"item.x": "某2"}
+        entries, _ = align(old_en, new_en, old_zh, new_zh)
+        self.assertNotIn("slug", entries[0])
+
 
 if __name__ == "__main__":
     unittest.main()
