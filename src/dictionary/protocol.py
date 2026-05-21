@@ -1,7 +1,8 @@
 """DictStore Protocol — 所有词典存储的统一接口。"""
 
 import sqlite3
-from typing import Any, Callable, Literal, Protocol
+from collections.abc import Callable
+from typing import Any, Literal, Protocol
 
 from src.logging import warn
 

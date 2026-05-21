@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 """核心领域数据模型 —— TypedDict + dataclass。
 
 所有 dict 形状在此统一定义，禁止 Any 裸奔。
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, TypedDict
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from src.dictionary.external import ExternalDictStore
+    from src.dictionary.protocol import DictStore
 
 # ═══════════════════════════════════════════════════════════
 # 共享常量
@@ -222,7 +229,7 @@ def normalize_verdict_field(val: object) -> str:
     return str(val) if val is not None else ""
 
 
-def normalize_verdict(v: dict, *, fields: tuple[str, ...] | None = None) -> dict:
+def normalize_verdict(v: Mapping, *, fields: tuple[str, ...] | None = None) -> dict:
     """规范化 verdict dict 的所有文本字段类型。
 
     默认规范化 VerdictDict 的 11 个已知字段。
@@ -311,10 +318,10 @@ class PipelineContext:
 
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
-    dict_stores: list[object] = field(default_factory=list)  # list[DictStore]
-    external_dict_store: object | None = None  # ExternalDictStore | None (保留别名)
+    dict_stores: list[DictStore] = field(default_factory=list)
+    external_dict_store: ExternalDictStore | None = None
 
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
 
     filter_cache_hits: int = 0
     filter_cache_total: int = 0

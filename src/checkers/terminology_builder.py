@@ -14,8 +14,8 @@
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
-from typing import Any, Callable
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from src.logging import info, warn
 from src.models import AlignmentDict, EntryDict, GlossaryDict, SOURCE_TERMINOLOGY_CHECK, VerdictDict

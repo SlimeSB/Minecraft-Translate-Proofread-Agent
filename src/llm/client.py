@@ -7,7 +7,6 @@ import datetime
 import time
 import uuid
 from pathlib import Path
-from typing import Callable
 
 from src.logging import info, warn
 

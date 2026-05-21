@@ -33,6 +33,8 @@ import re
 from pathlib import Path
 from typing import Any, Sequence
 
+from src.logging import warn
+
 from src.tools.code_detection import is_likely_code_or_proper_noun
 from src.config import RE_INDEXED_KEY, COMMENT_KEY_PATTERN
 from src.models import AlignmentDict, EntryDict, VerdictDict
