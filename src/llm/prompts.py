@@ -369,66 +369,44 @@ def build_review_prompt(
     if not entries:
         return []
 
-    # ── 1. 合并全部前缀的 focus_notes ──
-    present_prefixes: set[str] = set()
-    for entry in entries:
-        prefix = group_prefix(entry["key"])
-        present_prefixes.add(prefix)
-
+    # ── 1. 静态统一 header：从全部已知前缀构建 focus_notes，始终不变 ──
     focus_parts: list[str] = []
-    for prefix in sorted(present_prefixes):
-        info = KEY_PREFIX_PROMPTS.get(prefix, {})
+    for prefix in sorted(KEY_PREFIX_PROMPTS):
+        info = KEY_PREFIX_PROMPTS[prefix]
         focus = info.get("focus", "")
         if focus and focus != cfg.DEFAULT_REVIEW_FOCUS:
-            label = info.get("label", prefix)
-            focus_parts.append(f"## {label}\n{focus}")
-    merged_focus = "\n\n".join(focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
+            focus_parts.append(focus)
+    merged_focus = "\n".join(focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
 
-    # ── 2. 统一 header ──
     header = cfg.PROMPT_REVIEW_HEADER.format(
         header_prefix=cfg.REVIEW_HEADER_PREFIX,
-        cat_label="综合",
-        prefix="__all__",
         focus_notes=merged_focus,
         review_principles=cfg.REVIEW_PRINCIPLES,
     )
 
-    has_change = any(
-        entry.get("_change", {}).get("old_en") or entry.get("_change", {}).get("old_zh")
-        for entry in entries
+    # 以下 section 全部无条件拼接，保障 prompt 结构稳定以命中 KV cache
+    header += cfg.PROMPT_REVIEW_PR_SECTION.format(
+        change_context=cfg.get("pr_change_context_prompt", "")
     )
-    has_cross_ref = any(
-        entry.get("_change", {}).get("ref_version")
-        for entry in entries
-    )
-    if has_change and cfg.PROMPT_REVIEW_PR_SECTION:
-        header += cfg.PROMPT_REVIEW_PR_SECTION.format(
-            change_context=cfg.get("pr_change_context_prompt", "")
-        )
-    if has_cross_ref:
-        header += "\n跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。"
-        header += "当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。\n"
-
+    header += cfg.PROMPT_CROSS_VERSION_REF_SECTION
     header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
         count=len(entries),
         review_instruction=cfg.REVIEW_INSTRUCTION,
     )
+    full_input_guidance = cfg.KEYBOARD_GUIDANCE + "\n" + cfg.MOUSE_GUIDANCE
+    header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
+        input_guidance=full_input_guidance,
+    )
 
-    input_guidance = detect_input_guidance(entries)
-    if input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
-        header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
-            input_guidance=input_guidance,
-        )
-
-    # ── 3. 一次性从全部条目构建参考信息 ──
+    # ── 2. 参考信息随数据变动，保留原写法 ──
     references = _build_batch_references(
         entries, glossary_entries, fuzzy_results_map, dict_stores, merged_context
     )
 
-    # ── 4. 组装共享前缀 ──
+    # ── 3. 组装共享前缀 ──
     shared_prefix = f"{header}\n\n{references}" if references else header
 
-    # ── 5. 三元组分组后，组内按 prefix/batch_size 切分 ──
+    # ── 4. 三元组分组后，组内按 prefix/batch_size 切分 ──
     prompts: list[str] = []
     tri_groups = _group_by_slug_ver_ns(entries)
 
@@ -453,58 +431,10 @@ def build_review_prompt(
                         batch.append(prefix_entries[i])
                         i += 1
 
-                # 重新构建该 batch 的 header 和 references
-                batch_present_prefixes: set[str] = set()
-                for e in batch:
-                    batch_present_prefixes.add(group_prefix(e["key"]))
-                batch_focus_parts: list[str] = []
-                for bp in sorted(batch_present_prefixes):
-                    info_config = KEY_PREFIX_PROMPTS.get(bp, {})
-                    focus = info_config.get("focus", "")
-                    if focus and focus != cfg.DEFAULT_REVIEW_FOCUS:
-                        label = info_config.get("label", bp)
-                        batch_focus_parts.append(f"## {label}\n{focus}")
-                batch_merged_focus = "\n\n".join(batch_focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
-
-                batch_header = cfg.PROMPT_REVIEW_HEADER.format(
-                    header_prefix=cfg.REVIEW_HEADER_PREFIX,
-                    cat_label="综合",
-                    prefix="__all__",
-                    focus_notes=batch_merged_focus,
-                    review_principles=cfg.REVIEW_PRINCIPLES,
-                )
-
-                batch_has_change = any(
-                    e.get("_change", {}).get("old_en") or e.get("_change", {}).get("old_zh")
-                    for e in batch
-                )
-                batch_has_cross_ref = any(
-                    e.get("_change", {}).get("ref_version")
-                    for e in batch
-                )
-                if batch_has_change and cfg.PROMPT_REVIEW_PR_SECTION:
-                    batch_header += cfg.PROMPT_REVIEW_PR_SECTION.format(
-                        change_context=cfg.get("pr_change_context_prompt", "")
-                    )
-                if batch_has_cross_ref:
-                    batch_header += "\n跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。"
-                    batch_header += "当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。\n"
-
-                batch_header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
-                    count=len(batch),
-                    review_instruction=cfg.REVIEW_INSTRUCTION,
-                )
-
-                batch_input_guidance = detect_input_guidance(batch)
-                if batch_input_guidance and cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION:
-                    batch_header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
-                        input_guidance=batch_input_guidance,
-                    )
-
                 batch_refs = _build_batch_references(
                     batch, glossary_entries, fuzzy_results_map, dict_stores, merged_context
                 )
-                batch_shared_prefix = f"{batch_header}\n\n{batch_refs}" if batch_refs else batch_header
+                batch_shared_prefix = f"{shared_prefix}\n\n{batch_refs}" if batch_refs else shared_prefix
 
                 blocks = [batch_shared_prefix]
                 for e in batch:
@@ -534,14 +464,11 @@ def build_filter_prompt(
 
     prompts: list[str] = []
     for prefix, group_entries in groups.items():
-        info = KEY_PREFIX_PROMPTS.get(prefix, {})
-        cat_label = info.get("label", "其他")
-        effective_batch = 1 if info.get("batch_singleton") else batch_size
+        effective_batch = 1 if KEY_PREFIX_PROMPTS.get(prefix, {}).get("batch_singleton") else batch_size
 
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
             header = cfg.PROMPT_FILTER_HEADER.format(
-                cat_label=cat_label,
                 count=len(batch),
             )
             lines: list[str] = []

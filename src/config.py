@@ -94,7 +94,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     # ── prompt_templates ──
     pt = l.get("prompt_templates", {})
     for key in ("review_header", "review_pr_section", "review_items_section",
-                 "review_input_device_section", "filter_header", "filter_entry_block",
+                 "cross_version_ref_section", "review_input_device_section", "filter_header", "filter_entry_block",
                  "filter_entry_suggestion", "untranslated_prompt"):
         flat[f"prompt_{key}"] = pt.get(key, [])
 
@@ -206,6 +206,7 @@ FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
 PROMPT_REVIEW_HEADER: str = _as_text(get("prompt_review_header"))
 PROMPT_REVIEW_PR_SECTION: str = _as_text(get("prompt_review_pr_section"))
 PROMPT_REVIEW_ITEMS_SECTION: str = _as_text(get("prompt_review_items_section"))
+PROMPT_CROSS_VERSION_REF_SECTION: str = _as_text(get("prompt_cross_version_ref_section"))
 PROMPT_REVIEW_INPUT_DEVICE_SECTION: str = _as_text(get("prompt_review_input_device_section"))
 PROMPT_FILTER_HEADER: str = _as_text(get("prompt_filter_header"))
 PROMPT_FILTER_ENTRY_BLOCK: str = _as_text(get("prompt_filter_entry_block"))

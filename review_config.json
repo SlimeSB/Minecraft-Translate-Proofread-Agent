@@ -91,7 +91,7 @@
     },
     "prompt_templates": {
       "review_header": [
-        "{header_prefix}。当前类型: {cat_label}（{prefix}*）。",
+        "{header_prefix}。",
         "",
         "## 审查重点",
         "{focus_notes}",
@@ -109,6 +109,10 @@
         "## 待审条目 ({count}条)",
         "{review_instruction}"
       ],
+      "cross_version_ref_section": [
+        "",
+        "跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。"
+      ],
       "review_input_device_section": [
         "",
         "## 输入设备翻译专项指南",
@@ -116,7 +120,7 @@
       ],
       "filter_header": [
         "## 任务",
-        "以下是自动检查和LLM审校后汇总的翻译问题列表（{cat_label}）。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。",
+        "以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。",
         "",
         "## 问题列表 ({count}条)"
       ],
