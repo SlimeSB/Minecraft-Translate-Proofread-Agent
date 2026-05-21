@@ -129,6 +129,8 @@ async def _batch_process(
     label: str,
     source: str,
     error_return_fn=None,
+    *,
+    warmup_first: bool = False,
 ) -> list[VerdictDict]:
     """共享异步批处理逻辑。
     :param prompts: 待处理的 prompt 列表
@@ -137,31 +139,48 @@ async def _batch_process(
     :param label: 日志中的批次标签（如 "LLM"）
     :param source: verdict 的 source 字段值
     :param error_return_fn: 最终失败时的回调，签名为 (i) -> list[VerdictDict]
+    :param warmup_first: 是否先串行发送首条请求暖场（预热 KV cache），再并发处理剩余
     """
+    if not prompts:
+        return []
     max_retries = cfg.get("llm_review_retries", 2)
     sem = asyncio.Semaphore(max_workers)
 
-    async def _process(i: int, prompt: str) -> list[VerdictDict]:
+    async def _process(i: int, prompt: str, total: int) -> list[VerdictDict]:
         try:
             response = await _llm_call_with_retry(
-                prompt, llm_call, sem, label, i, len(prompts), max_retries,
+                prompt, llm_call, sem, label, i, total, max_retries,
             )
             parsed = parse_review_response(response)
-            warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts")
+            warn(f"  [{label}] 批次 {i+1}/{total} ({len(prompt)//4} tokens) → {len(parsed)} verdicts")
             for v in parsed:
                 v.setdefault("source", source)
                 _normalize_verdict(v)
             return parsed
         except Exception as e:
-            warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ✗ {e}")
+            warn(f"  [{label}] 批次 {i+1}/{total} ✗ {e}")
             if error_return_fn:
                 return error_return_fn(i)
             return []
 
-    tasks = [_process(i, p) for i, p in enumerate(prompts)]
     results: list[VerdictDict] = []
-    for coro in asyncio.as_completed(tasks):
-        results.extend(await coro)
+    if warmup_first and len(prompts) > 1:
+        first = prompts[0]
+        info(f"  [{label}] 暖场请求 ({len(first)//4} tokens) → 预热 KV cache")
+        try:
+            result = await _process(0, first, len(prompts))
+            results.extend(result)
+        except Exception:
+            pass
+        prompts = prompts[1:]
+        start_idx = 1
+    else:
+        start_idx = 0
+
+    if prompts:
+        tasks = [_process(i + start_idx, p, len(prompts) + start_idx) for i, p in enumerate(prompts)]
+        for coro in asyncio.as_completed(tasks):
+            results.extend(await coro)
     return results
 
 
@@ -210,7 +229,8 @@ class LLMBridge:
             }]
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "LLM", "llm_review", _error_return))
+                                          "LLM", "llm_review", _error_return,
+                                          warmup_first=True))
 
     # ── 未翻译审校 ────────────────────────────────────
 
@@ -228,7 +248,8 @@ class LLMBridge:
         prompts = build_untranslated_prompt(entries, batch_size)
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "未翻译", "untranslated_review"))
+                                          "未翻译", "untranslated_review",
+                                          warmup_first=True))
 
     # ── 最终过滤 ──────────────────────────────────────
 
@@ -248,7 +269,7 @@ class LLMBridge:
         prompts = build_filter_prompt(verdicts, batch_size)
         warn(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批")
 
-        async def _run_all() -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
+        async def _run_all(warmup_first: bool = False) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
             sem = asyncio.Semaphore(max_workers)
             discarded_keys: set[str] = set()
             discard_records: list[FilterDiscardRecord] = []
@@ -287,6 +308,19 @@ class LLMBridge:
                     return set(), [], {}, set()
 
             tasks = [_process(i, p) for i, p in enumerate(prompts)]
+            if warmup_first and len(prompts) > 1:
+                first_prompt = prompts[0]
+                info(f"  [Filter] 暖场请求 ({len(first_prompt)//4} tokens) → 预热 KV cache")
+                try:
+                    keys, records, reasons, responded = await _process(0, first_prompt)
+                    discarded_keys.update(keys)
+                    discard_records.extend(records)
+                    cleaned_reasons.update(reasons)
+                    all_responded.update(responded)
+                    remaining = prompts[1:]
+                    tasks = [_process(i + 1, p) for i, p in enumerate(remaining)]
+                except Exception:
+                    pass
             for coro in asyncio.as_completed(tasks):
                 keys, records, reasons, responded = await coro
                 discarded_keys.update(keys)
@@ -298,7 +332,7 @@ class LLMBridge:
                 warn(f"  [Filter] ⚠ LLM 遗漏 {len(missing)} 条, 保留原判: {', '.join(sorted(missing))}")
             return discarded_keys, discard_records, cleaned_reasons, missing
 
-        discarded, discard_records, cleaned_reasons, _ = asyncio.run(_run_all())
+        discarded, discard_records, cleaned_reasons, _ = asyncio.run(_run_all(warmup_first=True))
         warn(f"  最终驳回: {len(discarded)} 条, 清洗 reason: {len(cleaned_reasons)} 条")
         filtered = [v for v in verdicts if v.get("key") not in discarded]
         for v in filtered:

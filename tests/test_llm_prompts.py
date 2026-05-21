@@ -333,6 +333,14 @@ class TestBuildEntryBlock(unittest.TestCase):
         self.assertIn("FullEN0", block)
         self.assertIn("完整上下文", block)
 
+    def test_long_text_preserved_in_full(self):
+        long_old_en = "A" * 500
+        entry = {"key": "block.iron", "en": "Iron", "zh": "铁",
+                  "_change": {"old_en": long_old_en, "old_zh": "旧铁"}}
+        block = build_entry_block(entry)
+        self.assertIn(long_old_en, block)
+        self.assertIn("旧铁", block)
+
 
 class TestBuildBatchReferences(unittest.TestCase):
     def test_empty_returns_empty(self):

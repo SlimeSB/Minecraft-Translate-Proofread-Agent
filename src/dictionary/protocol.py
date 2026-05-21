@@ -59,8 +59,13 @@ def setup_fts(
         True 表示 FTS5 已启用，False 表示降级为普通索引查询。
     """
     try:
+        conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        pass
+
+    try:
         conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table} "
+            f"CREATE VIRTUAL TABLE {fts_table} "
             f"USING fts5({fts_columns}, content={content_table}, content_rowid=rowid)"
         )
         conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
@@ -69,6 +74,6 @@ def setup_fts(
         warn(f"[{label}] FTS5 创建失败 ({e})，降级为索引查询")
         try:
             conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
-        except sqlite3.OperationalError:
+        except (sqlite3.OperationalError):
             pass
     return False

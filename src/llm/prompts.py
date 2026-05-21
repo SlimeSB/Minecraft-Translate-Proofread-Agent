@@ -184,23 +184,19 @@ def build_entry_block(
     en = full_en or entry.get("en", "")
     zh = full_zh or entry.get("zh", "")
     lines = [f"key: `{key}`"]
-    is_guideme = key.startswith(GUIDEME_PREFIX)
-    if full_en:
-        en_s = en if is_guideme else en[:600]
-        zh_s = zh if is_guideme else zh[:600]
-        lines.append(f'EN (完整上下文): "{en_s}"')
-        lines.append(f'ZH (完整上下文): "{zh_s}"')
-    else:
-        en_s = en if is_guideme else en[:300]
-        zh_s = zh if is_guideme else zh[:300]
-        lines.append(f'EN: "{en_s}"')
-        lines.append(f'ZH: "{zh_s}"')
+
+    en_label = "EN (完整上下文)" if full_en else "EN"
+    zh_label = "ZH (完整上下文)" if full_en else "ZH"
+    lines.append(f'{en_label}: "{en}"')
+    lines.append(f'{zh_label}: "{zh}"')
+
     change = entry.get("_change")
     if change:
         if change.get("old_en"):
-            lines.append(f'old_en: "{change["old_en"][:300]}"')
+            lines.append(f'old_en: "{change["old_en"]}"')
         if change.get("old_zh"):
-            lines.append(f'old_zh: "{change["old_zh"][:300]}"')
+            lines.append(f'old_zh: "{change["old_zh"]}"')
+
     if auto_verdicts:
         lines.append("")
         for v in auto_verdicts:
