@@ -143,7 +143,7 @@
   },
 
   "terminology": {
-    "min_freq": 5,
+    "min_freq": 3,
     "min_consensus": 0.6,
     "max_zh_len": 40,
     "max_en_len": 60,

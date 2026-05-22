@@ -34,12 +34,36 @@ from src.tools.term_validation import is_valid_term, is_music_disc_desc
 # 公共中文提取
 # ═══════════════════════════════════════════════════════════
 
+def _find_common_substr(zh_counter: Counter, min_ratio: float) -> str | None:
+    """在所有中文译文中找到最长公共子串（任意位置），需覆盖 ≥ min_ratio 比例的译文。
+
+    例如 {"蜜蜂头套":1, "黑色绵羊头套":1, "兔兔头套":1, ...}
+    → "头套" 出现在所有译文中 → 返回 "头套"。
+    """
+    zh_values = list(zh_counter.keys())
+    if len(zh_values) < 2:
+        return None
+    total = len(zh_values)
+    min_count = total * min_ratio
+    shortest = min(zh_values, key=len)
+    for length in range(len(shortest), 1, -1):
+        seen: set[str] = set()
+        for start in range(len(shortest) - length + 1):
+            sub = shortest[start:start + length]
+            if sub in seen:
+                continue
+            seen.add(sub)
+            count = sum(1 for zh in zh_values if sub in zh)
+            if count >= min_count:
+                return sub
+    return None
+
+
 def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
     """从多个中文译文中提取公共子串，忽略离群值。
 
-    遍历每种译文，若它作为**真子串**出现在 ≥ min_ratio 比例的**其他**译文中，
-    则为公共项。自身匹配不计入。
-    返回最长的公共项，无则返回 None。
+    先尝试整条译文作为子串匹配（如 "方铅岩" 出现在 "方铅岩砖" 中），
+    失败时回退到任意位置公共子串搜索。
 
     例如 {"方铅岩":1, "方铅岩砖":2, "方铅岩台阶":1, "方前言":1}
     → "方铅岩" 出现在 "方铅岩砖" 和 "方铅岩台阶" 中（不含自身），覆盖 3/5=60% → 返回 "方铅岩"。
@@ -58,7 +82,9 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
         )
         if support / total >= min_ratio and len(zh) > len(best):
             best = zh
-    return best if best else None
+    if best:
+        return best
+    return _find_common_substr(zh_counter, min_ratio)
 
 
 # ═══════════════════════════════════════════════════════════

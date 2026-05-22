@@ -182,7 +182,11 @@ def filter_for_llm(
         if needs_llm_review(entry):
             llm_entries.append(entry)
             continue
-        if glossary and not _is_glossary_covered(entry.get("en", ""), entry.get("zh", ""), glossary):
+        if glossary:
+            if not _is_glossary_covered(entry.get("en", ""), entry.get("zh", ""), glossary):
+                llm_entries.append(entry)
+                continue
+        else:
             llm_entries.append(entry)
             continue
         auto_pass.append(entry)
@@ -431,10 +435,7 @@ def build_review_prompt(
                         batch.append(prefix_entries[i])
                         i += 1
 
-                batch_refs = _build_batch_references(
-                    batch, glossary_entries, fuzzy_results_map, dict_stores, merged_context
-                )
-                batch_shared_prefix = f"{shared_prefix}\n\n{batch_refs}" if batch_refs else shared_prefix
+                batch_shared_prefix = shared_prefix
 
                 blocks = [batch_shared_prefix]
                 for e in batch:

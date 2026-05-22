@@ -118,11 +118,25 @@ class TestFilterForLlm(unittest.TestCase):
         llm_entries, auto_pass = filter_for_llm(entries, set())
         self.assertEqual(len(llm_entries), 1)
 
-    def test_short_text_no_flag_skipped(self):
+    def test_short_text_no_glossary_goes_to_llm(self):
         entries = [_entry("some.key", "Hello", "你好")]
         llm_entries, auto_pass = filter_for_llm(entries, set())
+        self.assertEqual(len(llm_entries), 1)
+        self.assertEqual(len(auto_pass), 0)
+
+    def test_short_text_glossary_covered_auto_pass(self):
+        entries = [_entry("some.key", "Hello World", "你好世界")]
+        glossary = [{"en": "Hello", "zh": "你好"}, {"en": "World", "zh": "世界"}]
+        llm_entries, auto_pass = filter_for_llm(entries, set(), glossary)
         self.assertEqual(len(llm_entries), 0)
         self.assertEqual(len(auto_pass), 1)
+
+    def test_short_text_glossary_not_covered_goes_to_llm(self):
+        entries = [_entry("some.key", "Hello World", "你好世界")]
+        glossary = [{"en": "Hello", "zh": "你好"}]
+        llm_entries, auto_pass = filter_for_llm(entries, set(), glossary)
+        self.assertEqual(len(llm_entries), 1)
+        self.assertEqual(len(auto_pass), 0)
 
     def test_mixed_scenarios(self):
         entries = [
@@ -132,9 +146,8 @@ class TestFilterForLlm(unittest.TestCase):
         ]
         auto_flagged = {"flagged.key"}
         llm_entries, auto_pass = filter_for_llm(entries, auto_flagged)
-        self.assertEqual(len(llm_entries), 2)
-        self.assertEqual(len(auto_pass), 1)
-        self.assertEqual(auto_pass[0]["key"], "short.key")
+        self.assertEqual(len(llm_entries), 3)
+        self.assertEqual(len(auto_pass), 0)
 
     def test_needs_llm_review_desc_suffix(self):
         self.assertTrue(needs_llm_review(_entry("item.desc", "Desc", "描述")))
