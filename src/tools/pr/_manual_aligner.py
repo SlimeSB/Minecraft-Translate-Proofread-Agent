@@ -3,6 +3,7 @@
 自动从 PR 文件列表中识别任意格式的文档文件并完成 en↔zh 配对。
 """
 import json
+import re
 from typing import Any
 
 from src import config as cfg
@@ -100,22 +101,88 @@ def _build_agent_prompt(files: list[dict[str, Any]]) -> str:
     return prompt.format(file_list=file_list)
 
 
+def _parse_agent_response(response: str) -> list[dict[str, Any]] | None:
+    """解析 Agent 响应，支持 markdown 代码块包裹。返回 None 表示解析失败。"""
+    text = response.strip()
+    # 1. 直接解析
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            return data
+    except json.JSONDecodeError:
+        pass
+    # 2. 剥离 markdown 代码块
+    m = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(1).strip())
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    # 3. 正则提取 JSON 数组
+    m = re.search(r"\[.*]", text, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group())
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+_RETRY_PROMPT_SUFFIX = [
+    "",
+    "上一轮你输出了以下内容，但 JSON 解析失败：",
+    "错误: {error}",
+    "上一轮输出:",
+    "{previous}",
+    "",
+    "请修正格式，仅输出 JSON 数组，不要输出 markdown 代码块或其他说明。",
+]
+
+
 def _agent_discover(
     unmatched_files: list[dict[str, Any]],
     llm_call_fn,
+    max_retries: int = 2,
 ) -> list[dict[str, Any]]:
-    """Agent 兜底: 调用 LLM 从未匹配文件中发现文档配对。"""
+    """Agent 兜底: 调用 LLM 从未匹配文件中发现文档配对。
+
+    解析失败时带错误上下文重试。
+    """
     if not unmatched_files:
         return []
 
     prompt = _build_agent_prompt(unmatched_files)
-    try:
-        response = llm_call_fn(prompt)
-        parsed = json.loads(response) if isinstance(response, str) else response
-        if isinstance(parsed, list):
-            return parsed
-    except Exception as e:
-        warn(f"  [文档发现·Agent] 调用失败: {e}")
+    response = ""
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm_call_fn(prompt)
+            parsed = _parse_agent_response(response)
+            if parsed is not None:
+                return parsed
+        except Exception as e:
+            warn(f"  [文档发现·Agent] 第 {attempt} 次调用失败: {e}")
+            if attempt == max_retries:
+                return []
+            continue
+
+        if attempt < max_retries:
+            # 解析失败，构建带错误上下文的 retry prompt
+            error_msg = "响应不是有效的 JSON 数组"
+            try:
+                json.loads(response)
+            except json.JSONDecodeError as je:
+                error_msg = str(je)
+            retry_suffix = "\n".join(_RETRY_PROMPT_SUFFIX).format(
+                error=error_msg, previous=response[:2000],
+            )
+            prompt = prompt + retry_suffix
+            warn(f"  [文档发现·Agent] JSON 解析失败，重试第 {attempt + 1} 次: {error_msg[:80]}")
+
     return []
 
 
