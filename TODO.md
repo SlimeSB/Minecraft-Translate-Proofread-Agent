@@ -23,6 +23,7 @@
 - [ ] 先理解、再翻译/校对
 - [ ] 逐步启用 pyright 关键检查项（当前关闭 13 项：`reportAssignmentType`, `reportReturnType`, `reportAttributeAccessIssue`, `reportOptionalMemberAccess` 等；✅ `reportArgumentType` 已修）（工程太大，延期）
 - [ ] `storage/database.py`: 从 `Mapping[str, Any]` 迁移到 TypedDict（SQLite 行数据形状多变，建议从简单边界开始）（工程太大，延期）
+- [ ] **引入 jieba 分词增强 `_extract_common_zh`** — 将字级别子串匹配升级为 token 级别共享检测，解决公共中文词汇出现在不同位置时无法提取的问题（如 "铁锭"/"铜锭" 的公共 token "锭"）。需评估：jieba 默认词典对 Minecraft 材质词的切分准确度、自定义词典维护成本。
 
 ### 测试
 
