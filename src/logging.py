@@ -22,6 +22,16 @@ _SETUP_DONE = False
 _LOCK = threading.Lock()
 
 
+def _safe_print(msg: str, file=sys.stdout) -> None:
+    """GBK 安全打印，Windows 终端 emoji 兼容。"""
+    try:
+        print(msg, file=file)
+    except UnicodeEncodeError:
+        out = file.buffer if hasattr(file, "buffer") else sys.stdout.buffer
+        out.write(msg.encode("utf-8", errors="replace") + b"\n")
+        out.flush()
+
+
 def _setup_file_log() -> None:
     global _SETUP_DONE
     if _SETUP_DONE:
@@ -48,17 +58,17 @@ def log_to_file(level: str, msg: str) -> None:
 
 
 def info(msg: str) -> None:
-    print(msg)
+    _safe_print(msg)
     _write_file("INFO", msg)
 
 
 def warn(msg: str) -> None:
-    print(msg, file=sys.stderr)
+    _safe_print(msg, file=sys.stderr)
     _write_file("WARN", msg)
 
 
 def error(msg: str) -> None:
-    print(msg, file=sys.stderr)
+    _safe_print(msg, file=sys.stderr)
     _write_file("ERROR", msg)
 
 

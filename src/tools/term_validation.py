@@ -5,7 +5,8 @@
     is_valid_term(term: str) -> bool — 统一术语有效性检查
 """
 import re
-import sys
+
+from src.logging import warn
 
 _STOP_WORDS_CACHE: set[str] | None = None
 
@@ -18,7 +19,7 @@ def _load_stop_words() -> set[str]:
         from src import config as cfg
         _STOP_WORDS_CACHE = {w.lower() for w in cfg.get("term_blacklist", []) if isinstance(w, str)}
     except ImportError:
-        print("[term_validation] 无法加载配置，停用词为空", file=sys.stderr)
+        warn("[term_validation] 无法加载配置，停用词为空")
         _STOP_WORDS_CACHE = set()
     return _STOP_WORDS_CACHE
 

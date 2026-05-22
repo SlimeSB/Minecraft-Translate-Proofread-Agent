@@ -124,8 +124,9 @@ class TestGetWithMock(unittest.TestCase):
             self.assertEqual(cfg.get("term_min_freq", 5), 3)
             self.assertEqual(cfg.get("nonexistent", 99), 99)
 
+    @patch("src.config.warn")
     @patch("src.config._cfg_cache", None)
-    def test_get_file_not_found_uses_defaults(self):
+    def test_get_file_not_found_uses_defaults(self, mock_warn):
         mock_open = unittest.mock.mock_open()
         mock_open.side_effect = FileNotFoundError
         with patch("builtins.open", mock_open):

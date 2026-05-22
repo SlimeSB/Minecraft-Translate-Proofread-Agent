@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from src.logging import info, warn
+
 _USER_AGENT = "Mozilla/5.0 (compatible; MinecraftTranslateProofreadAgent/1.0)"  # Hardcoded; acceptable for GitHub API
 _TOKEN_WARNED = False  # Module-level flag prevents repeated warnings; acceptable
 
@@ -13,9 +15,9 @@ def _token_warning():
     global _TOKEN_WARNED
     if not _TOKEN_WARNED:
         _TOKEN_WARNED = True
-        print("  ⚠ GITHUB_TOKEN 无效，已降级为未认证请求（限流 60 req/hr）")
-        print("  建议申请 Personal Access Token（classic）填入 .env 的 GITHUB_TOKEN")
-        print("  注意：仓库管理要求 token 有效期 ≤ 365 天，过期后需重新生成")
+        warn("  ⚠ GITHUB_TOKEN 无效，已降级为未认证请求（限流 60 req/hr）")
+        warn("  建议申请 Personal Access Token（classic）填入 .env 的 GITHUB_TOKEN")
+        warn("  注意：仓库管理要求 token 有效期 ≤ 365 天，过期后需重新生成")
 
 
 def build_headers(token: str = "") -> dict[str, str]:
@@ -72,7 +74,7 @@ def raw_get(url: str, token: str = "", retries: int = 3) -> str:
                 last_err = e
                 if attempt < retries:
                     wait = attempt * 2
-                    print(f"  [重试 {attempt}/{retries}] {url.split('/')[-1]} 超时，{wait}s 后重试...")
+                    warn(f"  [重试 {attempt}/{retries}] {url.split('/')[-1]} 超时，{wait}s 后重试...")
                     time.sleep(wait)
         raise RuntimeError(f"Raw 文件拉取失败（重试{retries}次）: {last_err}")
 

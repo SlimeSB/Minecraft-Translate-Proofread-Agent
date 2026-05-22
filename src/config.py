@@ -5,8 +5,9 @@ review_config.json 使用嵌套分组结构，
 """
 import json
 import re
-import sys
 from typing import Any
+
+from src.logging import warn
 
 CONFIG_PATH = "review_config.json"
 
@@ -47,7 +48,7 @@ def _load() -> dict[str, Any]:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 raw = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"[config] 配置加载失败: {e}", file=sys.stderr)
+            warn(f"[config] 配置加载失败: {e}")
             raw = {}
         _validate(raw)
         _cfg_cache = _flatten(raw)
@@ -57,10 +58,7 @@ def _load() -> dict[str, Any]:
 def _validate(raw: dict[str, Any]) -> None:
     unknown = set(raw) - _TOP_GROUPS
     if unknown:
-        print(
-            f"[config] 警告: review_config.json 中有未知顶层分组将被忽略: {', '.join(sorted(unknown))}",
-            file=sys.stderr,
-        )
+        warn(f"[config] 警告: review_config.json 中有未知顶层分组将被忽略: {', '.join(sorted(unknown))}")
 
 
 def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
@@ -113,11 +111,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
 
     _unreferenced = set(pt) - _PROMPT_WHITELIST
     if _unreferenced:
-        print(
-            f"[config] 警告: review_config.json 的 prompt_templates 中有未识别的 key，将被丢弃: "
-            f"{', '.join(sorted(_unreferenced))}",
-            file=sys.stderr,
-        )
+        warn(f"[config] 警告: review_config.json 的 prompt_templates 中有未识别的 key，将被丢弃: {', '.join(sorted(_unreferenced))}")
 
     # ── terminology ──
     t = raw.get("terminology", {})

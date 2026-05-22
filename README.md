@@ -5,7 +5,7 @@
 
 Minecraft 模组简中翻译自动化审校工具。对照原文审查译文，自动检测格式错误、术语不一致、语义偏差等问题，并生成结构化审校报告。
 
-支持三种原文格式：**JSON** (`en_us.json`)、**Lang** (`en_us.lang`, `key=value`)、**GuideME** (`ae2guide/*.md`)。
+支持三种原文格式：**JSON** (`en_us.json`)、**Lang** (`en_us.lang`, `key=value`)、**手册文档** (`ae2guide/*.md` 等)。
 
 ## 特性
 
@@ -15,7 +15,7 @@ Minecraft 模组简中翻译自动化审校工具。对照原文审查译文，�
 - **程序化格式检查** — 10 项确定性检查（占位符、颜色码、tellraw JSON、标点规范、省略号等），零 LLM 成本
 - **LLM 启发式审校** — 仅将歧义/语义问题提交 LLM，大幅降低 token 消耗
 - **模糊搜索翻译记忆** — SQLite FTS5 + Levenshtein 发现相似原文的不同翻译
-- **PR 模式** — 直接对 GitHub PR diff 做审校，支持 JSON/Lang/GuideME 三种文件类型；术语从 PR 内完整文件提取（非仅 diff）
+- **PR 模式** — 直接对 GitHub PR diff 做审校，支持 JSON/Lang/手册文档三种文件类型；术语从 PR 内完整文件提取（非仅 diff）
 - **PR 多版本审校** — 跨版本差异检测，同一模组多版本 PR 自动比对新增/修改 key，生成版本间对比报告
 - **术语表 LLM 校验** — 程序提取术语后，取 1 最长 + 4 最短上下文交 LLM 复核修正
 - **原版 key 碰撞检测** — 从 `data/Minecraft.db`（含版本区间）检测模组是否覆盖原版 key
@@ -211,7 +211,7 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │           ├── __init__.py        #   编排器
 │           ├── _http.py           #   GitHub API 拉取
 │           ├── _lang.py           #   JSON 语言文件对齐
-│           ├── _guideme.py        #   GuideME 文档对齐
+│           ├── _manual_aligner.py #   通用手册文档对齐
 │           └── cross_version_diff.py  # 跨版本差异检测
 ├── tests/
 │   ├── fixtures/                 # 测试数据

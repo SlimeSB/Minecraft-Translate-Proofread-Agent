@@ -1,6 +1,6 @@
 # 开发文档
 
-> 源码总计约 5964 行 Python（45 个源文件），测试约 3711 行（22 个测试模块，413 个用例）。
+> 源码总计约 6003 行 Python（46 个源文件），测试约 3752 行（23 个测试模块，421 个用例）。
 
 ## 架构概览
 
@@ -60,7 +60,7 @@ run.py --pr 5979
        │
        ├─ pr/_http.py          # GitHub API / raw 拉取
        ├─ pr/_lang.py          # JSON 语言文件配对对齐
-       ├─ pr/_guideme.py       # GuideME 文档配对对齐
+        ├─ pr/_manual_aligner.py # 通用手册文档对齐
        └─ pr/cross_version_diff.py  # 跨版本差异检测
 ```
 
@@ -125,7 +125,7 @@ class PipelineContext:
 
 ### 1. `src/pipeline/pipeline.py` — 薄编排器
 
-`ReviewPipeline` 只负责构建 `PipelineContext` 并按顺序调用各 Phase 函数：
+`ReviewPipeline` 只负责构建 `PipelineContext` 并按顺序调用各 Phase 函数（123 行）：
 
 ```python
 class ReviewPipeline:
@@ -136,8 +136,8 @@ class ReviewPipeline:
         run_phase1(self.ctx)    # 键对齐 / PR 数据加载
         run_phase2(self.ctx)    # 术语提取 + LLM校验
         run_phase3a(self.ctx)   # 格式检查
-        run_phase3c(self.ctx)   # LLM 审校（含筛选 + 模糊搜索 + 外部词典）
-        _save_merged_verdicts(self.ctx)
+        run_phase3c(self.ctx)   # LLM 审校（含筛选 + Phase 3b 模糊搜索 + 外部词典）
+        _save_merged_verdicts(self.ctx)  # 合并判决后写入 DB
         run_phase4(self.ctx)    # 最终过滤
         run_phase5(self.ctx)    # 报告生成
 ```
@@ -148,9 +148,9 @@ class ReviewPipeline:
 
 | 文件 | 职责 |
 |------|------|
-| `src/llm/client.py` (127 行) | `create_openai_llm_call()` — OpenAI 兼容客户端 + 指数退避重试 + 日志滚动；`label` 参数标记调用来源，日志带 `[label#N] [id=uuid]` 唯一标识 |
-| `src/llm/prompts.py` (489 行) | `build_review_prompt()` — 批量参考信息架构，合并模糊匹配、术语表、外部词典、原版术语引用；`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。 |
-| `src/llm/bridge.py` (403 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校 + `warmup_first` 首条串行预热 KV cache）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 统一 JSON 解析入口（4层容错）。`interactive_entry_review()` — 交互模式。 |
+| `src/llm/client.py` (95 行) | `create_openai_llm_call()` — OpenAI 兼容客户端 + 指数退避重试 + 日志滚动；`label` 参数标记调用来源，日志带 `[label#N] [id=uuid8]` 唯一标识 |
+| `src/llm/prompts.py` (395 行) | `build_review_prompt()` — 批量参考信息架构，合并模糊匹配、术语表、外部词典、原版术语引用；`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。 |
+| `src/llm/bridge.py` (369 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校 + `warmup_first` 首条串行预热 KV cache）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 统一 JSON 解析入口（4层容错）。`interactive_entry_review()` — 交互模式。 |
 | `src/dictionary/external.py` (173 行) | `ExternalDictStore` — 按需 SQLite 查询社区词典，`lookup()` 按英文单词匹配历史翻译并注入 LLM 提示词。实现 `DictStore` Protocol 统一接口。 |
 | `src/dictionary/vanilla_terms.py` (162 行) | `VanillaTermsStore` — 查询 `data/vanilla_terms.db` 获取精筛原版术语，支持 scope 预过滤和 label 标注。实现 `DictStore` Protocol。 |
 
@@ -238,7 +238,7 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 
 ### 7. `src/config.py` — 配置加载
 
-从 `review_config.json` 读取所有配置，新增键需加入 `_KNOWN_KEYS` 否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`GUIDEME_PREFIX`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES`、`DICT_STORE_HEADERS_TO_STRIP` 等。
+从 `review_config.json` 读取所有配置，新增配置 key 需加入 `_KNOWN_KEYS`（已更名 `_TOP_GROUPS` + `_PROMPT_WHITELIST`）否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`MANUAL_FORMATS`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES`、`DICT_STORE_HEADERS_TO_STRIP` 等。
 
 **提示词模板化**：`fc0d336` 将所有硬编码提示词片段改为配置模板，拆分出 30+ 模板常量（`review_full_header`、`reference_section`、`glossary_section`、`fuzzy_section`、`entry_key_line` 等），各模板在 `review_config.json` 的 `prompt_templates` 节配置。`build_review_prompt()` 等函数不再拼接字符串，而是填充 `{变量}` 占位符组装模板。
 
@@ -248,14 +248,16 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 src/tools/pr/
 ├── __init__.py              # run_pr_aligner() 编排器 (268 行)
 ├── _http.py                 # GitHub API 拉取 + raw文件获取
+├── _manual_aligner.py       # 通用手册文档对齐（启发式+Agent兜底）
 ├── _lang.py                 # JSON语言文件: match() + group_mod_files() + align()
-├── _guideme.py              # GuideME文档: match() + align()
 └── cross_version_diff.py    # 跨版本差异检测: compute_cross_version_diff()
 ```
 
 **添加新对齐器**：在 `pr/` 下新建 `_xxx.py`，实现 `match(path) → dict|None` 和 `align(...)` 函数，然后在 `__init__.py` 的 `run_pr_aligner()` 中调用。
 
-**GuideME 对齐规则**：
+**手册文档对齐**（如 `ae2guide` 格式）：
+- 由通用 `_manual_aligner.py` 统一处理（取代旧专有 GuideME 模块）
+- 两阶段发现：启发式路径匹配 + Agent 兜底解析
 - 路径匹配：`ae2guide/_zh_cn/xxx.md` ↔ `ae2guide/xxx.md`
 - 以相对路径作为 entry key（如 `ae2guide:crazyguide/ampere_meter.md`）
 - 整篇 `.md` 文件内容作为 `en`/`zh` 值
@@ -340,7 +342,7 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 ### Phase 3c — LLM 审校
 
-**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。GuideME 条目（配置常量 `GUIDEME_PREFIX`，默认 `"ae2guide:"`）逐条发送（文档太长保质量），其余 50 条/批（`review_batch_size` 配置，可通过 `--batch-size` 覆盖）。
+**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。手册文档条目（如 `ae2guide:`）逐条单独发送（文档太长保质量），其余 50 条/批（`review_batch_size` 配置，可通过 `--batch-size` 覆盖）。
 
 **函数拆分**：`run_phase3c()` 拆为 `_filter_and_prepare()`（筛选+Phase 3b 模糊搜索）和 `_review_entries()`（主线/未翻译审校），提升可读性。
 
@@ -356,7 +358,7 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → 改判 PASS**，**保留 → 维持原 verdict**，全部标记 `filtered=1`。
 
-`filter_cache` 表基于 `blake2b(key + verdict + zh[:150] + reason[:200])` → 16字节 (128-bit) hex hash，已判条目下次跳过 LLM 调用。GuideME 条目同样逐条过滤。
+`filter_cache` 表基于 `blake2b(key + verdict + zh[:150] + reason[:200])` → 16字节 (128-bit) hex hash，已判条目下次跳过 LLM 调用。手册文档条目同样逐条过滤。
 
 ### Phase 5 — 报告生成
 
@@ -394,7 +396,7 @@ python -m venv venv
 pip install openai pytest pyright
 cp .env.example .env
 
-# 运行测试 (413 tests, 22 个模块)
+# 运行测试 (421 tests, 23 个模块)
 pytest tests/ -v
 
 # 类型检查
