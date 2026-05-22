@@ -238,7 +238,9 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 
 ### 7. `src/config.py` — 配置加载
 
-从 `review_config.json` 读取所有配置，新增键需加入 `_KNOWN_KEYS` 否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`GUIDEME_PREFIX`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES` 等。
+从 `review_config.json` 读取所有配置，新增键需加入 `_KNOWN_KEYS` 否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`GUIDEME_PREFIX`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES`、`DICT_STORE_HEADERS_TO_STRIP` 等。
+
+**提示词模板化**：`fc0d336` 将所有硬编码提示词片段改为配置模板，拆分出 30+ 模板常量（`review_full_header`、`reference_section`、`glossary_section`、`fuzzy_section`、`entry_key_line` 等），各模板在 `review_config.json` 的 `prompt_templates` 节配置。`build_review_prompt()` 等函数不再拼接字符串，而是填充 `{变量}` 占位符组装模板。
 
 ### 8. `src/tools/pr/` — PR 对齐（模块化架构）
 
@@ -315,6 +317,8 @@ JSON/Lang文件
 ### Phase 2 — 术语提取与一致性检查
 
 **N-gram 提取**：去 HTML/MC格式码/printf占位符 → 小写 → 过滤 60+ stop words（`term_validation.STOP_WORDS`，合并自四处独立逻辑）→ 产 unigram/bigram/trigram/全短语。`TERM_MIN_FREQ` 和 `TERM_MAX_NGRAM` 从配置读取。
+
+**公共中文提取**：`_extract_common_zh()` 先尝试整条译文作为子串匹配（如 "方铅岩" 出现在 "方铅岩砖" 中），失败时回退到 `_find_common_substr()` 搜索任意位置最长公共子串（如 "头套" 出现在 "蜜蜂头套/黑色绵羊头套/兔兔头套" 中），需覆盖 ≥ `min_ratio` 比例的译文。
 
 **词形归并（2 级）**：规则分桶 → inflection 名词单数归一化归并。`inflection.singularize()` 将每个词的复数形式归一为单数，按归一化后形式合并 morphological variants（如 swords→sword, ingots→ingot, wolves→wolf）。受 **token 真子集守卫** 保护，阻止多词短语被吞入单词（如 `"upgrade adds"` → `"upgrade"`）。不再需要 `LemmaCache`、`fuzzy_cluster` 或 LLM 归并。
 
@@ -416,7 +420,7 @@ GitHub Actions (`.github/workflows/test.yml`): 每次 push/PR 在 Python 3.11/3.
 
 所有词典存储实现 `DictStore` Protocol 统一接口（`protocol.py`），通过 `collect_hints()` 函数批量收集各词典的翻译参考并注入 LLM 提示词。
 
-- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。查无结果时通过 `inflection.singularize()` 做词形回退（复数→单数）再查。
+- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。查无结果时通过 `inflection.singularize()` 做词形回退（复数→单数）再查（替代旧的 `lemma_cache.json` 查表逻辑）。
 - `VanillaTermsStore` — 查询 `data/vanilla_terms.db`，支持 scope 预过滤和 label 标注，精筛原版术语参考。
 - `MinecraftDictStore` — 历史遗留，查询 `data/Minecraft.db` 原版翻译，已由 VanillaTermsStore 替代。
 

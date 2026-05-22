@@ -11,7 +11,7 @@ Minecraft 模组简中翻译自动化审校工具。对照原文审查译文，�
 
 - **键对齐** — 自动匹配中英文键，检测缺失/多余/疑似未翻译条目
 - **多格式支持** — JSON、Lang（`key=value`）、GuideME 文档全部覆盖
-- **术语提取与词库构建** — N-gram 提取 + 词形归并（规则/缓存/模糊/LLM 四级）→ 自动构建术语表并一致性检查；token 真子集守卫防止多词短语被吞入单词
+- **术语提取与词库构建** — N-gram 提取 + 词形归并（规则分桶 → inflection 名词单数归一化归并）→ 自动构建术语表并一致性检查；token 真子集守卫防止多词短语被吞入单词
 - **程序化格式检查** — 10 项确定性检查（占位符、颜色码、tellraw JSON、标点规范、省略号等），零 LLM 成本
 - **LLM 启发式审校** — 仅将歧义/语义问题提交 LLM，大幅降低 token 消耗
 - **模糊搜索翻译记忆** — SQLite FTS5 + Levenshtein 发现相似原文的不同翻译
@@ -186,11 +186,13 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── checkers/
 │   │   ├── format_checker.py      # 全自动格式验证
 │   │   ├── terminology_builder.py # 术语提取 & 一致性检查
-│   │   ├── lemma_merge.py         # 词形归并逻辑
-│   │   └── lemma_cache.py         # 词形缓存
+│   │   └── lemma_merge.py         # 词形归并（规则分桶 → inflection）
 │   ├── dictionary/
 │   │   ├── __init__.py
-│   │   └── external.py            # 外部词典加载与查询
+│   │   ├── protocol.py            # DictStore 统一接口
+│   │   ├── external.py            # 外部社区词典加载与查询
+│   │   ├── vanilla_terms.py       # 原版精筛术语参考
+│   │   └── minecraft_dict.py      # 原版翻译（已由 vanilla_terms 替代）
 │   ├── llm/
 │   │   ├── __init__.py            # re-export 层
 │   │   ├── client.py              # OpenAI 客户端工厂 + 日志/重试
