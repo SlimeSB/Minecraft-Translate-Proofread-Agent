@@ -46,8 +46,6 @@ class TestFlatten(unittest.TestCase):
             "default_review_focus": "accuracy",
             "review_instruction": ["Check 1", "Check 2"],
             "review_principles": ["Be concise"],
-            "keyboard_guidance": "keyboard tips",
-            "mouse_guidance": "mouse tips",
             "filter": {
                 "system_prompt": "Filter prompt",
                 "instruction": ["Filter instruction"]

@@ -78,7 +78,7 @@ def main() -> None:
         _ensure_external_dict(args)
 
     # ── PR 对齐 ──
-    pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir)
+    pr_alignment = _load_pr_alignment(args, is_pr, is_pr_alignment, output_dir, llm_call_fn=llm_call)
 
     # ── 运行流水线 ──
     _start = time.time()
@@ -243,7 +243,7 @@ def _run_filter_only(args, output_dir_str: str) -> None:
     run_phase5(ctx)
 
 
-def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str) -> PRAlignmentWrapper | None:
+def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str, llm_call_fn=None) -> PRAlignmentWrapper | None:
     if is_pr_alignment:
         safe_print(f"[run.py] 加载 PR 对齐数据: {args.pr_alignment}")
         with open(args.pr_alignment, "r", encoding="utf-8") as f:
@@ -260,6 +260,7 @@ def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str
             pr=args.pr,
             output_dir=output_dir,
             token=github_token,
+            llm_call_fn=llm_call_fn,
         )
         with open(align_output, "r", encoding="utf-8") as f:
             return json.load(f)

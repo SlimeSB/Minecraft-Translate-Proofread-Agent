@@ -155,10 +155,18 @@ def _agent_discover(
     if not unmatched_files:
         return []
 
-    prompt = _build_agent_prompt(unmatched_files)
+    base_prompt = _build_agent_prompt(unmatched_files)
     response = ""
 
     for attempt in range(1, max_retries + 1):
+        if attempt == 1:
+            prompt = base_prompt
+        else:
+            retry_suffix = "\n".join(_RETRY_PROMPT_SUFFIX).format(
+                error=error_msg, previous=response[:2000],
+            )
+            prompt = base_prompt + retry_suffix
+
         try:
             response = llm_call_fn(prompt)
             parsed = _parse_agent_response(response)
@@ -171,16 +179,11 @@ def _agent_discover(
             continue
 
         if attempt < max_retries:
-            # 解析失败，构建带错误上下文的 retry prompt
             error_msg = "响应不是有效的 JSON 数组"
             try:
                 json.loads(response)
             except json.JSONDecodeError as je:
                 error_msg = str(je)
-            retry_suffix = "\n".join(_RETRY_PROMPT_SUFFIX).format(
-                error=error_msg, previous=response[:2000],
-            )
-            prompt = prompt + retry_suffix
             warn(f"  [文档发现·Agent] JSON 解析失败，重试第 {attempt + 1} 次: {error_msg[:80]}")
 
     return []
@@ -235,7 +238,24 @@ def _build_manual_entries(
             warnings.append({"key": rel_path, "type": "fetch_error", "message": str(e)})
             continue
 
+        old_en = ""
+        old_zh = ""
+        try:
+            old_en = raw_get_fn(f"{raw_base}/{en_path}", token)
+        except RuntimeError:
+            pass
+        try:
+            old_zh = raw_get_fn(f"{raw_base}/{zh_path}", token)
+        except RuntimeError:
+            pass
+
         key = f"{guide_dir}:{rel_path}"
+        review_type = "normal"
+        if old_en and old_en != new_en:
+            review_type = "modified"
+        if not old_en:
+            review_type = "added"
+
         entry: dict[str, Any] = {
             "key": key,
             "en": new_en,
@@ -245,8 +265,12 @@ def _build_manual_entries(
             "version": "",
             "file_path": en_path,
             "slug": namespace,
-            "review_type": "normal",
+            "review_type": review_type,
         }
+        if old_en:
+            entry["old_en"] = old_en
+        if old_zh:
+            entry["old_zh"] = old_zh
         entries.append(entry)
 
     return entries, warnings

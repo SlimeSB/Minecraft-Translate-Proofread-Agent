@@ -64,55 +64,10 @@ def classify_key(key: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# 输入设备检测
-# ═══════════════════════════════════════════════════════════
-
-_RE_KEYBOARD_KEY = re.compile(r"\b(Shift|Ctrl|Alt|Tab)\b", re.IGNORECASE)
-
-_RE_MOUSE_OP = re.compile(
-    r"(?i)\b(?:left\s*click|right\s*click|left[- ]?mouse|right[- ]?mouse|"
-    r"mouse\s*button|scroll\s*wheel|drag|double[-\s]?click|"
-    r"middle\s*click|mouse\s*over|hover)\b|"
-    r"(?:左键|右键|鼠标|单击|双击|点击|拖拽|滚轮)"
-)
-
-
-def detect_input_guidance(entries: list[EntryDict]) -> str:
-    has_keyboard = False
-    has_mouse = False
-    for entry in entries:
-        en = entry.get("en", "")
-        zh = entry.get("zh", "")
-        if not has_keyboard and _RE_KEYBOARD_KEY.search(en):
-            has_keyboard = True
-        if not has_mouse and _RE_MOUSE_OP.search(en + zh):
-            has_mouse = True
-        if has_keyboard and has_mouse:
-            break
-    parts: list[str] = []
-    if has_keyboard:
-        parts.append(cfg.KEYBOARD_GUIDANCE)
-    if has_mouse:
-        parts.append(cfg.MOUSE_GUIDANCE)
-    return "\n".join(parts)
-
-
-# ═══════════════════════════════════════════════════════════
 # LLM 审校筛选器
 # ═══════════════════════════════════════════════════════════
 
-LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 _RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
-
-
-def needs_llm_review(entry: EntryDict) -> bool:
-    key = entry["key"]
-    for pattern in LLM_REQUIRED_PATTERNS:
-        if pattern in key:
-            return True
-    if len(entry.get("en", "")) > 80:
-        return True
-    return False
 
 
 def _is_glossary_covered(en: str, zh: str, glossary: list[GlossaryDict]) -> bool:
@@ -154,42 +109,21 @@ def _is_glossary_covered(en: str, zh: str, glossary: list[GlossaryDict]) -> bool
 
 def filter_for_llm(
     matched_entries: list[EntryDict],
-    auto_flagged_keys: set[str],
     glossary: list[GlossaryDict] | None = None,
 ) -> tuple[list[EntryDict], list[EntryDict]]:
     llm_entries: list[EntryDict] = []
     auto_pass: list[EntryDict] = []
-    reason_auto_flagged = 0
-    reason_llm_required = 0
-    reason_glossary_uncovered = 0
-    reason_auto_pass = 0
+    reason_glossary_covered = 0
+    reason_to_llm = 0
     for entry in matched_entries:
-        key = entry["key"]
-        if key in auto_flagged_keys:
-            llm_entries.append(entry)
-            reason_auto_flagged += 1
-            debug(f"  [筛选·入选] {key}: 自动检查标记 → 送LLM")
-            continue
-        if needs_llm_review(entry):
-            llm_entries.append(entry)
-            reason_llm_required += 1
-            reason_hint = "长文本" if len(entry.get("en", "")) > 80 else "必要前缀/.desc/.title"
-            debug(f"  [筛选·入选] {key}: LLM要求 ({reason_hint}) → 送LLM")
-            continue
-        if glossary:
-            if not _is_glossary_covered(entry.get("en", ""), entry.get("zh", ""), glossary):
-                llm_entries.append(entry)
-                reason_glossary_uncovered += 1
-                debug(f"  [筛选·入选] {key}: 术语表未覆盖 → 送LLM")
-                continue
+        if glossary and _is_glossary_covered(entry.get("en", ""), entry.get("zh", ""), glossary):
+            auto_pass.append(entry)
+            reason_glossary_covered += 1
         else:
             llm_entries.append(entry)
-            reason_glossary_uncovered += 1
-            debug(f"  [筛选·入选] {key}: 无术语表 → 送LLM")
-            continue
-        auto_pass.append(entry)
-        reason_auto_pass += 1
-    debug(f"  [筛选] 统计: 自动标记={reason_auto_flagged} LLM要求={reason_llm_required} 术语未覆盖={reason_glossary_uncovered} 自动通过={reason_auto_pass}")
+            reason_to_llm += 1
+    debug(f"  [筛选] 统计: 术语覆盖={reason_glossary_covered} → 自动通过, "
+          f"送LLM={reason_to_llm}")
     return llm_entries, auto_pass
 
 
@@ -400,8 +334,6 @@ def build_review_prompt(
         change_context=cfg.get("pr_change_context_prompt", ""),
         count=len(entries),
         review_instruction=cfg.REVIEW_INSTRUCTION,
-        keyboard_guidance=cfg.KEYBOARD_GUIDANCE,
-        mouse_guidance=cfg.MOUSE_GUIDANCE,
     )
 
     # ── 2. 参考信息随数据变动，保留原写法 ──

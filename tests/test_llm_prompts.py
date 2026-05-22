@@ -16,7 +16,6 @@ from src.llm.prompts import (
     is_manual_format,
     manual_format_label,
     merge_multipart_entries,
-    needs_llm_review,
     should_singleton,
 )
 
@@ -77,55 +76,41 @@ class TestManualFormat(unittest.TestCase):
 
 
 class TestFilterForLlm(unittest.TestCase):
-    def test_auto_flagged_entries_sent_to_llm(self):
-        entries = [_entry("some.key", "Hello", "你好")]
-        auto_flagged = {"some.key"}
-        llm_entries, auto_pass = filter_for_llm(entries, auto_flagged)
-        self.assertEqual(len(llm_entries), 1)
-        self.assertEqual(len(auto_pass), 0)
-        self.assertEqual(llm_entries[0]["key"], "some.key")
-
-    def test_long_text_sent_to_llm(self):
-        long_en = "x" * 81
-        entries = [_entry("some.key", long_en, "译文")]
-        llm_entries, auto_pass = filter_for_llm(entries, set())
-        self.assertEqual(len(llm_entries), 1)
-
-    def test_short_text_no_glossary_goes_to_llm(self):
-        entries = [_entry("some.key", "Hello", "你好")]
-        llm_entries, auto_pass = filter_for_llm(entries, set())
-        self.assertEqual(len(llm_entries), 1)
+    def test_no_glossary_all_to_llm(self):
+        entries = [
+            _entry("some.key", "Hello", "你好"),
+            _entry("other.key", "World", "世界"),
+        ]
+        llm_entries, auto_pass = filter_for_llm(entries)
+        self.assertEqual(len(llm_entries), 2)
         self.assertEqual(len(auto_pass), 0)
 
-    def test_short_text_glossary_covered_auto_pass(self):
+    def test_glossary_covered_auto_pass(self):
         entries = [_entry("some.key", "Hello World", "你好世界")]
         glossary = [{"en": "Hello", "zh": "你好"}, {"en": "World", "zh": "世界"}]
-        llm_entries, auto_pass = filter_for_llm(entries, set(), glossary)
+        llm_entries, auto_pass = filter_for_llm(entries, glossary)
         self.assertEqual(len(llm_entries), 0)
         self.assertEqual(len(auto_pass), 1)
 
-    def test_short_text_glossary_not_covered_goes_to_llm(self):
+    def test_glossary_not_covered_goes_to_llm(self):
         entries = [_entry("some.key", "Hello World", "你好世界")]
         glossary = [{"en": "Hello", "zh": "你好"}]
-        llm_entries, auto_pass = filter_for_llm(entries, set(), glossary)
+        llm_entries, auto_pass = filter_for_llm(entries, glossary)
         self.assertEqual(len(llm_entries), 1)
         self.assertEqual(len(auto_pass), 0)
 
     def test_mixed_scenarios(self):
         entries = [
-            _entry("flagged.key", "Hello", "你好"),
-            _entry("long.key", "x" * 81, "y" * 10),
-            _entry("short.key", "Hi", "嗨"),
+            _entry("fully.covered", "Hello World", "你好世界"),
+            _entry("not.covered", "Complex text", "复杂文本"),
+            _entry("short.no.gloss", "Hi", "嗨"),
         ]
-        auto_flagged = {"flagged.key"}
-        llm_entries, auto_pass = filter_for_llm(entries, auto_flagged)
-        self.assertEqual(len(llm_entries), 3)
-        self.assertEqual(len(auto_pass), 0)
+        glossary = [{"en": "Hello", "zh": "你好"}, {"en": "World", "zh": "世界"}]
+        llm_entries, auto_pass = filter_for_llm(entries, glossary)
+        self.assertEqual(len(llm_entries), 2)
+        self.assertEqual(len(auto_pass), 1)
+        self.assertEqual(auto_pass[0]["key"], "fully.covered")
 
-    def test_needs_llm_review_desc_suffix(self):
-        self.assertTrue(needs_llm_review(_entry("item.desc", "Desc", "描述")))
-        self.assertTrue(needs_llm_review(_entry("block.description", "Desc", "描述")))
-        self.assertTrue(needs_llm_review(_entry("item.flavor.title", "Title", "标题")))
 
 
 # ═══════════════════════════════════════════════════════════

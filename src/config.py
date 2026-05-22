@@ -16,6 +16,26 @@ _cfg_cache: dict[str, Any] | None = None
 # 顶层分组键
 _TOP_GROUPS = {"pipeline", "manual_formats", "llm", "terminology", "format", "pr", "_comment"}
 
+_PROMPT_WHITELIST: set[str] = {
+    "review_full_header", "filter_header", "filter_entry_block",
+    "filter_entry_suggestion", "untranslated_prompt",
+    "reference_section", "glossary_section", "fuzzy_section",
+    "dict_section", "cross_version_ref_block", "auto_check_line",
+    "entry_key_line", "entry_en_line", "entry_old_en_line",
+    "entry_old_zh_line", "entry_ref_en_line", "entry_ref_zh_line",
+    "entry_en_context_label", "entry_zh_context_label",
+    "entry_en_label", "entry_zh_label",
+    "glossary_term_line", "fuzzy_match_line",
+    "header_with_refs", "filter_entry_block_with_suggestion",
+    "filter_prompt_assembly", "untranslated_entry_block",
+    "external_dict_heading", "vanilla_terms_heading",
+    "minecraft_dict_heading", "minecraft_dict_fuzzy_label", "block_separator",
+    "term_verification_prompt", "term_verification_term_line",
+    "term_verification_context_line",
+    "external_dict_output", "minecraft_dict_header",
+    "minecraft_dict_sensitive_warning", "minecraft_dict_output",
+}
+
 # 语言文件元数据键前缀正则 — 加载 JSON 时过滤 _comment* 键
 COMMENT_KEY_PATTERN = r"^_comment"
 
@@ -80,8 +100,6 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["default_review_focus"] = l.get("default_review_focus")
     flat["review_instruction"] = l.get("review_instruction", [])
     flat["review_principles"] = l.get("review_principles", [])
-    flat["keyboard_guidance"] = l.get("keyboard_guidance")
-    flat["mouse_guidance"] = l.get("mouse_guidance")
     flat["dict_store_headers_to_strip"] = l.get("dict_store_headers_to_strip", [])
 
     filt = l.get("filter", {})
@@ -90,24 +108,16 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
 
     # ── prompt_templates ──
     pt = l.get("prompt_templates", {})
-    for key in ("review_full_header", "filter_header", "filter_entry_block",
-                 "filter_entry_suggestion", "untranslated_prompt",
-                 "reference_section", "glossary_section", "fuzzy_section",
-                 "dict_section", "cross_version_ref_block", "auto_check_line",
-                 "entry_key_line", "entry_en_line", "entry_old_en_line",
-                 "entry_old_zh_line", "entry_ref_en_line", "entry_ref_zh_line",
-                 "entry_en_context_label", "entry_zh_context_label",
-                 "entry_en_label", "entry_zh_label",
-                 "glossary_term_line", "fuzzy_match_line",
-                 "header_with_refs", "filter_entry_block_with_suggestion",
-                 "filter_prompt_assembly", "untranslated_entry_block",
-                 "external_dict_heading", "vanilla_terms_heading",
-                 "minecraft_dict_heading", "minecraft_dict_fuzzy_label", "block_separator",
-                 "term_verification_prompt", "term_verification_term_line",
-                 "term_verification_context_line",
-                 "external_dict_output", "minecraft_dict_header",
-                 "minecraft_dict_sensitive_warning", "minecraft_dict_output"):
+    for key in _PROMPT_WHITELIST:
         flat[f"prompt_{key}"] = pt.get(key, [])
+
+    _unreferenced = set(pt) - _PROMPT_WHITELIST
+    if _unreferenced:
+        print(
+            f"[config] 警告: review_config.json 的 prompt_templates 中有未识别的 key，将被丢弃: "
+            f"{', '.join(sorted(_unreferenced))}",
+            file=sys.stderr,
+        )
 
     # ── terminology ──
     t = raw.get("terminology", {})
@@ -201,8 +211,6 @@ REVIEW_SYSTEM_PROMPT: str = get("review_system_prompt")
 REVIEW_INSTRUCTION: str = _as_text(get("review_instruction"))
 REVIEW_PRINCIPLES: str = _as_text(get("review_principles"))
 REVIEW_HEADER_PREFIX: str = get("review_header_prefix")
-KEYBOARD_GUIDANCE: str = get("keyboard_guidance")
-MOUSE_GUIDANCE: str = get("mouse_guidance")
 
 FILTER_SYSTEM_PROMPT: str = get("filter_system_prompt")
 FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))

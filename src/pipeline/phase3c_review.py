@@ -29,16 +29,12 @@ def _filter_and_prepare(ctx: PipelineContext) -> tuple[list[EntryDict], list[Ent
     返回 (llm_entries, untranslated_llm, auto_pass_count)。"""
     matched = ctx.alignment.get("matched_entries", [])
 
-    auto_flagged_keys: set[str] = set()
-    for v in ctx.format_verdicts + ctx.term_verdicts:
-        auto_flagged_keys.add(v.get("key", ""))
-
     untranslated_keys: set[str] = {
         v.get("key", "") for v in ctx.format_verdicts
         if v.get("source") == SOURCE_UNTRANSLATED_REVIEW
     }
 
-    llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys, ctx.glossary)
+    llm_entries, auto_pass = filter_for_llm(matched, ctx.glossary)
 
     untranslated_llm: list[EntryDict] = []
     if untranslated_keys:

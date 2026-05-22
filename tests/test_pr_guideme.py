@@ -32,10 +32,14 @@ class TestManualAlign(unittest.TestCase):
         return f"{base}/{fp}"
 
     def test_both_found_produces_entry(self):
+        en_base_url = self._make_url(self.BASE, self.FP_EN)
+        zh_base_url = self._make_url(self.BASE, self.FP_ZH)
         en_head_url = self._make_url(self.HEAD, self.FP_EN)
         zh_head_url = self._make_url(self.HEAD, self.FP_ZH)
 
         data = {
+            en_base_url: "# EN Old",
+            zh_base_url: "# ZH Old",
             en_head_url: "# EN Content",
             zh_head_url: "# ZH 内容",
         }
@@ -51,16 +55,25 @@ class TestManualAlign(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["key"], "ae2guide:index.md")
         self.assertEqual(entries[0]["format"], "manual")
-        self.assertEqual(entries[0]["review_type"], "normal")
+        self.assertEqual(entries[0]["review_type"], "modified")
+        self.assertEqual(entries[0]["old_en"], "# EN Old")
+        self.assertEqual(entries[0]["old_zh"], "# ZH Old")
         self.assertEqual(entries[0]["file_path"], self.FP_EN)
 
     def test_nested_path(self):
         fp_en = "projects/assets/mod/1.18/mod/ae2guide/sub/dir/page.md"
         fp_zh = "projects/assets/mod/1.18/mod/ae2guide/_zh_cn/sub/dir/page.md"
+        en_base_url = self._make_url(self.BASE, fp_en)
+        zh_base_url = self._make_url(self.BASE, fp_zh)
         en_head_url = self._make_url(self.HEAD, fp_en)
         zh_head_url = self._make_url(self.HEAD, fp_zh)
 
-        data = {en_head_url: "EN", zh_head_url: "ZH"}
+        data = {
+            en_base_url: "EN Old",
+            zh_base_url: "ZH Old",
+            en_head_url: "EN",
+            zh_head_url: "ZH",
+        }
 
         def mock_get(url, _token):
             return data[url]

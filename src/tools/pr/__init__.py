@@ -239,6 +239,7 @@ def run_pr_aligner(
     pr: int,
     output_dir: str,
     token: str = "",
+    llm_call_fn=None,
 ) -> str:
     """主入口：执行 PR 对齐流程，返回输出文件路径。"""
     owner, repo_name = repo.split("/", 1)
@@ -262,6 +263,7 @@ def run_pr_aligner(
     # Step 4.5: 手册文档对齐
     guideme_entries, guideme_warnings = _align_manual_patches(
         all_changed_files, raw_base, raw_head, _http.raw_get, token,
+        llm_call_fn=llm_call_fn,
     )
     if guideme_entries:
         all_entries.extend(guideme_entries)
