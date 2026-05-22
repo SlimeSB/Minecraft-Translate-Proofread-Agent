@@ -150,7 +150,7 @@
     "consensus_min_total": 3,
     "max_ngram": 3,
     "max_keys_per_term": 20,
-    "max_keys_raw": 5,
+    "max_keys_raw": 100,
     "blacklist": [
       "the", "a", "an", "of", "to", "in", "and", "is", "it", "you",
       "this", "that", "will", "be", "can", "with", "for", "on", "are",

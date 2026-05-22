@@ -18,12 +18,10 @@ def run_phase2(ctx: PipelineContext) -> None:
             for ver, vd in g["version_data"].items():
                 for raw_key, en_val in vd["full_en"].items():
                     if not is_excluded_from_terminology(raw_key):
-                        composite_key = f"{slug}/{ver}/{raw_key}"
-                        lang_en[composite_key] = en_val
+                        lang_en[raw_key] = en_val
                 for raw_key, zh_val in vd["full_zh"].items():
                     if not is_excluded_from_terminology(raw_key):
-                        composite_key = f"{slug}/{ver}/{raw_key}"
-                        lang_zh[composite_key] = zh_val
+                        lang_zh[raw_key] = zh_val
     elif ctx.pr_mode and ctx.pr_full_en_data:
         lang_en = {k: v for k, v in ctx.pr_full_en_data.items() if not is_excluded_from_terminology(k)}
         lang_zh = {k: v for k, v in ctx.pr_full_zh_data.items() if not is_excluded_from_terminology(k)}
@@ -34,7 +32,17 @@ def run_phase2(ctx: PipelineContext) -> None:
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)
     tb.extract(min_freq=cfg.TERM_MIN_FREQ, max_ngram=cfg.TERM_MAX_NGRAM)
+    info(f"  [术语提取] unigrams={len(tb.extracted.get('unigrams',[]))}, "
+         f"bigrams={len(tb.extracted.get('bigrams',[]))}, "
+         f"trigrams={len(tb.extracted.get('trigrams',[]))}")
     tb.merge_lemmas()
+    # dump bucket size distribution
+    sizes = sorted([len(v["keys"]) for v in tb.merged.values()], reverse=True)
+    if sizes:
+        info(f"  [术语归并] bucket keys 分布: max={sizes[0]}, "
+             f"p90={sizes[len(sizes)//10] if len(sizes)>=10 else sizes[-1]}, "
+             f"median={sizes[len(sizes)//2]}, min={sizes[-1]}, "
+             f">=3 keys={sum(1 for s in sizes if s>=3)}")
     ctx.glossary = tb.build_glossary()
     if ctx.llm_call and not ctx.no_llm:
         term_hints: dict[str, str] | None = None

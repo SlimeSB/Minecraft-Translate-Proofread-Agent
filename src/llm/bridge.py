@@ -287,11 +287,12 @@ class LLMBridge:
             cleaned_reasons: dict[str, str] = {}
             all_responded: set[str] = set()
             all_input_keys: set[str] = {v.get("key", "") for v in verdicts}
+            total_prompts = len(prompts)
 
             async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
                 try:
                     response = await _llm_call_with_retry(
-                        prompt, _call, sem, "Filter", i, len(prompts), 2,
+                        prompt, _call, sem, "Filter", i, total_prompts, 2,
                     )
                     parsed = parse_review_response(response)
                     local_keys: set[str] = set()
@@ -312,14 +313,13 @@ class LLMBridge:
                             r = item.get("reason", "").strip()
                             if r:
                                 local_reasons[k] = r
-                    warn(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条")
+                    warn(f"  [Filter] 批次 {i+1}/{total_prompts} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条")
                     return local_keys, local_records, local_reasons, local_responded
                 except Exception as e:
-                    warn(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}")
+                    warn(f"  [Filter] 批次 {i+1}/{total_prompts} ✗ {e}")
                     return set(), [], {}, set()
 
-            tasks = [_process(i, p) for i, p in enumerate(prompts)]
-            if warmup_first and len(prompts) > 1:
+            if warmup_first and total_prompts > 1:
                 first_prompt = prompts[0]
                 info(f"  [Filter] 暖场请求 ({len(first_prompt)//4} tokens) → 预热 KV cache")
                 try:
@@ -329,15 +329,21 @@ class LLMBridge:
                     cleaned_reasons.update(reasons)
                     all_responded.update(responded)
                     remaining = prompts[1:]
-                    tasks = [_process(i + 1, p) for i, p in enumerate(remaining)]
                 except Exception as e:
                     warn(f"  [Filter] 暖场请求失败，继续处理剩余批次: {e}")
-            for coro in asyncio.as_completed(tasks):
-                keys, records, reasons, responded = await coro
-                discarded_keys.update(keys)
-                discard_records.extend(records)
-                cleaned_reasons.update(reasons)
-                all_responded.update(responded)
+                    remaining = prompts
+            else:
+                remaining = prompts
+
+            if remaining:
+                start_idx = total_prompts - len(remaining)
+                tasks = [_process(start_idx + i, p) for i, p in enumerate(remaining)]
+                for coro in asyncio.as_completed(tasks):
+                    keys, records, reasons, responded = await coro
+                    discarded_keys.update(keys)
+                    discard_records.extend(records)
+                    cleaned_reasons.update(reasons)
+                    all_responded.update(responded)
             missing = all_input_keys - all_responded
             if missing:
                 warn(f"  [Filter] ⚠ LLM 遗漏 {len(missing)} 条, 保留原判: {', '.join(sorted(missing))}")

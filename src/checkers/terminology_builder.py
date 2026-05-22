@@ -122,40 +122,76 @@ def _collect_zh_translations(
 ) -> list[GlossaryDict]:
     """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
     glossary: list[GlossaryDict] = []
-    for norm, info in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
-        if len(info["keys"]) < min_freq or not is_valid_term(norm):
+    stats = {"total": 0, "keys_fail": 0, "valid_fail": 0, "no_zh": 0, "total_fail": 0, "consensus_fail": 0, "pass": 0}
+    for norm, bucket in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
+        stats["total"] += 1
+        n_keys = len(bucket["keys"])
+        if n_keys < min_freq:
+            stats["keys_fail"] += 1
+            continue
+        if not is_valid_term(norm):
+            stats["valid_fail"] += 1
             continue
 
         zh_counter: Counter = Counter()
-        for k in info["keys"]:
+        skipped_no_entry = 0
+        skipped_desc = 0
+        skipped_empty_or_long = 0
+        skipped_variant_mismatch = 0
+        for k in bucket["keys"]:
             entry = next((e for e in matched_entries if e["key"] == k), None)
             if not entry:
+                skipped_no_entry += 1
                 continue
             if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
+                skipped_desc += 1
                 continue
             zh_val = entry.get("zh", "").strip()
             en_val = entry.get("en", "")
             if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
+                skipped_empty_or_long += 1
                 continue
-            variants = info["variants"]
+            variants = bucket["variants"]
             if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
+                skipped_variant_mismatch += 1
                 continue
             zh_counter[zh_val[:120]] += 1
 
         if not zh_counter:
+            stats["no_zh"] += 1
+            warn(f"  [术语表·无ZH] \"{norm}\": keys={n_keys}, "
+                 f"no_entry={skipped_no_entry} desc={skipped_desc} "
+                 f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
             continue
 
         best_zh, best_count = zh_counter.most_common(1)[0]
         total = sum(zh_counter.values())
-        variants = sorted(info["variants"], key=len)
+        variants = sorted(bucket["variants"], key=len)
         en_term = variants[0] if variants else norm
         if total >= min_total and best_count / total >= min_consensus:
+            stats["pass"] += 1
             glossary.append({"en": en_term, "zh": best_zh})
         elif total >= min_total:
             common = _extract_common_zh(zh_counter, min_consensus)
             if common:
+                stats["pass"] += 1
                 glossary.append({"en": en_term, "zh": common})
+            else:
+                stats["consensus_fail"] += 1
+                warn(f"  [术语表·共识不足] \"{en_term}\": {len(zh_counter)} 种不同译文, "
+                     f"共识 {best_count}/{total}={best_count/total:.0%}, 公共子串空, "
+                     f"keys={n_keys}, no_entry={skipped_no_entry} desc={skipped_desc} "
+                     f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
+        else:
+            stats["total_fail"] += 1
+            warn(f"  [术语表·总数不足] \"{en_term}\": total={total} < min_total={min_total}, "
+                 f"keys={n_keys}, no_entry={skipped_no_entry} desc={skipped_desc} "
+                 f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
 
+    info(f"  [术语表] 统计: 总数={stats['total']}, "
+         f"keys不足(<{min_freq})={stats['keys_fail']}, 无效术语={stats['valid_fail']}, "
+         f"无ZH={stats['no_zh']}, 总数不足(<{min_total})={stats['total_fail']}, "
+         f"共识不足={stats['consensus_fail']}, 通过={stats['pass']}")
     return glossary
 
 
