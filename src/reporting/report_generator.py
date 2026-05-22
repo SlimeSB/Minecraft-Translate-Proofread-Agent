@@ -11,71 +11,8 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from src.cli import safe_print as _print
+from src.verdict_merger import merge_verdicts
 from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY, normalize_verdict
-
-# ═══════════════════════════════════════════════════════════
-# Verdict 优先级与去重
-# ═══════════════════════════════════════════════════════════
-
-# 来源优先级：LLM 手动审校 > 格式自动检查 > 术语自动检查
-# 同一条目同级别时，手动判断优先
-SOURCE_PRIORITY: dict[str, int] = {
-    "llm_review": 3,
-    "interactive": 3,
-    "format_check": 2,
-    "terminology_check": 2,
-    "llm_error": 1,
-}
-
-
-def merge_verdicts(
-    *verdict_lists: Sequence[VerdictDict],
-    keep_all: bool = False,
-) -> list[VerdictDict]:
-    """
-    合并多个 verdict 列表，按 key 去重。
-    同一 key 保留最高优先级的 verdict。
-
-    :param keep_all: 如果为 True，保留同一 key 的所有 verdict（用于审查）
-    :return: 合并后的 verdict 列表
-    """
-    if keep_all:
-        all_v: list[VerdictDict] = []
-        seen: set[tuple[str, str]] = set()
-        for vl in verdict_lists:
-            for v in vl:
-                sig = (v.get("key", ""), v.get("reason", ""))
-                if sig not in seen:
-                    seen.add(sig)
-                    all_v.append(v)
-        return sorted(all_v, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
-
-    # 按 key 归并
-    by_key: dict[str, list[VerdictDict]] = defaultdict(list)
-    for vl in verdict_lists:
-        for v in vl:
-            key = v.get("key", "")
-            if key:
-                by_key[key].append(v)
-
-    merged: list[VerdictDict] = []
-    for key, verdicts in by_key.items():
-        # 选最高优先级
-        best = max(verdicts, key=lambda v: (
-            VERDICT_PRIORITY.get(v.get("verdict", ""), 0),
-            SOURCE_PRIORITY.get(v.get("source", ""), 0),
-        ))
-        # 收集所有 reason 去重
-        reasons: list[str] = []
-        for v in verdicts:
-            r = v.get("reason", "")
-            if r and r not in reasons:
-                reasons.append(r)
-        if len(reasons) > 1:
-            best["reason"] = "; ".join(reasons)
-        merged.append(best)
-
-    return sorted(merged, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
 
 
 # ═══════════════════════════════════════════════════════════

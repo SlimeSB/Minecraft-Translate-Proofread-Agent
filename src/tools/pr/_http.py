@@ -58,13 +58,10 @@ def api_get(url: str, token: str = "") -> Any:
 def raw_get(url: str, token: str = "", retries: int = 3) -> str:
     def _do_one(t: str) -> str:
         headers = build_headers(t)
-        u = url
-        if t:
-            u += f"?token={t}"
         last_err: Exception | None = None
         for attempt in range(1, retries + 1):
             try:
-                req = urllib.request.Request(u, headers=headers)
+                req = urllib.request.Request(url, headers=headers)
                 timeout = 30 * attempt
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return resp.read().decode("utf-8")

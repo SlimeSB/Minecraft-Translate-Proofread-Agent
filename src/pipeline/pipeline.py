@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.logging import info, warn
 from src.models import LLMCallable, PHASE_MERGED, PipelineContext, PRAlignmentWrapper
-from src.reporting.report_generator import ReportGenerator
+from src.verdict_merger import merge_verdicts, compute_merged_stats
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
 from src.pipeline.phase3a_format import run_phase3a
@@ -114,13 +114,9 @@ class ReviewPipeline:
 
 def _save_merged_verdicts(ctx: PipelineContext) -> None:
     """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
-    rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)
-    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
-
-    report = rg.build_report()
-    verdicts = report.get("verdicts", [])
-    stats = report.get("stats", {})
+    verdicts = merge_verdicts(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
+    total = len(ctx.alignment.get("matched_entries", []))
+    stats = compute_merged_stats(verdicts, total)
 
     with PipelineDB(ctx.output_dir / "pipeline.db") as db:
         db.save_verdicts(verdicts, PHASE_MERGED)

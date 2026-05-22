@@ -61,13 +61,12 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["filter_system_prompt"], "Filter prompt")
         self.assertEqual(flat["filter_instruction"], ["Filter instruction"])
 
-    def test_key_prefixes_llm_required(self):
-        flat = _flatten({"key_prefixes": {
-            "death.": {"llm_required": True},
-            "item.": {"llm_required": False},
-            "block.": {},
+    def test_manual_formats(self):
+        flat = _flatten({"manual_formats": {
+            "ae2guide": {"label": "模组文档", "dir_name": "ae2guide"},
         }})
-        self.assertEqual(flat["llm_required_prefixes"], ["death."])
+        self.assertIn("ae2guide", flat["manual_formats"])
+        self.assertEqual(flat["manual_formats"]["ae2guide"]["label"], "模组文档")
 
     def test_format_group(self):
         flat = _flatten({"format": {

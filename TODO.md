@@ -16,6 +16,7 @@
 - [ ] **`_format_rows()` 复杂度（原 Issue #5）** — `minecraft_dict.py:114-231` 约 65 行 6 层嵌套逻辑，longest/shortest/sensitive 选择 + reserved slots。有充分测试覆盖，重构风险可控但暂缓。
 - [ ] feat: 帕秋莉手册支持
 - [ ] feat: 组合文件和packer-policy支持。
+- [ ] agent启发式对齐器
 
 ## 未计划
 
@@ -32,9 +33,11 @@
 
 ### 架构
 
-- [ ] 消除 `asyncio.run()` 反模式（`bridge.py` 同步方法内调 async，无法在已有事件循环中复用）— 波及 LLMBridge 全部公有方法 + 所有 Phase 调用方，改后需全量回归
+- [ ] 消除 `asyncio.run()` 反模式（`bridge.py` 同步方法内调 async，无法在已有事件循环中复用）— 波及 LLMBridge 全部公有方法 + 所有 Phase 调用方，改后需全量回归。**评估：当前纯同步入口不触发嵌套，计划中，暂不动。**
 - [ ] LLM 并发改用真异步 IO（当前通过线程池包装，非真异步）— 当前 threading + semaphore 虽非真异步但工作稳定，重构收益不确定
 - [ ] Config 从全局单例重构为可注入 — `config.py` 是模块级全局单例，`llm/prompts.py` 等 15 个文件硬编码 `from src import config as cfg`。后续可将 Config 类注入 Phase 函数，改善测试隔离性。（工程大，延期）
+- [ ] `PipelineContext` 拆分 — 26 个字段含 11 个 PR 专用字段，建议拆为 `PipelineInput`/`RuntimeConfig`/`PhaseResults` 子对象。涉及所有 Phase 签名变动，投入产出比当前不够，延期。
+- [ ] Phase 3b 注册为正式 Phase — `phase3b_fuzzy.py` 当前作为 Phase 3c 子程序调用，独立注册无意义（模糊搜索就是为 LLM 审校服务的前置步骤）。**伪问题，不执行。**
 
 ## 已完成
 

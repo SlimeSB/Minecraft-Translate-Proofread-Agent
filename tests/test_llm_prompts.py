@@ -12,12 +12,12 @@ from src.llm.prompts import (
     build_filter_prompt,
     build_review_prompt,
     build_untranslated_prompt,
-    classify_entries,
-    classify_key,
     filter_for_llm,
-    group_prefix,
+    is_manual_format,
+    manual_format_label,
     merge_multipart_entries,
     needs_llm_review,
+    should_singleton,
 )
 
 
@@ -37,65 +37,38 @@ def _verdict(key, en_current="", zh_current="", verdict="⚠️ SUGGEST", reason
 
 
 # ═══════════════════════════════════════════════════════════
-# 2.1 TestClassifyEntries
+# 2.1 TestManualFormat
 # ═══════════════════════════════════════════════════════════
 
 
-class TestClassifyEntries(unittest.TestCase):
-    def test_group_by_prefix(self):
-        entries = [
-            _entry("advancements.foo", "Adv Foo", "进度Foo"),
-            _entry("block.bar", "Block Bar", "方块Bar"),
-            _entry("ae2guide:doc", "Doc", "文档"),
-        ]
-        groups = classify_entries(entries)
-        self.assertIn("advancements.", groups)
-        self.assertIn("block.", groups)
-        self.assertIn("ae2guide:", groups)
-        self.assertEqual(len(groups), 3)
+class TestManualFormat(unittest.TestCase):
+    def test_is_manual_format_known(self):
+        self.assertTrue(is_manual_format("ae2guide:something/intro.md"))
 
-    def test_ae2guide_prefix_isolation(self):
-        entries = [_entry("ae2guide:guide.doc", "Guide", "指南")]
-        groups = classify_entries(entries)
-        self.assertIn("ae2guide:", groups)
+    def test_is_manual_format_unknown(self):
+        self.assertFalse(is_manual_format("block.copper"))
+        self.assertFalse(is_manual_format("random.key"))
 
-    def test_unmatched_goes_to_default(self):
-        entries = [_entry("random.unmatched.key", "Rand", "兰")]
-        groups = classify_entries(entries)
-        self.assertIn("__default__", groups)
-        self.assertEqual(len(groups), 1)
+    def test_should_singleton_manual(self):
+        self.assertTrue(should_singleton("ae2guide:something/intro.md", ""))
 
-    def test_multiple_entries_same_prefix(self):
-        entries = [_entry("block.copper", "Copper", "铜"), _entry("block.iron", "Iron", "铁")]
-        groups = classify_entries(entries)
-        self.assertIn("block.", groups)
-        self.assertEqual(len(groups["block."]), 2)
+    def test_should_singleton_length(self):
+        long_en = "x" * 2001
+        self.assertTrue(should_singleton("some.long.key", long_en))
 
-    def test_longest_prefix_match(self):
-        entries = [_entry("block.mod.copper", "MC", "我的世界")]
-        groups = classify_entries(entries)
-        self.assertIn("block.", groups)
+    def test_should_singleton_normal(self):
+        self.assertFalse(should_singleton("block.copper", "Copper"))
+
+    def test_manual_format_label(self):
+        self.assertNotEqual(manual_format_label("ae2guide:something"), "")
+
+    def test_manual_format_label_unknown(self):
+        self.assertEqual(manual_format_label("random.key"), "")
 
 
 # ═══════════════════════════════════════════════════════════
-# 2.2 TestClassifyKey
+# 2.2 TestClassifyKey (向后兼容: 仅返回手册格式标签)
 # ═══════════════════════════════════════════════════════════
-
-
-class TestClassifyKey(unittest.TestCase):
-    def test_known_prefix_returns_label(self):
-        self.assertNotEqual(classify_key("block.copper"), "其他")
-
-    def test_unknown_key_returns_default(self):
-        self.assertEqual(classify_key("no.such.prefix.here"), "其他")
-
-    def test_ae2guide_key(self):
-        result = classify_key("ae2guide:something")
-        self.assertNotEqual(result, "其他")
-
-    def test_group_prefix_longest_match(self):
-        self.assertEqual(group_prefix("advancements.test"), "advancements.")
-        self.assertEqual(group_prefix("death.attack.mob"), "death.")
 
 
 # ═══════════════════════════════════════════════════════════

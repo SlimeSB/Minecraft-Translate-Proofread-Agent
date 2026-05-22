@@ -5,7 +5,7 @@
 import re
 
 from src import config as cfg
-from src.config import DEFAULT_NAMESPACE, DEFAULT_NAMESPACE_LABEL
+from src.config import DEFAULT_NAMESPACE
 from src.logging import debug
 from src.dictionary.external import ExternalDictStore
 from src.dictionary.vanilla_terms import VanillaTermsStore
@@ -17,55 +17,50 @@ from src.models import (
     FuzzyResultDict,
     FuzzyResultsMap,
     GlossaryDict,
-    GroupedEntries,
-    KeyPrefixConfig,
     MultipartContext,
     VerdictDict,
 )
 
 # ═══════════════════════════════════════════════════════════
-# 键名前缀分组
+# 手册格式检测
 # ═══════════════════════════════════════════════════════════
 
-KEY_PREFIX_PROMPTS: dict[str, KeyPrefixConfig] = cfg.KEY_PREFIX_PROMPTS
+
+def _get_manual_format_info(key: str) -> dict[str, str] | None:
+    """匹配 key 所属的手册格式。返回 {dir_name, label} 或 None。"""
+    for dir_name, info in cfg.MANUAL_FORMATS.items():
+        prefix = f"{dir_name}:"
+        if key.startswith(prefix):
+            return {"dir_name": dir_name, "label": info.get("label", dir_name)}
+    return None
 
 
-def group_prefix(key: str) -> str:
-    best = ""
-    for prefix in KEY_PREFIX_PROMPTS:
-        if key.startswith(prefix) and len(prefix) > len(best):
-            best = prefix
-    return best if best else DEFAULT_NAMESPACE
+def is_manual_format(key: str) -> bool:
+    return _get_manual_format_info(key) is not None
 
 
-def prefix_config(key: str) -> KeyPrefixConfig:
-    """返回 key 匹配键前缀的配置字典（未匹配返回空 dict）。"""
-    return KEY_PREFIX_PROMPTS.get(group_prefix(key), {})
-
-
-def is_batch_singleton(key: str) -> bool:
-    """该 key 所属前缀是否要求逐条单独批处理（如长文本文档）。"""
-    return prefix_config(key).get("batch_singleton", False)
+def should_singleton(key: str, en_text: str = "") -> bool:
+    if is_manual_format(key):
+        return True
+    if en_text and len(en_text) > cfg.SINGLETON_LENGTH_THRESHOLD:
+        return True
+    return False
 
 
 def is_excluded_from_terminology(key: str) -> bool:
-    """该 key 所属前缀是否应排除在术语提取之外。"""
-    return prefix_config(key).get("exclude_terminology", False)
+    return is_manual_format(key)
 
 
-def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
-    groups: dict[str, list[dict[str, str]]] = {}
-    for entry in entries:
-        prefix = group_prefix(entry["key"])
-        groups.setdefault(prefix, []).append(entry)  # type: ignore[arg-type]
-    return groups
+def manual_format_label(key: str) -> str:
+    info = _get_manual_format_info(key)
+    if info:
+        return info["label"]
+    return ""
 
 
 def classify_key(key: str) -> str:
-    prefix = group_prefix(key)
-    if prefix == DEFAULT_NAMESPACE:
-        return DEFAULT_NAMESPACE_LABEL
-    return KEY_PREFIX_PROMPTS.get(prefix, {}).get("label", DEFAULT_NAMESPACE_LABEL)
+    """返回 key 的手册格式标签；非手册条目返回空字符串。"""
+    return manual_format_label(key)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -106,15 +101,12 @@ def detect_input_guidance(entries: list[EntryDict]) -> str:
 # LLM 审校筛选器
 # ═══════════════════════════════════════════════════════════
 
-LLM_REQUIRED_PREFIXES: set[str] = cfg.LLM_REQUIRED_PREFIXES
 LLM_REQUIRED_PATTERNS: list[str] = list(cfg.DESC_KEY_SUFFIXES) + [".title"]
 _RE_GLOSSARY_GAP = re.compile(r"[ ,.!?;:'\"()\[\]{}<>\-_/%\t\n\r]+")
 
 
 def needs_llm_review(entry: EntryDict) -> bool:
     key = entry["key"]
-    if group_prefix(key) in LLM_REQUIRED_PREFIXES:
-        return True
     for pattern in LLM_REQUIRED_PATTERNS:
         if pattern in key:
             return True
@@ -276,7 +268,7 @@ def _group_by_slug_ver_ns(
     for e in entries:
         slug = e.get("slug", "")
         ver = e.get("version", "")
-        ns = e.get("namespace", "") or group_prefix(e["key"])
+        ns = e.get("namespace", "") or ""
         key = (slug or "", ver or "", ns)
         groups.setdefault(key, []).append(e)
     return groups
@@ -400,18 +392,10 @@ def build_review_prompt(
     if not entries:
         return []
 
-    # ── 1. 静态统一 header：从全部已知前缀构建 focus_notes，始终不变 ──
-    focus_parts: list[str] = []
-    for prefix in sorted(KEY_PREFIX_PROMPTS):
-        info = KEY_PREFIX_PROMPTS[prefix]
-        focus = info.get("focus", "")
-        if focus and focus != cfg.DEFAULT_REVIEW_FOCUS:
-            focus_parts.append(focus)
-    merged_focus = "\n".join(focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
-
+    # ── 1. 静态统一 header：使用默认审校重点 ──
     header = cfg.PROMPT_REVIEW_FULL_HEADER.format(
         header_prefix=cfg.REVIEW_HEADER_PREFIX,
-        focus_notes=merged_focus,
+        focus_notes=cfg.DEFAULT_REVIEW_FOCUS,
         review_principles=cfg.REVIEW_PRINCIPLES,
         change_context=cfg.get("pr_change_context_prompt", ""),
         count=len(entries),
@@ -433,24 +417,23 @@ def build_review_prompt(
     tri_groups = _group_by_slug_ver_ns(entries)
 
     for (_slug, _ver, _ns), group_entries in tri_groups.items():
-        # 组内按 key prefix 再分组
-        prefix_groups: dict[str, list[EntryDict]] = {}
+        # 组内按手册格式再分组（手册格式单独批处理，普通条目按 batch_size 切分）
+        format_groups: dict[str, list[EntryDict]] = {}
         for e in group_entries:
-            prefix = group_prefix(e["key"])
-            prefix_groups.setdefault(prefix, []).append(e)
+            mf_info = _get_manual_format_info(e["key"])
+            fg = mf_info["dir_name"] if mf_info else DEFAULT_NAMESPACE
+            format_groups.setdefault(fg, []).append(e)
 
-        for prefix, prefix_entries in prefix_groups.items():
-            effective_bs = 1 if KEY_PREFIX_PROMPTS.get(prefix, {}).get("batch_singleton") else batch_size
-
+        for fg, fg_entries in format_groups.items():
             i = 0
-            while i < len(prefix_entries):
-                if is_batch_singleton(prefix_entries[i]["key"]):
-                    batch = [prefix_entries[i]]
+            while i < len(fg_entries):
+                if should_singleton(fg_entries[i]["key"], fg_entries[i].get("en", "")):
+                    batch = [fg_entries[i]]
                     i += 1
                 else:
                     batch = []
-                    while i < len(prefix_entries) and len(batch) < effective_bs and not is_batch_singleton(prefix_entries[i]["key"]):
-                        batch.append(prefix_entries[i])
+                    while i < len(fg_entries) and len(batch) < batch_size and not should_singleton(fg_entries[i]["key"], fg_entries[i].get("en", "")):
+                        batch.append(fg_entries[i])
                         i += 1
 
                 batch_shared_prefix = shared_prefix
@@ -478,12 +461,13 @@ def build_filter_prompt(
     groups: dict[str, list[VerdictDict]] = {}
     for v in verdicts:
         key = v.get("key", "")
-        prefix = group_prefix(key)
-        groups.setdefault(prefix, []).append(v)
+        mf_info = _get_manual_format_info(key)
+        fg = mf_info["dir_name"] if mf_info else DEFAULT_NAMESPACE
+        groups.setdefault(fg, []).append(v)
 
     prompts: list[str] = []
-    for prefix, group_entries in groups.items():
-        effective_batch = 1 if KEY_PREFIX_PROMPTS.get(prefix, {}).get("batch_singleton") else batch_size
+    for fg, group_entries in groups.items():
+        effective_batch = 1 if fg != DEFAULT_NAMESPACE else batch_size
 
         for i in range(0, len(group_entries), effective_batch):
             batch = group_entries[i:i + effective_batch]
@@ -498,7 +482,7 @@ def build_filter_prompt(
                 verdict = v.get("verdict", "")
                 reason = v.get("reason", "")
                 suggestion = v.get("suggestion", "")
-                is_singleton = is_batch_singleton(key)
+                is_singleton = should_singleton(key, en)
                 block = cfg.PROMPT_FILTER_ENTRY_BLOCK.format(
                     key=key,
                     en=en if is_singleton else en[:200],

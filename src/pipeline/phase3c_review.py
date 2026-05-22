@@ -1,7 +1,7 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
 from src.logging import info
 from src.models import EntryDict, PHASE_LLM, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VerdictDict
-from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
+from src.llm.prompts import filter_for_llm, build_review_prompt, merge_multipart_entries, is_manual_format, manual_format_label
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
 from src.storage.database import PipelineDB
@@ -81,9 +81,8 @@ def _review_entries(
             )
             total_chars = sum(len(p) for p in prompts)
             info(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
-            groups = classify_entries(llm_entries)
-            for cat, entries in sorted(groups.items()):
-                info(f"    {cat}: {len(entries)} 条")
+            manual_count = sum(1 for e in llm_entries if is_manual_format(e["key"]))
+            info(f"    普通条目: {len(llm_entries) - manual_count} 条, 手册条目: {manual_count} 条")
         elif ctx.interactive:
             info("  进入交互审校模式...")
             verdicts = interactive_entry_review(

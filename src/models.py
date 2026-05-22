@@ -203,21 +203,15 @@ class PRVersionGroups(TypedDict):
     cross_version_diffs: dict[str, Any]  # CrossVersionDiff 前向引用
 
 
-class KeyPrefixConfig(TypedDict, total=False):
-    """key_prefixes 中每个前缀的配置。"""
+class ManualFormatConfig(TypedDict):
+    """manual_formats 中每个手册格式的配置。"""
     label: str
-    focus: str
-    llm_required: bool
-    batch_singleton: bool
-    exclude_terminology: bool
+    dir_name: str
 
 
 # ═══════════════════════════════════════════════════════════
 # 辅助类型别名
 # ═══════════════════════════════════════════════════════════
-
-# {prefix: [entries]}
-GroupedEntries = dict[str, list[EntryDict]]
 
 # {key: (full_en, full_zh)}
 MultipartContext = dict[str, tuple[str, str]]
@@ -231,8 +225,7 @@ FuzzyResultsMap = dict[str, list[FuzzyResultDict]]
 # {key: str}
 StrDict = dict[str, str]
 
-# {prefix: config}
-KeyPrefixMap = dict[str, KeyPrefixConfig]
+ManualFormatMap = dict[str, ManualFormatConfig]
 
 # LLM 调用签名
 LLMCallable = Callable[[str], str]

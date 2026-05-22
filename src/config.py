@@ -14,7 +14,7 @@ CONFIG_PATH = "review_config.json"
 _cfg_cache: dict[str, Any] | None = None
 
 # 顶层分组键
-_TOP_GROUPS = {"pipeline", "key_prefixes", "llm", "terminology", "format", "pr", "_comment"}
+_TOP_GROUPS = {"pipeline", "manual_formats", "llm", "terminology", "format", "pr", "_comment"}
 
 # 语言文件元数据键前缀正则 — 加载 JSON 时过滤 _comment* 键
 COMMENT_KEY_PATTERN = r"^_comment"
@@ -63,15 +63,11 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["vd_word_count_threshold"] = vd.get("word_count_threshold", 6)
     flat["vd_similarity_threshold"] = vd.get("vd_similarity_threshold", 60.0)
     flat["default_namespace_label"] = p.get("default_namespace_label", "其他")
+    flat["singleton_length_threshold"] = p.get("singleton_length_threshold", 2000)
 
-    # ── key_prefixes ──
-    # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
-    # llm_required_prefixes 从嵌入的 llm_required 标记自动派生
-    kp = raw.get("key_prefixes", {})
-    flat["key_prefix_prompts"] = kp
-    flat["llm_required_prefixes"] = [
-        prefix for prefix, info in kp.items() if info.get("llm_required")
-    ]
+    # ── manual_formats ──
+    mf = raw.get("manual_formats", {})
+    flat["manual_formats"] = mf
 
     # ── llm ──
     l = raw.get("llm", {})
@@ -168,9 +164,8 @@ TERM_CONSENSUS_MIN_TOTAL: int = get("term_consensus_min_total", 3)
 TERM_MAX_NGRAM: int = get("term_max_ngram", 3)
 MAX_WORKERS: int = get("max_workers", 4)
 
-KEY_PREFIX_PROMPTS: dict[str, dict[str, Any]] = get("key_prefix_prompts")
-LLM_REQUIRED_PREFIXES: set[str] = set(get("llm_required_prefixes"))
-GUIDEME_PREFIX: str = "ae2guide:"
+MANUAL_FORMATS: dict[str, dict[str, Any]] = get("manual_formats")
+SINGLETON_LENGTH_THRESHOLD: int = get("singleton_length_threshold")
 
 # 无名空间哨兵 — 键分类和报告生成中共用
 DEFAULT_NAMESPACE = "__default__"

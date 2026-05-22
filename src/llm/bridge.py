@@ -23,7 +23,7 @@ from src.llm.prompts import (
     build_filter_prompt,
     build_review_prompt,
     build_untranslated_prompt,
-    classify_key,
+    manual_format_label,
     merge_multipart_entries,
 )
 
@@ -380,8 +380,11 @@ def interactive_entry_review(
         key = entry["key"]
         en = entry.get("en", "")
         zh = entry.get("zh", "")
-        cat = classify_key(key)
-        print(f"\n--- [{i+1}/{len(entries)}] [{cat}] {key} ---")
+        cat = manual_format_label(key)
+        if cat:
+            print(f"\n--- [{i+1}/{len(entries)}] [{cat}] {key} ---")
+        else:
+            print(f"\n--- [{i+1}/{len(entries)}] {key} ---")
         print(f'EN: "{en[:200]}"')
         print(f'ZH: "{zh[:200]}"')
         auto_v = (auto_verdicts_map or {}).get(key, [])

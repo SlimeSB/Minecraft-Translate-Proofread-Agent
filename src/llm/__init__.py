@@ -5,12 +5,13 @@ from src.llm.prompts import (
     build_entry_block,
     build_filter_prompt,
     build_review_prompt,
-    classify_entries,
-    classify_key,
     detect_input_guidance,
     filter_for_llm,
+    is_manual_format,
+    manual_format_label,
     merge_multipart_entries,
     needs_llm_review,
+    should_singleton,
 )
 
 __all__ = [
@@ -23,11 +24,12 @@ __all__ = [
     "parse_review_response",
     "interactive_entry_review",
     # prompts
-    "classify_entries",
-    "classify_key",
     "detect_input_guidance",
     "filter_for_llm",
     "needs_llm_review",
+    "is_manual_format",
+    "manual_format_label",
+    "should_singleton",
     "build_entry_block",
     "build_review_prompt",
     "build_filter_prompt",
