@@ -14,9 +14,13 @@
 - [ ] **双词典注入 prompt 膨胀（原 Issue #4）** — 每条条目同时对 `ExternalDictStore` + `MinecraftDictStore` 调用 `lookup()`，每 batch ~75 tokens 开销。与 @anomaly 另有安排，暂不动。
 - [ ] **`minecraft_dict.py` 未接入管线（331 行）** — `MinecraftDictStore` 仅被 `scripts/migrate_minecraft_db.py` 和测试引用，管线实际使用 `VanillaTermsStore`。功能与 `vanilla_terms.py` 重叠，待双词典方案确定后决定合并或接入。
 - [ ] **`_format_rows()` 复杂度（原 Issue #5）** — `minecraft_dict.py:114-231` 约 65 行 6 层嵌套逻辑，longest/shortest/sensitive 选择 + reserved slots。有充分测试覆盖，重构风险可控但暂缓。
+- [ ] feat: 帕秋莉手册支持
+- [ ] feat: 组合文件和packer-policy支持。
 
 ## 未计划
 
+- [ ] 喂给 llm mod介绍等相关信息，源码等，实现理解风格、代码逻辑、游戏内表现等问题。
+- [ ] 先理解、再翻译/校对
 - [ ] 逐步启用 pyright 关键检查项（当前关闭 13 项：`reportAssignmentType`, `reportReturnType`, `reportAttributeAccessIssue`, `reportOptionalMemberAccess` 等；✅ `reportArgumentType` 已修）（工程太大，延期）
 - [ ] `storage/database.py`: 从 `Mapping[str, Any]` 迁移到 TypedDict（SQLite 行数据形状多变，建议从简单边界开始）（工程太大，延期）
 
