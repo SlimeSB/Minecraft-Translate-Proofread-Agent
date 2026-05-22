@@ -26,8 +26,7 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   ├─ Phase  2: run_phase2()   ◄── phase2_terminology.py
   │   ├─ src/checkers/terminology_builder.py  (主流程 + LLM术语校验)
   │   ├─ src/tools/terminology_extract.py     (N-gram 提取)
-  │   ├─ src/checkers/lemma_merge.py          (词形归并)
-  │   └─ src/checkers/lemma_cache.py          (缓存, 数据存储于 data/lemma_cache.json)
+  │   ├─ src/checkers/lemma_merge.py          (词形归并: 规则分桶 → inflection 名词单数归一化归并)
   │
   ├─ Phase 3a: run_phase3a()  ◄── phase3a_format.py
   │   └─ src/checkers/format_checker.py
@@ -317,7 +316,7 @@ JSON/Lang文件
 
 **N-gram 提取**：去 HTML/MC格式码/printf占位符 → 小写 → 过滤 60+ stop words（`term_validation.STOP_WORDS`，合并自四处独立逻辑）→ 产 unigram/bigram/trigram/全短语。`TERM_MIN_FREQ` 和 `TERM_MAX_NGRAM` 从配置读取。
 
-**词形归并（4 级）**：规则分桶 → 缓存查表 → 模糊聚类（Levenshtein ≥ 65% + 并查集）→ LLM 裁决。每级受 **token 真子集守卫** 保护，阻止多词短语被吞入单词（如 `"upgrade adds"` → `"upgrade"`）。缓存持久化于 `data/lemma_cache.json`。
+**词形归并（2 级）**：规则分桶 → inflection 名词单数归一化归并。`inflection.singularize()` 将每个词的复数形式归一为单数，按归一化后形式合并 morphological variants（如 swords→sword, ingots→ingot, wolves→wolf）。受 **token 真子集守卫** 保护，阻止多词短语被吞入单词（如 `"upgrade adds"` → `"upgrade"`）。不再需要 `LemmaCache`、`fuzzy_cluster` 或 LLM 归并。
 
 **术语表构建**：共识判定（最高频 ≥ 60% 且 ≥ 3 次）→ 术语表；描述性后缀条目（`.desc`、`.lore` 等）不参与共识统计；中文互斥时短术语二次统计救援（`try_rescue_short_term`）。
 
@@ -417,7 +416,7 @@ GitHub Actions (`.github/workflows/test.yml`): 每次 push/PR 在 Python 3.11/3.
 
 所有词典存储实现 `DictStore` Protocol 统一接口（`protocol.py`），通过 `collect_hints()` 函数批量收集各词典的翻译参考并注入 LLM 提示词。
 
-- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。
+- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。查无结果时通过 `inflection.singularize()` 做词形回退（复数→单数）再查。
 - `VanillaTermsStore` — 查询 `data/vanilla_terms.db`，支持 scope 预过滤和 label 标注，精筛原版术语参考。
 - `MinecraftDictStore` — 历史遗留，查询 `data/Minecraft.db` 原版翻译，已由 VanillaTermsStore 替代。
 

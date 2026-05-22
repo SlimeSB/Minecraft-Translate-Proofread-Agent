@@ -34,7 +34,7 @@ def run_phase2(ctx: PipelineContext) -> None:
     tb = TerminologyBuilder()
     tb.load(lang_en, lang_zh, ctx.alignment)
     tb.extract(min_freq=cfg.TERM_MIN_FREQ, max_ngram=cfg.TERM_MAX_NGRAM)
-    tb.merge_lemmas(llm_call=ctx.llm_call)
+    tb.merge_lemmas()
     ctx.glossary = tb.build_glossary()
     if ctx.llm_call and not ctx.no_llm:
         term_hints: dict[str, str] | None = None

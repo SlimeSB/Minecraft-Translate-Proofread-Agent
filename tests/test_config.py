@@ -16,8 +16,6 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["term_max_zh_len"], 40)
         self.assertEqual(flat["term_max_en_len"], 60)
         self.assertEqual(flat["term_consensus_min_total"], 3)
-        self.assertEqual(flat["fuzzy_cluster_threshold"], 65.0)
-        self.assertEqual(flat["fuzzy_cluster_top_n"], 200)
         self.assertEqual(flat["default_pr_repo"], "CFPAOrg/Minecraft-Mod-Language-Package")
         self.assertEqual(flat["desc_key_suffixes"], [])
         self.assertEqual(flat["punctuation_spacing_whitelist"], [])
@@ -32,7 +30,6 @@ class TestFlatten(unittest.TestCase):
         flat = _flatten({"terminology": {
             "min_freq": 3, "min_consensus": 0.8, "max_zh_len": 60,
             "max_en_len": 80, "consensus_min_total": 5,
-            "fuzzy_cluster_threshold": 70.0, "fuzzy_cluster_top_n": 150,
             "blacklist": ["foo", "bar"]
         }})
         self.assertEqual(flat["term_min_freq"], 3)
@@ -40,8 +37,6 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["term_max_zh_len"], 60)
         self.assertEqual(flat["term_max_en_len"], 80)
         self.assertEqual(flat["term_consensus_min_total"], 5)
-        self.assertEqual(flat["fuzzy_cluster_threshold"], 70.0)
-        self.assertEqual(flat["fuzzy_cluster_top_n"], 150)
         self.assertEqual(flat["term_blacklist"], ["foo", "bar"])
 
     def test_llm_group(self):
@@ -51,7 +46,6 @@ class TestFlatten(unittest.TestCase):
             "default_review_focus": "accuracy",
             "review_instruction": ["Check 1", "Check 2"],
             "review_principles": ["Be concise"],
-            "merge_system_prompt": ["Merge these"],
             "keyboard_guidance": "keyboard tips",
             "mouse_guidance": "mouse tips",
             "filter": {

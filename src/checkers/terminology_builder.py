@@ -1,13 +1,13 @@
 """术语构建与匹配器：从 en_us.json 提取术语、词形归并、构建术语表、
 检查翻译一致性。
 
-归并策略: 规则粗筛 → 模糊搜索聚类 → LLM 裁决同形异体
+归并策略: 规则分桶 → inflection 名词单数归一化归并
 
 用法:
     from terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
     tb = TerminologyBuilder()
     tb.load(en_data, zh_data, alignment)
-    glossary = tb.merge_and_build(llm_call=my_llm_fn)
+    glossary = tb.merge_and_build()
     glossary = llm_verify_glossary(glossary, tb.en_data, tb.zh_data, my_llm_fn)
     verdicts = check_consistency(glossary, tb.matched_entries, tb.merged)
 """
@@ -21,14 +21,10 @@ from src.logging import info, warn
 from src.models import AlignmentDict, EntryDict, GlossaryDict, SOURCE_TERMINOLOGY_CHECK, VerdictDict
 from src.tools.terminology_extract import extract_terms
 from src import config as cfg
-from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
 from .lemma_merge import (
     raw_merge,
-    apply_cache_merge,
-    fuzzy_cluster,
-    build_merge_prompt,
-    parse_merge_response,
-    apply_llm_merge,
+    inflection_lemmatize_term,
+    inflection_merge,
     try_rescue_short_term,
 )
 from src.tools.term_validation import is_valid_term, is_music_disc_desc
@@ -344,15 +340,13 @@ def check_consistency(
 class TerminologyBuilder:
     """术语提取、归并、匹配的完整流水线。"""
 
-    def __init__(self, cache_path: str = DEFAULT_CACHE_PATH):
+    def __init__(self):
         self.en_data: dict[str, str] = {}
         self.zh_data: dict[str, str] = {}
         self.matched_entries: list[EntryDict] = []
         self.extracted: dict[str, Any] = {}
         self.glossary: list[GlossaryDict] = []
         self.merged: dict[str, dict[str, Any]] = {}
-        self.cache = LemmaCache(cache_path)
-        self._cache_hits = 0
 
     def load(
         self,
@@ -371,55 +365,19 @@ class TerminologyBuilder:
         self.extracted = extract_terms(self.en_data, min_freq, max_ngram)
         return self.extracted
 
-    # ── 归并（3+1 步：分桶 → 缓存查表 → 模糊聚类 → LLM 裁决 → 写回缓存）──
+    # ── 归并（2 步：分桶 → inflection 归并）──
 
-    def merge_lemmas(
-        self,
-        llm_call: Callable[[str], str] | None = None,
-        fuzzy_threshold: float | None = None,
-    ) -> dict[str, dict[str, Any]]:
+    def merge_lemmas(self) -> dict[str, dict[str, Any]]:
         if not self.extracted:
             self.extract()
-        fuzzy_threshold = fuzzy_threshold if fuzzy_threshold is not None else float(cfg.get("fuzzy_cluster_threshold", 65.0))  # type: ignore[arg-type]
-
-        self.cache.load()
 
         # Step 1: 原始分桶
         self.merged = raw_merge(self.extracted)
         info(f"  [术语归并] 原始分桶: {len(self.merged)} 个")
 
-        # Step 2: 缓存查表
-        if self.cache.map:
-            self.merged, self._cache_hits = apply_cache_merge(self.merged, self.cache)
-            info(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
-
-        # Step 3: 模糊聚类（纯算法，不需要 LLM）
-        if not self.merged:
-            return self.merged
-
-        clusters = fuzzy_cluster(self.merged, threshold=fuzzy_threshold)
-        if not clusters:
-            return self.merged
-
-        info(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
-
-        # Step 4: LLM 裁决 + 写回缓存（仅在有 llm_call 时）
-        if llm_call is not None:
-            prompt = build_merge_prompt(clusters)
-            try:
-                response = llm_call(prompt)
-                mapping = parse_merge_response(response)
-                if mapping:
-                    canon_map: dict[str, list[str]] = {}
-                    for member, canon in mapping.items():
-                        canon_map.setdefault(canon, []).append(member)
-                    for canon, members in canon_map.items():
-                        self.cache.record(canon, members, source="llm")
-
-                    self.merged = apply_llm_merge(self.merged, mapping)
-                    info(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
-            except Exception as e:
-                warn(f"[术语归并] LLM 归并调用异常: {type(e).__name__}: {e}")
+        # Step 2: inflection 名词单数归一化归并
+        self.merged = inflection_merge(self.merged)
+        info(f"  [术语归并] inflection 归并后: {len(self.merged)} 个")
 
         return self.merged
 
@@ -453,11 +411,7 @@ class TerminologyBuilder:
 
     # ── 便捷入口 ──────────────────────────────────────────
 
-    def merge_and_build(
-        self, llm_call: Callable[[str], str] | None = None
-    ) -> list[GlossaryDict]:
+    def merge_and_build(self) -> list[GlossaryDict]:
         """归并 + 纯程序提取术语表（一步完成）。"""
-        self.merge_lemmas(llm_call=llm_call)
+        self.merge_lemmas()
         return self.build_glossary()
-
-

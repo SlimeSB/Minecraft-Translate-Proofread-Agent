@@ -184,27 +184,25 @@ class TestExternalDictStore(unittest.TestCase):
     # ———— 词形缓存 (lemma) ————
 
     def test_lemma_fallback(self):
-        """查询词不在 DB 中但词形缓存有映射 → 用 canonical 再查。"""
+        """查询词不在 DB 中但 inflection 单数化后可命中 → 用单数形式再查。"""
         path, conn, store = self._make_store()
         try:
-            _insert(conn, "Stones", "石头们", "mod_x")
+            _insert(conn, "Stone", "石头", "mod_x")
             conn.commit()
-            store._lemma_map = {"stone": "Stones"}
             store.load()
-            result = store.lookup("stone")
-            self.assertIn("Stones -> 石头们", result)
+            result = store.lookup("stones")
+            self.assertIn("Stone -> 石头", result)
         finally:
             store.close()
             conn.close()
             Path(path).unlink(missing_ok=True)
 
     def test_lemma_no_loop_when_canon_equals_word(self):
-        """canon.lower() == w_lower 时不重复查询。"""
+        """singularize 结果与原词相同时不重复查询。"""
         path, conn, store = self._make_store()
         try:
             _insert(conn, "stone", "石头", "mod_x")
             conn.commit()
-            store._lemma_map = {"stone": "stone"}
             store.load()
             result = store.lookup("stone")
             self.assertIn("stone -> 石头", result)

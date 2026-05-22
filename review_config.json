@@ -59,12 +59,6 @@
       "- 专有名词保留原文不翻译",
       "- 检查语气是否匹配原文"
     ],
-    "merge_system_prompt": [
-      "你是英文术语规范化专家。以下每组是规则归并后仍疑似同源的术语候选群。",
-      "判断组内哪些术语确实应合并为同一词条（同一概念的不同拼写/词形），哪些应保留为独立术语。",
-      "输出 JSON 数组，每个元素: { \"canonical\": \"规范形式\", \"members\": [\"成员1\", ...] }",
-      "不合并的单独术语不需要输出。只输出 JSON 数组，不要其他文字。"
-    ],
     "keyboard_guidance": "检测到预设的键盘按键，建议保留原文。",
     "mouse_guidance": "检测到鼠标操作，注意使用\"左键点击\"、\"右击\"、\"按住右键\"等，而非\"左键\"、\"右键\"",
     "filter": {
@@ -154,8 +148,6 @@
     "max_zh_len": 40,
     "max_en_len": 60,
     "consensus_min_total": 3,
-    "fuzzy_cluster_threshold": 65.0,
-    "fuzzy_cluster_top_n": 200,
     "max_ngram": 3,
     "max_keys_per_term": 20,
     "max_keys_raw": 5,

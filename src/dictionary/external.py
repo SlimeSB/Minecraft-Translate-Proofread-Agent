@@ -8,12 +8,13 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import inflection
+
 from src.logging import info, warn
 from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
 from src.dictionary.protocol import SHORT, LookupModeStr, setup_fts
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
-DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
 
 from src.tools.term_validation import STOP_WORDS
 
@@ -24,18 +25,15 @@ class ExternalDictStore:
     lookup_heading = "### 词典"
     default_lookup_mode = SHORT
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._conn: sqlite3.Connection | None = None
-        self._lemma_map: dict[str, str] = {}
         self._loaded = False
         self._db_path = db_path
-        self._lemma_cache_path = lemma_cache_path
         self._use_fts = False
 
     def load(self) -> None:
         if self._loaded:
             return
-        self._load_lemma_cache()
         db_path = Path(self._db_path)
         if not db_path.exists():
             info(f"[ExternalDict] 词典文件不存在: {db_path}")
@@ -62,23 +60,6 @@ class ExternalDictStore:
         ).fetchone()[0]
         self._loaded = True
         info(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
-
-    def _load_lemma_cache(self) -> None:
-        import json
-        cache_path = Path(self._lemma_cache_path)
-        if cache_path.exists():
-            try:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for canonical, entry in data.items():
-                    variants = entry.get("variants", [canonical])
-                    for v in variants:
-                        vk = v.lower().strip()
-                        if vk not in self._lemma_map:
-                            self._lemma_map[vk] = canonical
-            except (json.JSONDecodeError, IOError) as e:
-                warn(f"[ExternalDict] lemma 缓存加载失败: {e}")
-                self._lemma_map = {}
 
     def _query_index(self, word_lower: str) -> list[tuple[str, str, str]]:
         """索引精确匹配 LOWER(ORIGIN_NAME)。"""
@@ -130,12 +111,12 @@ class ExternalDictStore:
                 candidates = self._query_index(w_lower)
 
             if not candidates:
-                canon = self._lemma_map.get(w_lower)
-                if canon and canon.lower() != w_lower:
+                singular = inflection.singularize(w_lower)
+                if singular != w_lower:
                     if self._use_fts:
-                        candidates = self._query_fts(canon)
+                        candidates = self._query_fts(singular)
                     else:
-                        candidates = self._query_index(canon.lower())
+                        candidates = self._query_index(singular.lower())
             if not candidates:
                 continue
 
