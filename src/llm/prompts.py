@@ -6,6 +6,7 @@ import re
 
 from src import config as cfg
 from src.config import DEFAULT_NAMESPACE
+from src.logging import debug
 from src.dictionary.external import ExternalDictStore
 from src.dictionary.vanilla_terms import VanillaTermsStore
 from src.dictionary.protocol import collect_hints
@@ -174,22 +175,37 @@ def filter_for_llm(
 ) -> tuple[list[EntryDict], list[EntryDict]]:
     llm_entries: list[EntryDict] = []
     auto_pass: list[EntryDict] = []
+    reason_auto_flagged = 0
+    reason_llm_required = 0
+    reason_glossary_uncovered = 0
+    reason_auto_pass = 0
     for entry in matched_entries:
         key = entry["key"]
         if key in auto_flagged_keys:
             llm_entries.append(entry)
+            reason_auto_flagged += 1
+            debug(f"  [筛选·入选] {key}: 自动检查标记 → 送LLM")
             continue
         if needs_llm_review(entry):
             llm_entries.append(entry)
+            reason_llm_required += 1
+            reason_hint = "长文本" if len(entry.get("en", "")) > 80 else "必要前缀/.desc/.title"
+            debug(f"  [筛选·入选] {key}: LLM要求 ({reason_hint}) → 送LLM")
             continue
         if glossary:
             if not _is_glossary_covered(entry.get("en", ""), entry.get("zh", ""), glossary):
                 llm_entries.append(entry)
+                reason_glossary_uncovered += 1
+                debug(f"  [筛选·入选] {key}: 术语表未覆盖 → 送LLM")
                 continue
         else:
             llm_entries.append(entry)
+            reason_glossary_uncovered += 1
+            debug(f"  [筛选·入选] {key}: 无术语表 → 送LLM")
             continue
         auto_pass.append(entry)
+        reason_auto_pass += 1
+    debug(f"  [筛选] 统计: 自动标记={reason_auto_flagged} LLM要求={reason_llm_required} 术语未覆盖={reason_glossary_uncovered} 自动通过={reason_auto_pass}")
     return llm_entries, auto_pass
 
 

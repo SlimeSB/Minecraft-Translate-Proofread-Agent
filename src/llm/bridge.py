@@ -2,7 +2,7 @@
 import asyncio
 import json
 import re
-from src.logging import info, warn
+from src.logging import info, warn, debug
 
 from src import config as cfg
 from src.models import (
@@ -313,6 +313,7 @@ class LLMBridge:
                             r = item.get("reason", "").strip()
                             if r:
                                 local_reasons[k] = r
+                                debug(f"  [Filter] 保留建议: {k} — {r}")
                     warn(f"  [Filter] 批次 {i+1}/{total_prompts} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条")
                     return local_keys, local_records, local_reasons, local_responded
                 except Exception as e:

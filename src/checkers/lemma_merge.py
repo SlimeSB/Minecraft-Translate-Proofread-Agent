@@ -10,6 +10,7 @@ from typing import Any
 
 import inflection
 
+from src.logging import debug
 from src import config as cfg
 
 _MAX_KEYS_PER_TERM = cfg.get("max_keys_per_term", 20)
@@ -64,6 +65,7 @@ def _apply_merge_map(
     for norm, info in merged.items():
         target = redirect.get(norm, norm)
         if guard_token_subset and target != norm and _is_token_proper_subset(norm, target):
+            debug(f"  [归并守卫] 阻止: \"{norm}\" 并入 \"{target}\" (token 真子集)")
             target = norm
         if target not in new_merged:
             new_merged[target] = {
@@ -109,11 +111,13 @@ def inflection_merge(
             for t in terms:
                 if t != lemma:
                     redirect[t] = lemma
+                    debug(f"  [术语归并] \"{t}\" → \"{lemma}\" (inflection)")
         else:
             best = max(terms, key=lambda t: len(merged[t]["keys"]))
             for t in terms:
                 if t != best:
                     redirect[t] = best
+                    debug(f"  [术语归并] \"{t}\" → \"{best}\" (inflection, max keys)")
 
     if not redirect:
         return merged

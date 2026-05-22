@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from src.logging import info
+from src.logging import info, debug
 from src.models import (
     FilterDiscardRecord, PHASE_MERGED, PipelineContext, VerdictDict,
 )
@@ -79,10 +79,12 @@ def run_phase4(ctx: PipelineContext) -> None:
             k = v["key"]
             if k in all_pass:
                 db.set_filtered(k, "PASS", "")
+                debug(f"  [过滤·驳回] {k}: {v.get('verdict', '')} → PASS")
             else:
                 if k in all_reasons:
                     v["reason"] = all_reasons[k]
                 db.set_filtered(k, v.get("verdict", ""), v.get("reason", ""))
+                debug(f"  [过滤·保留] {k}: 维持 {v.get('verdict', '')}")
 
         removed = len(all_pass)
         kept = len(verdicts) - removed
