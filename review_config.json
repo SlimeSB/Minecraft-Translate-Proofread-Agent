@@ -10,6 +10,7 @@
     "fuzzy_trigger_patterns": [".desc", "death.", "advancements."],
     "format_specifier_pattern": "^%[a-zA-Z0-9_.$]+$",
     "word_extract_pattern": "[A-Za-z]{3,}",
+    "default_namespace_label": "其他",
     "vanilla_dict": {
       "per_word_trigger_words": ["block", "blocks", "item", "items"],
       "fuzzy_trigger_words": ["desc"],
@@ -61,6 +62,7 @@
     ],
     "keyboard_guidance": "检测到预设的键盘按键，建议保留原文。",
     "mouse_guidance": "检测到鼠标操作，注意使用\"左键点击\"、\"右击\"、\"按住右键\"等，而非\"左键\"、\"右键\"",
+    "dict_store_headers_to_strip": ["外部词典：", "原版词典："],
     "filter": {
       "system_prompt": "你是Minecraft模组翻译审校专家。请对每条问题逐条判断是否驳回。",
       "instruction": [
@@ -84,34 +86,74 @@
       ]
     },
     "prompt_templates": {
-      "review_header": [
+      "review_full_header": [
         "{header_prefix}。",
         "",
         "## 审查重点",
         "{focus_notes}",
         "",
         "## 普适原则",
-        "{review_principles}"
-      ],
-      "review_pr_section": [
+        "{review_principles}",
         "",
         "## PR 模式审校指南",
-        "{change_context}"
-      ],
-      "review_items_section": [
+        "{change_context}",
+        "",
+        "跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。",
         "",
         "## 待审条目 ({count}条)",
-        "{review_instruction}"
-      ],
-      "cross_version_ref_section": [
-        "",
-        "跨版本引用说明：条目中的 ref_version 表示相邻高版本的现有译法。当当前版本与 ref_version 的翻译存在差异时，请判断该差异是否因原文变化或术语调整而合理——若非合理差异，应指出不一致问题。"
-      ],
-      "review_input_device_section": [
+        "{review_instruction}",
         "",
         "## 输入设备翻译专项指南",
-        "{input_guidance}"
+        "{keyboard_guidance}",
+        "{mouse_guidance}"
       ],
+      "reference_section": "## 参考信息\n\n{sections}",
+      "glossary_section": "### 术语表\n{glossary_entries}",
+      "fuzzy_section": "### 模糊匹配\n{fuzzy_entries}",
+      "dict_section": "{dict_heading}\n{dict_entries}",
+      "cross_version_ref_block": [
+        "",
+        "跨版本参考:",
+        "  ref_version: {ref_version}",
+        "{ref_extra}"
+      ],
+      "auto_check_line": "  自动检查: {verdict} — {reason}",
+      "entry_key_line": "key: `{key}`",
+      "entry_en_line": "{en_label}: \"{en}\"",
+      "entry_old_en_line": "old_en: \"{old_en}\"",
+      "entry_old_zh_line": "old_zh: \"{old_zh}\"",
+      "entry_ref_en_line": "  ref_en: \"{ref_en}\"",
+      "entry_ref_zh_line": "  ref_zh: \"{ref_zh}\"",
+      "entry_en_context_label": "EN (完整上下文)",
+      "entry_zh_context_label": "ZH (完整上下文)",
+      "entry_en_label": "EN",
+      "entry_zh_label": "ZH",
+      "glossary_term_line": "\"{en}\" → \"{zh}\"",
+      "fuzzy_match_line": "[{key}] sim={similarity}% | EN: \"{en}\" | ZH: \"{zh}\"",
+      "header_with_refs": "{header}\n\n{references}",
+      "filter_entry_block_with_suggestion": "{block}\n{suggestion}",
+      "filter_prompt_assembly": "{header}{instruction}\n\n{entry_blocks}",
+      "untranslated_entry_block": "key: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"",
+      "external_dict_heading": "### 词典",
+      "vanilla_terms_heading": "### 原版词典",
+      "minecraft_dict_heading": "### 原版翻译",
+      "minecraft_dict_fuzzy_label": "模糊匹配：",
+      "block_separator": "\n\n",
+      "term_verification_prompt": [
+        "你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。",
+        "自动术语表从多个模组统计提取，可能存在错误。",
+        "判断每条术语译文是否合适，不合适给出修正。",
+        "输出JSON: [{{\"en\":\"原文\",\"old_zh\":\"原中文\",\"new_zh\":\"修正或原中文\",\"reason\":\"理由\"}}]",
+        "仅输出需要修正的。仅输出JSON数组。",
+        "",
+        "{term_blocks}"
+      ],
+      "term_verification_term_line": "Term: \"{en}\" -> \"{zh}\"\n",
+      "term_verification_context_line": "  [{index}] \"{en}\" -> \"{zh}\"\n",
+      "external_dict_output": "外部词典: \n{entries}",
+      "minecraft_dict_header": "原版词典：",
+      "minecraft_dict_sensitive_warning": "存在版本敏感译名，不同版本存在差异。",
+      "minecraft_dict_output": "{dict_header}{sensitive_warning}{sub_label}\n{body}",
       "filter_header": [
         "## 任务",
         "以下是自动检查和LLM审校后汇总的翻译问题列表。请逐条判断每条是否需要驳回（不提出），需要保留的清洗其问题描述。",
@@ -137,7 +179,10 @@
         "对每条输出: {{\"key\": \"条目的key值\", \"verdict\": \"PASS/❌ FAIL\", \"suggestion\": \"建议译文或空字符串\", \"reason\": \"判定理由\"}}",
         "每条都必须输出，不得遗漏。仅输出JSON数组。",
         "",
-        "## 条目 ({count}条)"
+        "## 条目 ({count}条)",
+        "",
+        "{entry_blocks}",
+        "仅输出JSON数组。"
       ]
     }
   },

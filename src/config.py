@@ -62,6 +62,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["vd_fuzzy_triggers"] = vd.get("fuzzy_trigger_words", ["desc"])
     flat["vd_word_count_threshold"] = vd.get("word_count_threshold", 6)
     flat["vd_similarity_threshold"] = vd.get("vd_similarity_threshold", 60.0)
+    flat["default_namespace_label"] = p.get("default_namespace_label", "其他")
 
     # ── key_prefixes ──
     # 旧格式: dict[str, list[str]] → 新格式: dict[str, dict]
@@ -85,6 +86,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["review_principles"] = l.get("review_principles", [])
     flat["keyboard_guidance"] = l.get("keyboard_guidance")
     flat["mouse_guidance"] = l.get("mouse_guidance")
+    flat["dict_store_headers_to_strip"] = l.get("dict_store_headers_to_strip", [])
 
     filt = l.get("filter", {})
     flat["filter_system_prompt"] = filt.get("system_prompt")
@@ -92,9 +94,23 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
 
     # ── prompt_templates ──
     pt = l.get("prompt_templates", {})
-    for key in ("review_header", "review_pr_section", "review_items_section",
-                 "cross_version_ref_section", "review_input_device_section", "filter_header", "filter_entry_block",
-                 "filter_entry_suggestion", "untranslated_prompt"):
+    for key in ("review_full_header", "filter_header", "filter_entry_block",
+                 "filter_entry_suggestion", "untranslated_prompt",
+                 "reference_section", "glossary_section", "fuzzy_section",
+                 "dict_section", "cross_version_ref_block", "auto_check_line",
+                 "entry_key_line", "entry_en_line", "entry_old_en_line",
+                 "entry_old_zh_line", "entry_ref_en_line", "entry_ref_zh_line",
+                 "entry_en_context_label", "entry_zh_context_label",
+                 "entry_en_label", "entry_zh_label",
+                 "glossary_term_line", "fuzzy_match_line",
+                 "header_with_refs", "filter_entry_block_with_suggestion",
+                 "filter_prompt_assembly", "untranslated_entry_block",
+                 "external_dict_heading", "vanilla_terms_heading",
+                 "minecraft_dict_heading", "minecraft_dict_fuzzy_label", "block_separator",
+                 "term_verification_prompt", "term_verification_term_line",
+                 "term_verification_context_line",
+                 "external_dict_output", "minecraft_dict_header",
+                 "minecraft_dict_sensitive_warning", "minecraft_dict_output"):
         flat[f"prompt_{key}"] = pt.get(key, [])
 
     # ── terminology ──
@@ -158,6 +174,7 @@ GUIDEME_PREFIX: str = "ae2guide:"
 
 # 无名空间哨兵 — 键分类和报告生成中共用
 DEFAULT_NAMESPACE = "__default__"
+DEFAULT_NAMESPACE_LABEL: str = get("default_namespace_label", "其他")
 
 # 带序号键匹配，如 tooltip[0]、advancements.story.root.1
 # 用于检测多段条目的分段索引
@@ -197,14 +214,46 @@ FILTER_INSTRUCTION: str = _as_text(get("filter_instruction"))
 FILTER_BATCH_SIZE: int = get("filter_batch_size", 50)
 
 # prompt 模板
-PROMPT_REVIEW_HEADER: str = _as_text(get("prompt_review_header"))
-PROMPT_REVIEW_PR_SECTION: str = _as_text(get("prompt_review_pr_section"))
-PROMPT_REVIEW_ITEMS_SECTION: str = _as_text(get("prompt_review_items_section"))
-PROMPT_CROSS_VERSION_REF_SECTION: str = _as_text(get("prompt_cross_version_ref_section"))
-PROMPT_REVIEW_INPUT_DEVICE_SECTION: str = _as_text(get("prompt_review_input_device_section"))
+PROMPT_REVIEW_FULL_HEADER: str = _as_text(get("prompt_review_full_header"))
+PROMPT_REFERENCE_SECTION: str = get("prompt_reference_section", "")
+PROMPT_GLOSSARY_SECTION: str = get("prompt_glossary_section", "")
+PROMPT_FUZZY_SECTION: str = get("prompt_fuzzy_section", "")
+PROMPT_DICT_SECTION: str = get("prompt_dict_section", "")
+PROMPT_CROSS_VERSION_REF_BLOCK: str = _as_text(get("prompt_cross_version_ref_block"))
+PROMPT_AUTO_CHECK_LINE: str = get("prompt_auto_check_line", "")
+PROMPT_ENTRY_KEY_LINE: str = get("prompt_entry_key_line", "")
+PROMPT_ENTRY_EN_LINE: str = get("prompt_entry_en_line", "")
+PROMPT_ENTRY_OLD_EN_LINE: str = get("prompt_entry_old_en_line", "")
+PROMPT_ENTRY_OLD_ZH_LINE: str = get("prompt_entry_old_zh_line", "")
+PROMPT_ENTRY_REF_EN_LINE: str = get("prompt_entry_ref_en_line", "")
+PROMPT_ENTRY_REF_ZH_LINE: str = get("prompt_entry_ref_zh_line", "")
+ENTRY_EN_CONTEXT_LABEL: str = get("prompt_entry_en_context_label", "")
+ENTRY_ZH_CONTEXT_LABEL: str = get("prompt_entry_zh_context_label", "")
+ENTRY_EN_LABEL: str = get("prompt_entry_en_label", "")
+ENTRY_ZH_LABEL: str = get("prompt_entry_zh_label", "")
+PROMPT_GLOSSARY_TERM_LINE: str = get("prompt_glossary_term_line", "")
+PROMPT_FUZZY_MATCH_LINE: str = get("prompt_fuzzy_match_line", "")
+PROMPT_HEADER_WITH_REFS: str = get("prompt_header_with_refs", "")
+PROMPT_FILTER_BLOCK_WITH_SUGGESTION: str = get("prompt_filter_entry_block_with_suggestion", "")
+PROMPT_FILTER_ASSEMBLY: str = get("prompt_filter_prompt_assembly", "")
+PROMPT_UNTRANSLATED_ENTRY_BLOCK: str = get("prompt_untranslated_entry_block", "")
+EXTERNAL_DICT_HEADING: str = get("prompt_external_dict_heading", "")
+VANILLA_TERMS_HEADING: str = get("prompt_vanilla_terms_heading", "")
+MINECRAFT_DICT_HEADING: str = get("prompt_minecraft_dict_heading", "")
+MINECRAFT_DICT_FUZZY_LABEL: str = get("prompt_minecraft_dict_fuzzy_label", "模糊匹配：")
+PROMPT_BLOCK_SEPARATOR: str = get("prompt_block_separator", "\n\n")
+PROMPT_TERM_VERIFICATION: str = _as_text(get("prompt_term_verification_prompt"))
+PROMPT_TERM_VERIFY_TERM_LINE: str = get("prompt_term_verification_term_line", "")
+PROMPT_TERM_VERIFY_CTX_LINE: str = get("prompt_term_verification_context_line", "")
+PROMPT_EXTERNAL_DICT_OUTPUT: str = get("prompt_external_dict_output", "")
 PROMPT_FILTER_HEADER: str = _as_text(get("prompt_filter_header"))
 PROMPT_FILTER_ENTRY_BLOCK: str = _as_text(get("prompt_filter_entry_block"))
-PROMPT_FILTER_ENTRY_SUGGESTION: str = _as_text(get("prompt_filter_entry_suggestion"))
+PROMPT_FILTER_ENTRY_SUGGESTION: str = get("prompt_filter_entry_suggestion", "")
 PROMPT_UNTRANSLATED: str = _as_text(get("prompt_untranslated_prompt"))
+
+MINECRAFT_DICT_HEADER: str = get("prompt_minecraft_dict_header", "原版词典：")
+MINECRAFT_DICT_SENSITIVE_WARNING: str = get("prompt_minecraft_dict_sensitive_warning", "")
+PROMPT_MINECRAFT_DICT_OUTPUT: str = get("prompt_minecraft_dict_output", "")
+DICT_STORE_HEADERS_TO_STRIP: tuple[str, ...] = tuple(get("dict_store_headers_to_strip", []))
 
 DEFAULT_PR_REPO: str = get("default_pr_repo", "CFPAOrg/Minecraft-Mod-Language-Package")

@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN
+from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VANILLA_TERMS_HEADING
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.logging import warn
 from src.tools.term_validation import STOP_WORDS
@@ -20,7 +20,7 @@ DEFAULT_VT_DB_PATH = "data/vanilla_terms.db"
 class VanillaTermsStore:
     """按需查询 vanilla_terms.db，scope 预过滤，label 标注，multi-en/zh 支持。"""
 
-    lookup_heading = "### 原版词典"
+    lookup_heading = VANILLA_TERMS_HEADING
     default_lookup_mode = MIXED
 
     def __init__(self, db_path: str = DEFAULT_VT_DB_PATH):

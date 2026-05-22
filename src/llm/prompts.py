@@ -5,7 +5,7 @@
 import re
 
 from src import config as cfg
-from src.config import DEFAULT_NAMESPACE
+from src.config import DEFAULT_NAMESPACE, DEFAULT_NAMESPACE_LABEL
 from src.logging import debug
 from src.dictionary.external import ExternalDictStore
 from src.dictionary.vanilla_terms import VanillaTermsStore
@@ -22,14 +22,6 @@ from src.models import (
     MultipartContext,
     VerdictDict,
 )
-
-# ═══════════════════════════════════════════════════════════
-# 共享常量
-# ═══════════════════════════════════════════════════════════
-
-HDR_REFERENCES = "## 参考信息\n\n"
-HDR_GLOSSARY = "### 术语表\n"
-HDR_FUZZY = "### 模糊匹配\n"
 
 # ═══════════════════════════════════════════════════════════
 # 键名前缀分组
@@ -72,8 +64,8 @@ def classify_entries(entries: list[EntryDict]) -> GroupedEntries:
 def classify_key(key: str) -> str:
     prefix = group_prefix(key)
     if prefix == DEFAULT_NAMESPACE:
-        return "其他"
-    return KEY_PREFIX_PROMPTS.get(prefix, {}).get("label", "其他")
+        return DEFAULT_NAMESPACE_LABEL
+    return KEY_PREFIX_PROMPTS.get(prefix, {}).get("label", DEFAULT_NAMESPACE_LABEL)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -222,32 +214,38 @@ def build_entry_block(
     key = entry["key"]
     en = full_en or entry.get("en", "")
     zh = full_zh or entry.get("zh", "")
-    lines = [f"key: `{key}`"]
+    lines = [cfg.PROMPT_ENTRY_KEY_LINE.format(key=key)]
 
-    en_label = "EN (完整上下文)" if full_en else "EN"
-    zh_label = "ZH (完整上下文)" if full_en else "ZH"
-    lines.append(f'{en_label}: "{en}"')
-    lines.append(f'{zh_label}: "{zh}"')
+    en_label = cfg.ENTRY_EN_CONTEXT_LABEL if full_en else cfg.ENTRY_EN_LABEL
+    zh_label = cfg.ENTRY_ZH_CONTEXT_LABEL if full_en else cfg.ENTRY_ZH_LABEL
+    lines.append(cfg.PROMPT_ENTRY_EN_LINE.format(en_label=en_label, en=en))
+    lines.append(cfg.PROMPT_ENTRY_EN_LINE.format(en_label=zh_label, en=zh))
 
     change = entry.get("_change")
     if change:
         if change.get("old_en"):
-            lines.append(f'old_en: "{change["old_en"]}"')
+            lines.append(cfg.PROMPT_ENTRY_OLD_EN_LINE.format(old_en=change["old_en"]))
         if change.get("old_zh"):
-            lines.append(f'old_zh: "{change["old_zh"]}"')
+            lines.append(cfg.PROMPT_ENTRY_OLD_ZH_LINE.format(old_zh=change["old_zh"]))
         if change.get("ref_version"):
-            lines.append("")
-            lines.append("跨版本参考:")
-            lines.append(f'  ref_version: {change["ref_version"]}')
+            ref_extra_parts = []
             if change.get("ref_en"):
-                lines.append(f'  ref_en: "{change["ref_en"]}"')
+                ref_extra_parts.append(cfg.PROMPT_ENTRY_REF_EN_LINE.format(ref_en=change["ref_en"]))
             if change.get("ref_zh"):
-                lines.append(f'  ref_zh: "{change["ref_zh"]}"')
+                ref_extra_parts.append(cfg.PROMPT_ENTRY_REF_ZH_LINE.format(ref_zh=change["ref_zh"]))
+            ref_extra = "\n".join(ref_extra_parts)
+            lines.append(cfg.PROMPT_CROSS_VERSION_REF_BLOCK.format(
+                ref_version=change["ref_version"],
+                ref_extra=ref_extra,
+            ))
 
     if auto_verdicts:
         lines.append("")
         for v in auto_verdicts:
-            lines.append(f"  自动检查: {v['verdict']} — {v['reason']}")
+            lines.append(cfg.PROMPT_AUTO_CHECK_LINE.format(
+                verdict=v["verdict"],
+                reason=v["reason"],
+            ))
     return "\n".join(lines)
 
 
@@ -296,7 +294,6 @@ def _build_batch_references(
     merged_context: MultipartContext | None = None,
 ) -> str:
     """从全部条目构建 batch 级参考信息节。
-    返回 "## 参考信息\\n\\n### 术语表\\n...\\n\\n### 模糊匹配\\n...\\n\\n### 原版词典\\n...\\n\\n### 词典\\n..."
     无数据时返回空串。
     """
     sections: list[str] = []
@@ -310,9 +307,13 @@ def _build_batch_references(
             if en_key in seen_term:
                 continue
             seen_term.add(en_key)
-            term_lines.append(f'"{g["en"]}" → "{g["zh"]}"')
+            term_lines.append(cfg.PROMPT_GLOSSARY_TERM_LINE.format(
+                en=g["en"], zh=g["zh"]
+            ))
         if term_lines:
-            sections.append(HDR_GLOSSARY + "\n".join(term_lines))
+            sections.append(cfg.PROMPT_GLOSSARY_SECTION.format(
+                glossary_entries="\n".join(term_lines)
+            ))
 
     # ── 模糊匹配 ──
     if fuzzy_map:
@@ -328,12 +329,17 @@ def _build_batch_references(
                     continue
                 seen_fuzzy.add(sig)
                 fuzzy_lines.append(
-                    f"[{key}] sim={fr['similarity']}% | "
-                    f'EN: "{fr.get("en", "")[:100]}" | '
-                    f'ZH: "{fr.get("zh", "")[:100]}"'
+                    cfg.PROMPT_FUZZY_MATCH_LINE.format(
+                        key=key,
+                        similarity=fr["similarity"],
+                        en=fr.get("en", "")[:100],
+                        zh=fr.get("zh", "")[:100],
+                    )
                 )
         if fuzzy_lines:
-            sections.append(HDR_FUZZY + "\n".join(fuzzy_lines))
+            sections.append(cfg.PROMPT_FUZZY_SECTION.format(
+                fuzzy_entries="\n".join(fuzzy_lines)
+            ))
 
     # ── 原版词典 + 词典 ──
     if dict_stores:
@@ -359,7 +365,7 @@ def _build_batch_references(
                     if not stripped:
                         continue
                     # strip known store-internal headers
-                    for prefix_hdr in ("外部词典:", "原版词典："):
+                    for prefix_hdr in cfg.DICT_STORE_HEADERS_TO_STRIP:
                         if stripped == prefix_hdr.strip():
                             stripped = ""
                             break
@@ -370,11 +376,16 @@ def _build_batch_references(
                         seen_store.add(stripped)
 
             if store_lines:
-                sections.append(heading + "\n" + "\n".join(store_lines))
+                sections.append(cfg.PROMPT_DICT_SECTION.format(
+                    dict_heading=heading,
+                    dict_entries="\n".join(store_lines),
+                ))
 
     if not sections:
         return ""
-    return HDR_REFERENCES + "\n\n".join(sections)
+    return cfg.PROMPT_REFERENCE_SECTION.format(
+        sections="\n\n".join(sections)
+    )
 
 
 def build_review_prompt(
@@ -398,24 +409,15 @@ def build_review_prompt(
             focus_parts.append(focus)
     merged_focus = "\n".join(focus_parts) or cfg.DEFAULT_REVIEW_FOCUS
 
-    header = cfg.PROMPT_REVIEW_HEADER.format(
+    header = cfg.PROMPT_REVIEW_FULL_HEADER.format(
         header_prefix=cfg.REVIEW_HEADER_PREFIX,
         focus_notes=merged_focus,
         review_principles=cfg.REVIEW_PRINCIPLES,
-    )
-
-    # 以下 section 全部无条件拼接，保障 prompt 结构稳定以命中 KV cache
-    header += cfg.PROMPT_REVIEW_PR_SECTION.format(
-        change_context=cfg.get("pr_change_context_prompt", "")
-    )
-    header += cfg.PROMPT_CROSS_VERSION_REF_SECTION
-    header += cfg.PROMPT_REVIEW_ITEMS_SECTION.format(
+        change_context=cfg.get("pr_change_context_prompt", ""),
         count=len(entries),
         review_instruction=cfg.REVIEW_INSTRUCTION,
-    )
-    full_input_guidance = cfg.KEYBOARD_GUIDANCE + "\n" + cfg.MOUSE_GUIDANCE
-    header += cfg.PROMPT_REVIEW_INPUT_DEVICE_SECTION.format(
-        input_guidance=full_input_guidance,
+        keyboard_guidance=cfg.KEYBOARD_GUIDANCE,
+        mouse_guidance=cfg.MOUSE_GUIDANCE,
     )
 
     # ── 2. 参考信息随数据变动，保留原写法 ──
@@ -424,7 +426,7 @@ def build_review_prompt(
     )
 
     # ── 3. 组装共享前缀 ──
-    shared_prefix = f"{header}\n\n{references}" if references else header
+    shared_prefix = cfg.PROMPT_HEADER_WITH_REFS.format(header=header, references=references) if references else header
 
     # ── 4. 三元组分组后，组内按 prefix/batch_size 切分 ──
     prompts: list[str] = []
@@ -460,7 +462,7 @@ def build_review_prompt(
                     full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
                     block = build_entry_block(e, auto_v, full_en, full_zh)
                     blocks.append(block)
-                prompts.append("\n\n".join(blocks))
+                prompts.append(cfg.PROMPT_BLOCK_SEPARATOR.join(blocks))
 
     return prompts
 
@@ -505,9 +507,14 @@ def build_filter_prompt(
                     reason=reason,
                 )
                 if suggestion:
-                    block += "\n" + cfg.PROMPT_FILTER_ENTRY_SUGGESTION.format(suggestion=suggestion)
+                    suggestion_text = cfg.PROMPT_FILTER_ENTRY_SUGGESTION.format(suggestion=suggestion)
+                    block = cfg.PROMPT_FILTER_BLOCK_WITH_SUGGESTION.format(block=block, suggestion=suggestion_text)
                 lines.append(block)
-            prompts.append(header + cfg.FILTER_INSTRUCTION + "\n\n" + "\n".join(lines))
+            prompts.append(cfg.PROMPT_FILTER_ASSEMBLY.format(
+                header=header,
+                instruction=cfg.FILTER_INSTRUCTION,
+                entry_blocks="\n".join(lines),
+            ))
     return prompts
 
 
@@ -522,11 +529,14 @@ def build_untranslated_prompt(entries: list[EntryDict], batch_size: int = 1) -> 
         batch = entries[i:i + batch_size]
         blocks: list[str] = []
         for entry in batch:
-            key = entry["key"]
-            en = entry.get("en", "")
-            zh = entry.get("zh", "")
-            blocks.append(f"key: `{key}`\nEN: \"{en}\"\nZH: \"{zh}\"\n")
-        prompt = cfg.PROMPT_UNTRANSLATED.format(count=len(batch))
-        prompt += "\n\n" + "\n".join(blocks) + "\n仅输出JSON数组。"
+            blocks.append(cfg.PROMPT_UNTRANSLATED_ENTRY_BLOCK.format(
+                key=entry["key"],
+                en=entry.get("en", ""),
+                zh=entry.get("zh", ""),
+            ))
+        prompt = cfg.PROMPT_UNTRANSLATED.format(
+            count=len(batch),
+            entry_blocks="\n".join(blocks),
+        )
         prompts.append(prompt)
     return prompts

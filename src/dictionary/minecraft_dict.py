@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from src.logging import warn
-from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD
+from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD, MINECRAFT_DICT_HEADER, MINECRAFT_DICT_SENSITIVE_WARNING, PROMPT_MINECRAFT_DICT_OUTPUT, MINECRAFT_DICT_HEADING, MINECRAFT_DICT_FUZZY_LABEL
 from src import config as cfg
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.tools.fuzzy_search import calc_similarity
@@ -26,7 +26,7 @@ DEFAULT_DB_PATH = "data/Minecraft.db"
 class MinecraftDictStore:
     """按需查询 Minecraft 原版翻译，SQLite FTS5 全文搜索。"""
 
-    lookup_heading = "### 原版翻译"
+    lookup_heading = MINECRAFT_DICT_HEADING
     default_lookup_mode = MIXED
 
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
@@ -291,7 +291,7 @@ class MinecraftDictStore:
             lines, has_sensitive = self._format_rows(rows, mode, 5, target_version, show_sim=True)
             if not lines:
                 return ""
-            return self._make_result(lines, has_sensitive, sub_label="模糊匹配：")
+            return self._make_result(lines, has_sensitive, sub_label=MINECRAFT_DICT_FUZZY_LABEL)
 
         # 默认 / block&item 强制 → 逐词分组
         any_sensitive = False
@@ -316,12 +316,14 @@ class MinecraftDictStore:
 
     def _make_result(self, lines: list[str], has_sensitive: bool, sub_label: str = "") -> str:
         body = "\n".join(lines)
-        header = "原版词典："
-        if has_sensitive:
-            header += "存在版本敏感译名，不同版本存在差异。"
-        if sub_label:
-            header += "\n" + sub_label
-        return header + "\n" + body
+        sensitive = MINECRAFT_DICT_SENSITIVE_WARNING if has_sensitive else ""
+        sub = "\n" + sub_label if sub_label else ""
+        return PROMPT_MINECRAFT_DICT_OUTPUT.format(
+            dict_header=MINECRAFT_DICT_HEADER,
+            sensitive_warning=sensitive,
+            sub_label=sub,
+            body=body,
+        )
 
     def _target_len(self, entries: list[dict[str, Any]]) -> int:
         if not entries:

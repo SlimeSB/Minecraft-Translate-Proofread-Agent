@@ -292,9 +292,9 @@ def llm_verify_glossary(
             continue
         sorted_sources = sorted(sources, key=lambda x: len(x[0]))
         ctx = [sorted_sources[-1]] + sorted_sources[:4]
-        block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
+        block = cfg.PROMPT_TERM_VERIFY_TERM_LINE.format(en=g["en"], zh=g["zh"])
         for j, (en_txt, zh_txt) in enumerate(ctx):
-            block += '  [{}] "{}" -> "{}"\n'.format(j + 1, en_txt, zh_txt)
+            block += cfg.PROMPT_TERM_VERIFY_CTX_LINE.format(index=j + 1, en=en_txt, zh=zh_txt)
         if term_hints:
             hint = term_hints.get(en_lower, "")
             if hint:
@@ -305,13 +305,8 @@ def llm_verify_glossary(
     if not verify_items:
         return glossary
 
-    prompt = (
-        '你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。\n'
-        '自动术语表从多个模组统计提取，可能存在错误。\n'
-        '判断每条术语译文是否合适，不合适给出修正。\n'
-        '输出JSON: [{"en":"原文","old_zh":"原中文","new_zh":"修正或原中文","reason":"理由"}]\n'
-        '仅输出需要修正的。仅输出JSON数组。\n\n'
-        + "\n\n".join(lines)
+    prompt = cfg.PROMPT_TERM_VERIFICATION.format(
+        term_blocks="\n\n".join(lines)
     )
 
     try:

@@ -11,7 +11,7 @@ from typing import Any
 import inflection
 
 from src.logging import info, warn
-from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP
+from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP, PROMPT_EXTERNAL_DICT_OUTPUT, EXTERNAL_DICT_HEADING
 from src.dictionary.protocol import SHORT, LookupModeStr, setup_fts
 
 DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
@@ -22,7 +22,7 @@ from src.tools.term_validation import STOP_WORDS
 class ExternalDictStore:
     """按需查询外部 SQLite 词典，避免全量内存加载（~200-300MB）。"""
 
-    lookup_heading = "### 词典"
+    lookup_heading = EXTERNAL_DICT_HEADING
     default_lookup_mode = SHORT
 
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
@@ -148,7 +148,7 @@ class ExternalDictStore:
 
         if not lines:
             return ""
-        return "外部词典: \n" + "\n".join(lines)
+        return PROMPT_EXTERNAL_DICT_OUTPUT.format(entries="\n".join(lines))
 
     def close(self) -> None:
         if self._conn:
