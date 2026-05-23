@@ -110,6 +110,15 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
 # build_glossary() 拆分出的三个子函数
 # ═══════════════════════════════════════════════════════════
 
+_PUNCTUATION = "：；。，、！？…—·「」《》【】（）:;.,!?—"
+
+
+def _clean_zh_for_glossary(zh: str) -> str:
+    zh = re.sub(r"%(\d+\$)?[+-]?\d*\.?\d*[dsf]", "", zh)
+    zh = zh.strip(_PUNCTUATION)
+    zh = zh.strip()
+    return zh
+
 
 def _collect_zh_translations(
     merged: dict[str, dict[str, Any]],
@@ -146,7 +155,7 @@ def _collect_zh_translations(
             if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
                 skipped_desc += 1
                 continue
-            zh_val = entry.get("zh", "").strip()
+            zh_val = _clean_zh_for_glossary(entry.get("zh", ""))
             en_val = entry.get("en", "")
             if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
                 skipped_empty_or_long += 1

@@ -4,7 +4,7 @@ from collections import Counter
 
 from src.checkers.terminology_builder import (
     _extract_common_zh, TerminologyBuilder, _collect_zh_translations,
-    check_consistency, llm_verify_glossary,
+    _clean_zh_for_glossary, check_consistency, llm_verify_glossary,
 )
 from src.models import AlignmentDict, EntryDict, GlossaryDict
 
@@ -360,6 +360,67 @@ class TestLlmVerifyGlossaryWithDictStores(unittest.TestCase):
         self.assertTrue(captured_prompt, "LLM 应该被调用")
         self.assertIn("原版词典", captured_prompt[0],
                       "term_hints 内容应出现在 prompt 中")
+
+
+class TestCleanZhForGlossary(unittest.TestCase):
+
+    def test_removes_placeholder_colon(self):
+        self.assertEqual(_clean_zh_for_glossary("放置：%s"), "放置")
+
+    def test_removes_placeholder_skip(self):
+        self.assertEqual(_clean_zh_for_glossary("跳过：%s"), "跳过")
+
+    def test_removes_trailing_punct(self):
+        self.assertEqual(_clean_zh_for_glossary("方块。"), "方块")
+
+    def test_clean_text_unchanged(self):
+        self.assertEqual(_clean_zh_for_glossary("铜矿石"), "铜矿石")
+
+    def test_removes_printf_format_d(self):
+        self.assertEqual(_clean_zh_for_glossary("数量：%d"), "数量")
+
+    def test_removes_positional_placeholder(self):
+        self.assertEqual(_clean_zh_for_glossary("打开%1$s"), "打开")
+
+    def test_removes_leading_punct(self):
+        self.assertEqual(_clean_zh_for_glossary("。结束"), "结束")
+
+    def test_strips_whitespace(self):
+        self.assertEqual(_clean_zh_for_glossary("  传送  "), "传送")
+
+    def test_empty_becomes_empty(self):
+        self.assertEqual(_clean_zh_for_glossary(""), "")
+
+    def test_only_placeholder_becomes_empty(self):
+        self.assertEqual(_clean_zh_for_glossary("%s"), "")
+
+
+class TestCollectZhCleansPlaceholder(unittest.TestCase):
+
+    def test_placeholder_not_in_glossary(self):
+        """含 %s 的译文清洗后不应原样进入术语表。"""
+        merged = {
+            "place": {
+                "normalized": "place",
+                "variants": {"place", "placing"},
+                "freq": 5,
+                "keys": ["k1", "k2", "k3", "k4", "k5"],
+                "ngram_type": "unigrams",
+            },
+        }
+        matched: list = [
+            {"key": "k1", "en": "Place Block", "zh": "放置"},
+            {"key": "k2", "en": "Place Item", "zh": "放置"},
+            {"key": "k3", "en": "Placing Block", "zh": "放置"},
+            {"key": "k4", "en": "Placing Entity", "zh": "放置：%s"},
+            {"key": "k5", "en": "Place Entity", "zh": "放置"},
+        ]
+        result = _collect_zh_translations(
+            merged, matched, min_freq=5, min_consensus=0.6,
+            min_total=1, max_zh_len=200, max_en_len=200,
+        )
+        self.assertGreaterEqual(len(result), 1)
+        self.assertNotIn("放置：%s", [g["zh"] for g in result])
 
 
 if __name__ == "__main__":
