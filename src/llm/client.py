@@ -18,12 +18,14 @@ def create_openai_llm_call(
     base_url: str = "https://api.openai.com/v1",
     *,
     system_prompt: str | None = None,
-    log_dir: str = "logs",
+    log_dir: str | None = None,
     reasoning_effort: str | None = None,
     label: str = "LLM",
 ) -> LLMCallable:
     if system_prompt is None:
         system_prompt = _cfg.REVIEW_SYSTEM_PROMPT
+    if log_dir is None:
+        log_dir = _cfg.LOG_DIR
 
     # OpenAI SDK 会自动追加 /chat/completions，不要让它重复
     base_url = base_url.rstrip("/")

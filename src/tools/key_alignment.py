@@ -221,13 +221,16 @@ def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
 
 def check_vanilla_collisions(
     en_data: dict[str, str],
-    db_path: str = "data/Minecraft.db",
+    db_path: str | None = None,
 ) -> list[VerdictDict]:
     """从 Minecraft.db 读取原版 key 并检测模组覆盖。
 
     返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
     """
     import sqlite3
+    if db_path is None:
+        from src import config as cfg
+        db_path = cfg.DATA_DIR + "/Minecraft.db"
     try:
         conn = sqlite3.connect(db_path)
     except sqlite3.OperationalError as e:

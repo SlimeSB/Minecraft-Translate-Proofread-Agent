@@ -12,6 +12,17 @@
     "word_extract_pattern": "[A-Za-z]{3,}",
     "singleton_length_threshold": 2000,
     "default_namespace_label": "其他",
+    "data_dir": "data",
+    "log_dir": "logs",
+    "non_translatable_patterns": [
+      "^[A-Z_]+$",
+      "^[0-9]+$",
+      "^[A-Za-z0-9_.-]+$",
+      "^\u00a7[0-9a-fA-F].*",
+      "^%[a-zA-Z0-9_.$]*$",
+      "^\\{[^{}]*\\}$",
+      "^%[A-Za-z_]\\w*%$"
+    ],
     "vanilla_dict": {
       "per_word_trigger_words": ["block", "blocks", "item", "items"],
       "fuzzy_trigger_words": ["desc"],
@@ -180,6 +191,8 @@
     "max_ngram": 3,
     "max_keys_per_term": 20,
     "max_keys_raw": 100,
+    "zh_glossary_strip_punctuation": "\uff1a\uff1b\u3002\uff0c\u3001\uff01\uff1f\u2026\u2014\u00b7\u300c\u300d\u300a\u300b\u3010\u3011\uff08\uff09:;.,!?\u2014",
+    "term_min_length": 2,
     "blacklist": [
       "the", "a", "an", "of", "to", "in", "and", "is", "it", "you",
       "this", "that", "will", "be", "can", "with", "for", "on", "are",
@@ -193,13 +206,23 @@
     ]
   },
 
+  "dictionary": {
+    "external_dict_max_groups": 3,
+    "external_dict_max_modids": 5,
+    "vanilla_terms_max_short": 5,
+    "vanilla_terms_max_mixed": 15,
+    "minecraft_dict_max_long_words": 30,
+    "minecraft_dict_max_short_words": 10
+  },
+
   "format": {
     "desc_key_suffixes": [
       ".desc", ".description", ".lore", ".tooltip",
       ".flavor", ".info", ".message", ".text"
     ],
     "punctuation_spacing_whitelist": ["book.", "patchouli."],
-    "en_preview_len": 60
+    "en_preview_len": 60,
+    "energy_units": ["FE", "RF", "MB", "EU", "AE", "kJ", "kW", "kRF"]
   },
 
   "pr": {

@@ -11,10 +11,10 @@ from typing import Any
 import inflection
 
 from src.logging import info, warn
-from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP, PROMPT_EXTERNAL_DICT_OUTPUT, EXTERNAL_DICT_HEADING
+from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP, PROMPT_EXTERNAL_DICT_OUTPUT, EXTERNAL_DICT_HEADING, DATA_DIR, EXTERNAL_DICT_MAX_GROUPS, EXTERNAL_DICT_MAX_MODIDS
 from src.dictionary.protocol import SHORT, LookupModeStr, setup_fts
 
-DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
+DEFAULT_DB_PATH = DATA_DIR + "/Dict-Sqlite.db"
 
 from src.tools.term_validation import STOP_WORDS
 
@@ -131,8 +131,8 @@ class ExternalDictStore:
         if not pairs:
             return ""
 
-        max_groups = kwargs.get("max_groups", 3)
-        max_modids = kwargs.get("max_modids", 5)
+        max_groups = kwargs.get("max_groups", EXTERNAL_DICT_MAX_GROUPS)
+        max_modids = kwargs.get("max_modids", EXTERNAL_DICT_MAX_MODIDS)
 
         if mode == SHORT:
             sorted_items = sorted(pairs.items(), key=lambda x: (len(x[1][0]), -len(x[1][1])))

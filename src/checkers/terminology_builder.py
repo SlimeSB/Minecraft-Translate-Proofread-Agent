@@ -110,12 +110,10 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
 # build_glossary() 拆分出的三个子函数
 # ═══════════════════════════════════════════════════════════
 
-_PUNCTUATION = "：；。，、！？…—·「」《》【】（）:;.,!?—"
-
 
 def _clean_zh_for_glossary(zh: str) -> str:
     zh = re.sub(r"%(\d+\$)?[+-]?\d*\.?\d*[dsf]", "", zh)
-    zh = zh.strip(_PUNCTUATION)
+    zh = zh.strip(cfg.ZH_GLOSSARY_STRIP_PUNCTUATION)
     zh = zh.strip()
     return zh
 

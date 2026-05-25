@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from src.logging import warn
-from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD, MINECRAFT_DICT_HEADER, MINECRAFT_DICT_SENSITIVE_WARNING, PROMPT_MINECRAFT_DICT_OUTPUT, MINECRAFT_DICT_HEADING, MINECRAFT_DICT_FUZZY_LABEL
+from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VD_PER_WORD_TRIGGERS, VD_FUZZY_TRIGGERS, VD_WORD_COUNT_THRESHOLD, MINECRAFT_DICT_HEADER, MINECRAFT_DICT_SENSITIVE_WARNING, PROMPT_MINECRAFT_DICT_OUTPUT, MINECRAFT_DICT_HEADING, MINECRAFT_DICT_FUZZY_LABEL, DATA_DIR, MINECRAFT_DICT_MAX_LONG_WORDS, MINECRAFT_DICT_MAX_SHORT_WORDS
 from src import config as cfg
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.tools.fuzzy_search import calc_similarity
@@ -17,10 +17,8 @@ def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in parts)
 
 VD_SIMILARITY_THRESHOLD: float = cfg.get("vd_similarity_threshold", 60.0)
-VD_MAX_LONG_WORDS: int = 30
-VD_MAX_SHORT_WORDS: int = 10
 
-DEFAULT_DB_PATH = "data/Minecraft.db"
+DEFAULT_DB_PATH = DATA_DIR + "/Minecraft.db"
 
 
 class MinecraftDictStore:
@@ -135,13 +133,13 @@ class MinecraftDictStore:
             normal_picked = normal_picked[:max_total]
         else:
             if normal_picked:
-                long_candidates = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+                long_candidates = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= MINECRAFT_DICT_MAX_LONG_WORDS]
                 if long_candidates:
                     longest = max(long_candidates, key=lambda e: len((e.get("en_us", "") or "").split()))
                 else:
                     longest = None
                 rest = [e for e in normal_picked if e is not longest]
-                rest = [e for e in rest if len((e.get("en_us", "") or "").split()) <= VD_MAX_SHORT_WORDS]
+                rest = [e for e in rest if len((e.get("en_us", "") or "").split()) <= MINECRAFT_DICT_MAX_SHORT_WORDS]
                 rest.sort(key=lambda e: len((e.get("en_us", "") or "").split()))
                 rest = rest[:max_total - (1 if longest else 0)]
                 normal_picked = ([longest] if longest else []) + rest
@@ -164,12 +162,12 @@ class MinecraftDictStore:
             for r in normal_picked:
                 lines.append(fmt_entry(r))
         elif normal_picked:
-            long_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+            long_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= MINECRAFT_DICT_MAX_LONG_WORDS]
             if long_candidates_norm:
                 longest_normal = max(long_candidates_norm, key=lambda e: len((e.get("en_us", "") or "").split()))
             else:
                 longest_normal = None
-            short_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= VD_MAX_SHORT_WORDS]
+            short_candidates_norm = [e for e in normal_picked if len((e.get("en_us", "") or "").split()) <= MINECRAFT_DICT_MAX_SHORT_WORDS]
             if short_candidates_norm:
                 shortest_normal = min(short_candidates_norm, key=lambda e: len((e.get("en_us", "") or "").split()))
             else:
@@ -199,7 +197,7 @@ class MinecraftDictStore:
             for entries in sorted_groups:
                 if sens_groups >= max_sensitive:
                     break
-                entries = [r for r in entries if len((r.get("en_us", "") or "").split()) <= VD_MAX_LONG_WORDS]
+                entries = [r for r in entries if len((r.get("en_us", "") or "").split()) <= MINECRAFT_DICT_MAX_LONG_WORDS]
                 if not entries:
                     continue
                 sens_groups += 1

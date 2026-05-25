@@ -8,13 +8,13 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VANILLA_TERMS_HEADING
+from src.config import RE_FORMAT_SPECIFIER_STRIP, WORD_EXTRACT_PATTERN, VANILLA_TERMS_HEADING, DATA_DIR, VANILLA_TERMS_MAX_SHORT, VANILLA_TERMS_MAX_MIXED
 from src.dictionary.protocol import MIXED, SHORT, LookupModeStr, setup_fts
 from src.logging import warn
 from src.tools.term_validation import STOP_WORDS
 from src.tools.version_cmp import version_le
 
-DEFAULT_VT_DB_PATH = "data/vanilla_terms.db"
+DEFAULT_VT_DB_PATH = DATA_DIR + "/vanilla_terms.db"
 
 
 class VanillaTermsStore:
@@ -174,6 +174,6 @@ class VanillaTermsStore:
         if not results:
             return ""
 
-        max_total = kwargs.get("max_total", 5) if mode == SHORT else 15
+        max_total = kwargs.get("max_total", VANILLA_TERMS_MAX_SHORT) if mode == SHORT else VANILLA_TERMS_MAX_MIXED
         results = results[:max_total]
         return "\n".join(r[1] for r in results)

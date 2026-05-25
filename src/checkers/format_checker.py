@@ -51,7 +51,8 @@ RE_BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
 RE_NEWLINE = re.compile(r"\\n|\n")
 
 # 能量/体积单位（\b 需 re.ASCII，否则中文被当作 \w 导致边界失效）
-RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b", re.ASCII)
+_RE_ENERGY_UNITS = [re.escape(u) for u in cfg.ENERGY_UNITS]
+RE_ENERGY_UNIT = re.compile(r"\b(?:" + "|".join(_RE_ENERGY_UNITS) + r")\b", re.ASCII)
 
 # 中文内容检测（含中文字符）
 RE_CHINESE_CHAR = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")

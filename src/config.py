@@ -15,7 +15,7 @@ CONFIG_PATH = "review_config.json"
 _cfg_cache: dict[str, Any] | None = None
 
 # 顶层分组键
-_TOP_GROUPS = {"pipeline", "manual_formats", "llm", "terminology", "format", "pr", "_comment"}
+_TOP_GROUPS = {"pipeline", "manual_formats", "llm", "terminology", "format", "pr", "dictionary", "_comment"}
 
 _PROMPT_WHITELIST: set[str] = {
     "review_full_header", "filter_header", "filter_entry_block",
@@ -81,6 +81,17 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["vd_word_count_threshold"] = vd.get("word_count_threshold", 6)
     flat["vd_similarity_threshold"] = vd.get("vd_similarity_threshold", 60.0)
     flat["default_namespace_label"] = p.get("default_namespace_label", "其他")
+    flat["data_dir"] = p.get("data_dir", "data")
+    flat["log_dir"] = p.get("log_dir", "logs")
+    flat["non_translatable_patterns"] = p.get("non_translatable_patterns", [
+        "^[A-Z_]+$",
+        "^[0-9]+$",
+        "^[A-Za-z0-9_.-]+$",
+        "^\u00a7[0-9a-fA-F].*",
+        "^%[a-zA-Z0-9_.$]*$",
+        "^\\{[^{}]*\\}$",
+        "^%[A-Za-z_]\\w*%$",
+    ])
     flat["singleton_length_threshold"] = p.get("singleton_length_threshold", 2000)
 
     # ── manual_formats ──
@@ -124,17 +135,29 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     flat["max_keys_per_term"] = t.get("max_keys_per_term", 20)
     flat["max_keys_raw"] = t.get("max_keys_raw", 5)
     flat["term_max_ngram"] = t.get("max_ngram", 3)
+    flat["zh_glossary_strip_punctuation"] = t.get("zh_glossary_strip_punctuation", "：；。，、！？…—·「」《》【】（）:;.,!?—")
+    flat["term_min_length"] = t.get("term_min_length", 2)
 
     # ── format ──
     fmt = raw.get("format", {})
     flat["desc_key_suffixes"] = fmt.get("desc_key_suffixes", [])
     flat["punctuation_spacing_whitelist"] = fmt.get("punctuation_spacing_whitelist", [])
     flat["en_preview_len"] = fmt.get("en_preview_len", 60)
+    flat["energy_units"] = fmt.get("energy_units", ["FE", "RF", "MB", "EU", "AE", "kJ", "kW", "kRF"])
 
     # ── pr ──
     pr = raw.get("pr", {})
     flat["pr_change_context_prompt"] = pr.get("change_context_prompt")
     flat["default_pr_repo"] = pr.get("default_repo", "CFPAOrg/Minecraft-Mod-Language-Package")
+
+    # ── dictionary ──
+    d = raw.get("dictionary", {})
+    flat["external_dict_max_groups"] = d.get("external_dict_max_groups", 3)
+    flat["external_dict_max_modids"] = d.get("external_dict_max_modids", 5)
+    flat["vanilla_terms_max_short"] = d.get("vanilla_terms_max_short", 5)
+    flat["vanilla_terms_max_mixed"] = d.get("vanilla_terms_max_mixed", 15)
+    flat["minecraft_dict_max_long_words"] = d.get("minecraft_dict_max_long_words", 30)
+    flat["minecraft_dict_max_short_words"] = d.get("minecraft_dict_max_short_words", 10)
 
     return flat
 
@@ -166,10 +189,24 @@ TERM_MAX_ZH_LEN: int = get("term_max_zh_len", 40)
 TERM_MAX_EN_LEN: int = get("term_max_en_len", 60)
 TERM_CONSENSUS_MIN_TOTAL: int = get("term_consensus_min_total", 3)
 TERM_MAX_NGRAM: int = get("term_max_ngram", 3)
+TERM_MIN_LENGTH: int = get("term_min_length", 2)
+ZH_GLOSSARY_STRIP_PUNCTUATION: str = get("zh_glossary_strip_punctuation", "：；。，、！？…—·「」《》【】（）:;.,!?—")
 MAX_WORKERS: int = get("max_workers", 4)
 
 MANUAL_FORMATS: dict[str, dict[str, Any]] = get("manual_formats")
 SINGLETON_LENGTH_THRESHOLD: int = get("singleton_length_threshold")
+
+DATA_DIR: str = get("data_dir", "data")
+LOG_DIR: str = get("log_dir", "logs")
+NON_TRANSLATABLE_PATTERNS: list[str] = get("non_translatable_patterns")
+ENERGY_UNITS: list[str] = get("energy_units")
+
+EXTERNAL_DICT_MAX_GROUPS: int = get("external_dict_max_groups", 3)
+EXTERNAL_DICT_MAX_MODIDS: int = get("external_dict_max_modids", 5)
+VANILLA_TERMS_MAX_SHORT: int = get("vanilla_terms_max_short", 5)
+VANILLA_TERMS_MAX_MIXED: int = get("vanilla_terms_max_mixed", 15)
+MINECRAFT_DICT_MAX_LONG_WORDS: int = get("minecraft_dict_max_long_words", 30)
+MINECRAFT_DICT_MAX_SHORT_WORDS: int = get("minecraft_dict_max_short_words", 10)
 
 # 无名空间哨兵 — 键分类和报告生成中共用
 DEFAULT_NAMESPACE = "__default__"

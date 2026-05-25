@@ -7,6 +7,7 @@
 import re
 
 from src.logging import warn
+from src.config import TERM_MIN_LENGTH
 
 _STOP_WORDS_CACHE: set[str] | None = None
 
@@ -34,7 +35,7 @@ def is_music_disc_desc(key: str) -> bool:
 
 def is_valid_term(term: str) -> bool:
     t = term.strip().lower()
-    if not t or len(t) <= 2:
+    if not t or len(t) <= TERM_MIN_LENGTH:
         return False
     if re.search(r"\d", t):
         return False
