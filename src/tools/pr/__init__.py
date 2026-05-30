@@ -8,7 +8,7 @@ from typing import Any
 
 from src.logging import info, warn
 
-from . import _http, _lang, _guideme
+from . import _http, _lang, _manual_aligner
 
 
 def _fetch_pr_data(api_base: str, pr: int, token: str) -> tuple[str, str, list[dict[str, Any]]]:
@@ -62,7 +62,13 @@ def _align_json_mods(
             sample = en_head or en_base
             lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
         else:
-            lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
+            zh_head = mod_data["zh_head"]
+            zh_base = mod_data["zh_base"]
+            if zh_head or zh_base:
+                sample = zh_head or zh_base
+                lang_dir = sample.rsplit("/lang/", 1)[0] + "/lang"
+            else:
+                lang_dir = f"projects/{version}/assets/{cid}/{slug}/lang"
 
         try:
             old_en_text = _http.raw_get(f"{raw_base}/{lang_dir}/en_us.json", token) if mod_data["en_base"] is not None else ""
@@ -81,8 +87,12 @@ def _align_json_mods(
         entries, warnings = _lang.align(old_en, new_en, old_zh, new_zh)
 
         if entries:
+            file_path = en_head or en_base or ""
             for e in entries:
                 e["namespace"] = slug
+                e["version"] = version
+                e["file_path"] = file_path
+                e["slug"] = slug
             result_mods[resolved_mod_key] = {
                 "mod_info": mi,
                 "entries": entries,
@@ -97,6 +107,26 @@ def _align_json_mods(
     return all_entries, all_warnings, result_mods
 
 
+def _align_manual_patches(
+    all_changed_files: list[dict[str, Any]],
+    raw_base: str,
+    raw_head: str,
+    raw_get_fn,
+    token: str,
+    llm_call_fn=None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Step 4.5: 手册文档对齐（启发式 + Agent 兜底）。
+    返回: (manual_entries, manual_warnings)
+    """
+    manual_entries, manual_warnings = _manual_aligner.align(
+        all_changed_files, raw_base, raw_head, raw_get_fn, token,
+        llm_call_fn=llm_call_fn,
+    )
+    if manual_entries:
+        info(f"  手册文档: {len(manual_entries)} 条变更")
+    return manual_entries, manual_warnings
+
+
 def _align_guideme_patches(
     all_changed_files: list[dict[str, Any]],
     raw_base: str,
@@ -104,15 +134,8 @@ def _align_guideme_patches(
     raw_get_fn,
     token: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Step 4.5: GuideME 文档对齐。
-    返回: (guideme_entries, guideme_warnings)
-    """
-    guideme_entries, guideme_warnings = _guideme.align(
-        all_changed_files, raw_base, raw_head, raw_get_fn, token,
-    )
-    if guideme_entries:
-        info(f"  GuideME 文档: {len(guideme_entries)} 条变更")
-    return guideme_entries, guideme_warnings
+    """向后兼容别名。"""
+    return _align_manual_patches(all_changed_files, raw_base, raw_head, raw_get_fn, token)
 
 
 def _filter_deletion_entries(
@@ -216,6 +239,7 @@ def run_pr_aligner(
     pr: int,
     output_dir: str,
     token: str = "",
+    llm_call_fn=None,
 ) -> str:
     """主入口：执行 PR 对齐流程，返回输出文件路径。"""
     owner, repo_name = repo.split("/", 1)
@@ -236,9 +260,10 @@ def run_pr_aligner(
     # Step 4: 对齐 JSON
     all_entries, all_warnings, result_mods = _align_json_mods(mods, raw_base, raw_head, token)
 
-    # Step 4.5: GuideME 对齐
-    guideme_entries, guideme_warnings = _align_guideme_patches(
+    # Step 4.5: 手册文档对齐
+    guideme_entries, guideme_warnings = _align_manual_patches(
         all_changed_files, raw_base, raw_head, _http.raw_get, token,
+        llm_call_fn=llm_call_fn,
     )
     if guideme_entries:
         all_entries.extend(guideme_entries)

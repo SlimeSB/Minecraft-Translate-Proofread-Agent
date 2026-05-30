@@ -1,11 +1,24 @@
 """Phase 3c: LLM 审校 —— 筛选条目 → 模糊搜索 → 审校（/交互/干运行）。"""
+import json
+
 from src.logging import info
-from src.models import EntryDict, PipelineContext, VerdictDict
-from src.llm.prompts import classify_entries, filter_for_llm, build_review_prompt, merge_multipart_entries
+from src.models import (
+    EntryDict, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VERDICT_PASS, VerdictDict,
+    update_diagnosis, verdict_str_to_int,
+)
+from src.llm.prompts import filter_for_llm, build_review_prompt, merge_multipart_entries, is_manual_format
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
-from src.storage.database import PipelineDB
 from src import config as cfg
+
+
+def _load_glossary(ctx: PipelineContext) -> list:
+    """加载术语表：优先从 output_dir/glossary.json 读取，不存在则 fallback ctx.glossary。"""
+    glossary_path = ctx.output_dir / "glossary.json"
+    if glossary_path.exists():
+        with open(glossary_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return ctx.glossary
 
 
 def _collect_status_verdicts(untranslated_entries: list[EntryDict]) -> list[VerdictDict]:
@@ -19,26 +32,24 @@ def _collect_status_verdicts(untranslated_entries: list[EntryDict]) -> list[Verd
             "verdict": "🔶 REVIEW",
             "suggestion": "",
             "reason": "疑似未翻译（值相同，需人工判断）",
-            "source": "untranslated_review",
+            "source": SOURCE_UNTRANSLATED_REVIEW,
         })
     return results
 
 
-def _filter_and_prepare(ctx: PipelineContext) -> tuple[list[EntryDict], list[EntryDict], int]:
+def _filter_and_prepare(ctx: PipelineContext, glossary: list) -> tuple[list[EntryDict], list[EntryDict], int]:
     """筛选需 LLM 审校的条目并运行 Phase 3b 模糊搜索。
     返回 (llm_entries, untranslated_llm, auto_pass_count)。"""
     matched = ctx.alignment.get("matched_entries", [])
 
-    auto_flagged_keys: set[str] = set()
-    for v in ctx.format_verdicts + ctx.term_verdicts:
-        auto_flagged_keys.add(v.get("key", ""))
+    untranslated_keys: set[str] = set()
+    db = ctx.db
+    rows = db.execute(
+        "SELECT key FROM entries WHERE diagnoses LIKE '%untranslated_review%'"
+    ).fetchall()
+    untranslated_keys = {r["key"] for r in rows}
 
-    untranslated_keys: set[str] = {
-        v.get("key", "") for v in ctx.format_verdicts
-        if "值相同" in v.get("reason", "")
-    }
-
-    llm_entries, auto_pass = filter_for_llm(matched, auto_flagged_keys, ctx.glossary)
+    llm_entries, auto_pass = filter_for_llm(matched, glossary)
 
     untranslated_llm: list[EntryDict] = []
     if untranslated_keys:
@@ -64,6 +75,7 @@ def _review_entries(
     ctx: PipelineContext,
     llm_entries: list[EntryDict],
     untranslated_llm: list[EntryDict],
+    glossary: list,
 ) -> list[VerdictDict]:
     """执行主线审校与未翻译队列审校，返回 verdicts。"""
     verdicts: list[VerdictDict] = []
@@ -75,15 +87,14 @@ def _review_entries(
         if ctx.dry_run:
             merged = merge_multipart_entries(llm_entries)
             prompts = build_review_prompt(
-                llm_entries, ctx.glossary, auto_map,
+                llm_entries, glossary, auto_map,
                 ctx.fuzzy_results_map, review_batch_size, merged_context=merged,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
             total_chars = sum(len(p) for p in prompts)
             info(f"  [DRY RUN] {len(prompts)} 批, ~{total_chars//4} tokens")
-            groups = classify_entries(llm_entries)
-            for cat, entries in sorted(groups.items()):
-                info(f"    {cat}: {len(entries)} 条")
+            manual_count = sum(1 for e in llm_entries if is_manual_format(e["key"]))
+            info(f"    普通条目: {len(llm_entries) - manual_count} 条, 手册条目: {manual_count} 条")
         elif ctx.interactive:
             info("  进入交互审校模式...")
             verdicts = interactive_entry_review(
@@ -92,18 +103,18 @@ def _review_entries(
         elif ctx.llm_call and not ctx.no_llm:
             bridge = LLMBridge(ctx.llm_call)
             verdicts = bridge.review_batch(
-                llm_entries, ctx.glossary, auto_map,
+                llm_entries, glossary, auto_map,
                 ctx.fuzzy_results_map, review_batch_size,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
 
     if untranslated_llm:
         untranslated_verdicts: list[VerdictDict] = []
         if ctx.dry_run:
             prompts = build_review_prompt(
-                untranslated_llm, ctx.glossary, auto_map,
+                untranslated_llm, glossary, auto_map,
                 ctx.fuzzy_results_map, 1, merged_context=None,
-                external_dict_store=ctx.external_dict_store,
+                dict_stores=ctx.dict_stores,
             )
             total_chars = sum(len(p) for p in prompts)
             info(f"  [未翻译-干运行] {len(untranslated_llm)} 条, ~{total_chars//4} tokens")
@@ -122,24 +133,41 @@ def _review_entries(
             info(f"  [未翻译] {len(untranslated_verdicts)} 条 verdicts")
         verdicts.extend(untranslated_verdicts)
 
-    if not ctx.llm_call or ctx.no_llm:
-        verdicts += [
-            v for v in ctx.format_verdicts + ctx.term_verdicts
-            if v.get("verdict") != "PASS"
-        ]
-
     return verdicts
 
 
 def run_phase3c(ctx: PipelineContext) -> None:
-    llm_entries, untranslated_llm, _auto_pass = _filter_and_prepare(ctx)
+    glossary = _load_glossary(ctx)
+    llm_entries, untranslated_llm, _auto_pass = _filter_and_prepare(ctx, glossary)
 
     if not llm_entries and not untranslated_llm:
-        ctx.llm_verdicts = []
+        db = ctx.db
+        db.execute("UPDATE entries SET state=2 WHERE state < 2")
+        db.commit()
         return
 
-    ctx.llm_verdicts = _review_entries(ctx, llm_entries, untranslated_llm)
-    info(f"  LLM verdicts: {len(ctx.llm_verdicts)} 条")
+    llm_verdicts = _review_entries(ctx, llm_entries, untranslated_llm, glossary)
+    info(f"  LLM verdicts: {len(llm_verdicts)} 条")
 
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(ctx.llm_verdicts, "llm")
+    db = ctx.db
+    source = "llm_review"
+
+    # 8.1: Write LLM verdicts directly to entries table
+    for v in llm_verdicts:
+        key = v.get("key", "")
+        if not key:
+            continue
+        llm_verdict_str = v.get("verdict", VERDICT_PASS)
+        verdict_int = verdict_str_to_int(llm_verdict_str)
+        suggestion = v.get("suggestion", "")
+        reason = v.get("reason", "")
+        src = v.get("source", source)
+
+        diagnoses_json = update_diagnosis(db, key, src, reason)
+        db.execute(
+            "UPDATE entries SET state=MAX(state,2), verdict=MAX(verdict,?), suggestion=?, diagnoses=? WHERE key=?",
+            (verdict_int, suggestion, diagnoses_json, key))
+
+    # 8.2: Blanket push all entries to state >= 2
+    db.execute("UPDATE entries SET state=2 WHERE state < 2")
+    db.commit()

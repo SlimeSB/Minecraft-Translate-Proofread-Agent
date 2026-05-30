@@ -4,7 +4,7 @@ from collections import Counter
 
 from src.checkers.terminology_builder import (
     _extract_common_zh, TerminologyBuilder, _collect_zh_translations,
-    check_consistency, llm_verify_glossary,
+    _clean_zh_for_glossary, check_consistency, llm_verify_glossary,
 )
 from src.models import AlignmentDict, EntryDict, GlossaryDict
 
@@ -209,8 +209,12 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_ore": "Copper Ore",
             "block.iron_ore": "Iron Ore",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.iron_ore": "铁矿石",
+        }
         mock_llm = lambda p: "[]"
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜")
         self.assertEqual(glossary[1]["zh"], "铁")
@@ -224,8 +228,12 @@ class TestTerminologyBuilder(unittest.TestCase):
             "block.copper_ore": "Copper Ore",
             "block.copper_block": "Copper Block",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.copper_block": "铜块",
+        }
         mock_llm = lambda p: '[{"en":"copper","old_zh":"铜","new_zh":"铜矿石","reason":"应包含材质名"}]'
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜矿石")
 
@@ -237,23 +245,26 @@ class TestTerminologyBuilder(unittest.TestCase):
         en_data = {
             "block.copper_ore": "Copper Ore",
         }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+        }
 
         def mock_llm(_p):
             raise RuntimeError("网络错误")
 
-        result = llm_verify_glossary(glossary, en_data, mock_llm)
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm)
         self.assertIs(result, glossary)
         self.assertEqual(glossary[0]["zh"], "铜")
 
     def test_llm_verify_glossary_empty_glossary(self):
         """空 glossary 直接返回。"""
-        result = llm_verify_glossary([], {}, lambda p: "[]")
+        result = llm_verify_glossary([], {}, {}, lambda p: "[]")
         self.assertEqual(result, [])
 
     def test_llm_verify_glossary_no_llm_call(self):
         """llm_call 为 None 时直接返回。"""
         glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
-        result = llm_verify_glossary(glossary, {}, None)  # type: ignore[arg-type]
+        result = llm_verify_glossary(glossary, {}, {}, None)  # type: ignore[arg-type]
         self.assertIs(result, glossary)
 
     def test_check_consistency_merged_none_downgrade(self):
@@ -311,6 +322,105 @@ class TestTerminologyBuilder(unittest.TestCase):
         self.assertEqual(len(verdicts), 1)
         self.assertEqual(verdicts[0]["verdict"], "❌ FAIL")
         self.assertIn("术语不一致", verdicts[0]["reason"])
+
+
+class TestLlmVerifyGlossaryWithDictStores(unittest.TestCase):
+
+    def test_dict_stores_raises_not_provided(self):
+        """term_hints=None 时行为不变，不额外注入参考。"""
+        glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
+        en_data = {"block.copper_ore": "Copper Ore", "block.iron_ore": "Iron Ore"}
+        zh_data = {"block.copper_ore": "铜矿石", "block.iron_ore": "铁矿石"}
+        mock_llm = lambda p: "[]"
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm, term_hints=None)
+        self.assertIs(result, glossary)
+        self.assertEqual(glossary[0]["zh"], "铜")
+
+    def test_dict_stores_injects_term_hints(self):
+        """term_hints 有值时在 prompt 中注入。"""
+        glossary: list[GlossaryDict] = [{"en": "copper", "zh": "铜"}]
+        en_data = {  # 至少需要 2 个不同来源才能触发 LLM 校验
+            "block.copper_ore": "Copper Ore",
+            "block.copper_block": "Copper Block",
+        }
+        zh_data = {
+            "block.copper_ore": "铜矿石",
+            "block.copper_block": "铜块",
+        }
+
+        captured_prompt: list[str] = []
+
+        def mock_llm(p: str) -> str:
+            captured_prompt.append(p)
+            return "[]"
+
+        term_hints = {"copper": "原版词典: \nCopper -> 铜 [1.20.0-1.21.0]"}
+        result = llm_verify_glossary(glossary, en_data, zh_data, mock_llm, term_hints=term_hints)
+        self.assertIs(result, glossary)
+        self.assertTrue(captured_prompt, "LLM 应该被调用")
+        self.assertIn("原版词典", captured_prompt[0],
+                      "term_hints 内容应出现在 prompt 中")
+
+
+class TestCleanZhForGlossary(unittest.TestCase):
+
+    def test_removes_placeholder_colon(self):
+        self.assertEqual(_clean_zh_for_glossary("放置：%s"), "放置")
+
+    def test_removes_placeholder_skip(self):
+        self.assertEqual(_clean_zh_for_glossary("跳过：%s"), "跳过")
+
+    def test_removes_trailing_punct(self):
+        self.assertEqual(_clean_zh_for_glossary("方块。"), "方块")
+
+    def test_clean_text_unchanged(self):
+        self.assertEqual(_clean_zh_for_glossary("铜矿石"), "铜矿石")
+
+    def test_removes_printf_format_d(self):
+        self.assertEqual(_clean_zh_for_glossary("数量：%d"), "数量")
+
+    def test_removes_positional_placeholder(self):
+        self.assertEqual(_clean_zh_for_glossary("打开%1$s"), "打开")
+
+    def test_removes_leading_punct(self):
+        self.assertEqual(_clean_zh_for_glossary("。结束"), "结束")
+
+    def test_strips_whitespace(self):
+        self.assertEqual(_clean_zh_for_glossary("  传送  "), "传送")
+
+    def test_empty_becomes_empty(self):
+        self.assertEqual(_clean_zh_for_glossary(""), "")
+
+    def test_only_placeholder_becomes_empty(self):
+        self.assertEqual(_clean_zh_for_glossary("%s"), "")
+
+
+class TestCollectZhCleansPlaceholder(unittest.TestCase):
+
+    def test_placeholder_not_in_glossary(self):
+        """含 %s 的译文清洗后不应原样进入术语表。"""
+        merged = {
+            "place": {
+                "normalized": "place",
+                "variants": {"place", "placing"},
+                "freq": 5,
+                "keys": ["k1", "k2", "k3", "k4", "k5"],
+                "ngram_type": "unigrams",
+            },
+        }
+        matched: list = [
+            {"key": "k1", "en": "Place Block", "zh": "放置"},
+            {"key": "k2", "en": "Place Item", "zh": "放置"},
+            {"key": "k3", "en": "Placing Block", "zh": "放置"},
+            {"key": "k4", "en": "Placing Entity", "zh": "放置：%s"},
+            {"key": "k5", "en": "Place Entity", "zh": "放置"},
+        ]
+        result = _collect_zh_translations(
+            merged, matched, min_freq=5, min_consensus=0.6,
+            min_total=1, max_zh_len=200, max_en_len=200,
+        )
+        self.assertGreaterEqual(len(result), 1)
+        self.assertNotIn("放置：%s", [g["zh"] for g in result])
 
 
 if __name__ == "__main__":

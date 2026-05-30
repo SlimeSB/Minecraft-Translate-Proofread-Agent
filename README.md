@@ -5,17 +5,18 @@
 
 Minecraft 模组简中翻译自动化审校工具。对照原文审查译文，自动检测格式错误、术语不一致、语义偏差等问题，并生成结构化审校报告。
 
-支持三种原文格式：**JSON** (`en_us.json`)、**Lang** (`en_us.lang`, `key=value`)、**GuideME** (`ae2guide/*.md`)。
+支持三种原文格式：**JSON** (`en_us.json`)、**Lang** (`en_us.lang`, `key=value`)、**手册文档** (`ae2guide/*.md` 等)。
 
 ## 特性
 
 - **键对齐** — 自动匹配中英文键，检测缺失/多余/疑似未翻译条目
 - **多格式支持** — JSON、Lang（`key=value`）、GuideME 文档全部覆盖
-- **术语提取与词库构建** — N-gram 提取 + 词形归并（规则/缓存/模糊/LLM 四级）→ 自动构建术语表并一致性检查；token 真子集守卫防止多词短语被吞入单词
+- **术语提取与词库构建** — N-gram 提取 + 词形归并（规则分桶 → inflection 名词单数归一化归并）→ 自动构建术语表并一致性检查；token 真子集守卫防止多词短语被吞入单词
 - **程序化格式检查** — 10 项确定性检查（占位符、颜色码、tellraw JSON、标点规范、省略号等），零 LLM 成本
 - **LLM 启发式审校** — 仅将歧义/语义问题提交 LLM，大幅降低 token 消耗
 - **模糊搜索翻译记忆** — SQLite FTS5 + Levenshtein 发现相似原文的不同翻译
-- **PR 模式** — 直接对 GitHub PR diff 做审校，支持 JSON/Lang/GuideME 三种文件类型；术语从 PR 内完整文件提取（非仅 diff）
+- **PR 模式** — 直接对 GitHub PR diff 做审校，支持 JSON/Lang/手册文档三种文件类型；术语从 PR 内完整文件提取（非仅 diff）
+- **PR 多版本审校** — 跨版本差异检测，同一模组多版本 PR 自动比对新增/修改 key，生成版本间对比报告
 - **术语表 LLM 校验** — 程序提取术语后，取 1 最长 + 4 最短上下文交 LLM 复核修正
 - **原版 key 碰撞检测** — 从 `data/Minecraft.db`（含版本区间）检测模组是否覆盖原版 key
 - **外部社区词典** — 按需 SQLite 查询约 90 万条历史翻译，LLM 审校时自动注入参考
@@ -185,11 +186,13 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── checkers/
 │   │   ├── format_checker.py      # 全自动格式验证
 │   │   ├── terminology_builder.py # 术语提取 & 一致性检查
-│   │   ├── lemma_merge.py         # 词形归并逻辑
-│   │   └── lemma_cache.py         # 词形缓存
+│   │   └── lemma_merge.py         # 词形归并（规则分桶 → inflection）
 │   ├── dictionary/
 │   │   ├── __init__.py
-│   │   └── external.py            # 外部词典加载与查询
+│   │   ├── protocol.py            # DictStore 统一接口
+│   │   ├── external.py            # 外部社区词典加载与查询
+│   │   ├── vanilla_terms.py       # 原版精筛术语参考
+│   │   └── minecraft_dict.py      # 原版翻译（已由 vanilla_terms 替代）
 │   ├── llm/
 │   │   ├── __init__.py            # re-export 层
 │   │   ├── client.py              # OpenAI 客户端工厂 + 日志/重试
@@ -203,15 +206,19 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │       ├── terminology_extract.py # N-gram 术语提取
 │       ├── term_validation.py     # 共享停用词 & 术语有效性检查
 │       ├── fuzzy_search.py        # SQLite FTS5 模糊搜索
+│       ├── version_cmp.py         # Minecraft 版本号比较
 │       └── pr/                    # PR 对齐模块化架构
 │           ├── __init__.py        #   编排器
 │           ├── _http.py           #   GitHub API 拉取
 │           ├── _lang.py           #   JSON 语言文件对齐
-│           └── _guideme.py        #   GuideME 文档对齐
+│           ├── _manual_aligner.py #   通用手册文档对齐
+│           └── cross_version_diff.py  # 跨版本差异检测
 ├── tests/
 │   ├── fixtures/                 # 测试数据
 │   ├── test_config.py
+│   ├── test_cross_version_diff.py
 │   ├── test_database.py
+│   ├── test_external_dict.py
 │   ├── test_format_checker.py
 │   ├── test_fuzzy_search.py
 │   ├── test_key_alignment.py
@@ -220,6 +227,7 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── test_llm_bridge.py
 │   ├── test_llm_client.py
 │   ├── test_llm_prompts.py
+│   ├── test_minecraft_dict.py
 │   ├── test_phase4_filter.py
 │   ├── test_pipeline_integration.py
 │   ├── test_pr_guideme.py
@@ -227,7 +235,8 @@ sqlite3 output/pipeline.db "SELECT key, verdict, reason FROM verdicts WHERE phas
 │   ├── test_report_generator.py
 │   ├── test_term_validation.py
 │   ├── test_terminology_builder.py
-│   └── test_terminology_extract.py
+│   ├── test_terminology_extract.py
+│   └── test_version_cmp.py
 ├── .github/workflows/            # CI: pytest + pyright (Python 3.11-3.13)
 └── output/                       # 输出目录
 ```

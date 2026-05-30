@@ -31,10 +31,15 @@
 import json
 import re
 from pathlib import Path
+from typing import Any, Sequence
+
+from src.logging import warn
+
 from src.tools.code_detection import is_likely_code_or_proper_noun
+from src.config import RE_INDEXED_KEY, COMMENT_KEY_PATTERN
 from src.models import AlignmentDict, EntryDict, VerdictDict
 
-_COMMENT_KEY_RE = re.compile(r"^_comment")
+_COMMENT_KEY_RE = re.compile(COMMENT_KEY_PATTERN)
 
 
 def load_json_clean(path: str) -> tuple[dict[str, str], list[str]]:
@@ -120,27 +125,125 @@ def align_keys(en_data: dict[str, str], zh_data: dict[str, str]) -> AlignmentDic
     }
 
 
+def iter_indexed_groups(
+    entries: Sequence[Any],
+) -> list[tuple[str, list[Any]]]:
+    """按 RE_INDEXED_KEY 将多段序号条目（如 tooltip[0], tooltip[1]）分组并排序。
+
+    返回 [(base_key, sorted_group), ...]，仅含 size >= 2 的组。
+    """
+    groups: dict[tuple[str, str], list[Any]] = {}
+    for e in entries:
+        m = RE_INDEXED_KEY.match(str(e.get("key", "")))
+        if m:
+            gk = (m.group(1), str(e.get("version", "")))
+            groups.setdefault(gk, []).append(e)
+    result: list[tuple[str, list[Any]]] = []
+    for (base, _ver), group in groups.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda e: int(RE_INDEXED_KEY.match(str(e["key"])).group(2)))
+        result.append((base, group))
+    return result
+
+
+def merge_indexed_entries(alignment: AlignmentDict) -> AlignmentDict:
+    """合并多段序号条目（tooltip[0], tooltip[1]...），仅保留首 key 并拼接全文。
+
+    对 matched_entries / suspicious_untranslated 生效。
+    missing_zh / extra_zh 不改动（它们不成组）。
+    """
+    from src.logging import info, warn
+
+    def _merge(entries: list, label: str) -> list:
+        """Group indexed entries, merge multi-part groups, return flat list."""
+        standalone: list[dict] = []
+        indexed: dict[tuple[str, str], list[dict]] = {}
+        for e in entries:
+            m = RE_INDEXED_KEY.match(e.get("key", ""))
+            if m:
+                gk = (m.group(1), e.get("version", ""))
+                indexed.setdefault(gk, []).append(e)
+            else:
+                standalone.append(e)
+
+        merged_count = 0
+        for (base, _ver), group in indexed.items():
+            if len(group) < 2:
+                standalone.extend(group)
+                continue
+            group.sort(key=lambda e: int(RE_INDEXED_KEY.match(e["key"]).group(2)))
+            full_en = "".join(e.get("en", "") for e in group)
+            full_zh = "".join(e.get("zh", "") for e in group)
+            merged_count += len(group) - 1
+            group[0]["en"] = full_en
+            group[0]["zh"] = full_zh
+            standalone.append(group[0])
+
+        if merged_count:
+            info(f"  [合并序号条目] {label}: {merged_count} 条合并到 {len(standalone)} 条（原 {len(entries)} 条）")
+        return standalone
+
+    matched = _merge(alignment["matched_entries"], "matched")
+    suspicious = []
+    for e in alignment.get("suspicious_untranslated", []):
+        m = RE_INDEXED_KEY.match(e.get("key", ""))
+        if m:
+            base = m.group(1)
+            full_en = ""
+            full_zh = ""
+            found = False
+            for me in matched:
+                if me.get("key", "").startswith(base):
+                    full_en = me.get("en", "")
+                    full_zh = me.get("zh", "")
+                    found = True
+                    break
+            if found and full_en == full_zh:
+                e["en"] = full_en
+                e["zh"] = full_zh
+                suspicious.append(e)
+        else:
+            suspicious.append(e)
+
+    stats = alignment.get("stats", {})
+    stats["matched"] = len(matched)
+    stats["suspicious_untranslated"] = len(suspicious)
+
+    return {
+        "matched_entries": matched,
+        "missing_zh": alignment["missing_zh"],
+        "extra_zh": alignment["extra_zh"],
+        "suspicious_untranslated": suspicious,
+        "stats": stats,
+    }
+
 
 def check_vanilla_collisions(
     en_data: dict[str, str],
-    db_path: str = "data/Minecraft.db",
+    db_path: str | None = None,
 ) -> list[VerdictDict]:
     """从 Minecraft.db 读取原版 key 并检测模组覆盖。
 
     返回碰撞列表，每项: {key, mod_value, vanilla_zh, version_start, version_end, changes}。
     """
     import sqlite3
+    if db_path is None:
+        from src import config as cfg
+        db_path = cfg.DATA_DIR + "/Minecraft.db"
     try:
         conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        warn(f"[vanilla_collision] 无法连接原版DB: {e}")
         return []
+    conn.row_factory = sqlite3.Row
 
     try:
         rows = conn.execute(
             "SELECT key, zh_cn, version_start, version_end, changes FROM vanilla_keys"
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        warn(f"[vanilla_collision] 原版DB查询失败: {e}")
         conn.close()
         return []
 

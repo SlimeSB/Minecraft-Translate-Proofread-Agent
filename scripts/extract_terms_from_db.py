@@ -78,7 +78,7 @@ def main():
     tb.extract(min_freq=args.min_freq)
 
     print("归并词形...")
-    tb.merge_lemmas(llm_call=None)  # 纯算法归并，不用 LLM
+    tb.merge_lemmas()
 
     print("构建术语表...")
     glossary = tb.build_glossary(min_freq=args.min_freq)

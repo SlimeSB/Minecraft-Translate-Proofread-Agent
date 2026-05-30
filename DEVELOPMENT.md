@@ -1,6 +1,6 @@
 # 开发文档
 
-> 源码总计约 5470 行 Python（40 个源文件），测试约 2911 行（19 个文件，291 个用例）。
+> 源码总计约 6003 行 Python（46 个源文件），测试约 3752 行（22 个测试模块，432 个用例）。
 
 ## 架构概览
 
@@ -10,7 +10,6 @@ run.py                              # CLI 入口（269行），参数解析，�
   │
   ├─ 传统模式                       # --en / --zh (JSON或.lang自动检测)
   ├─ PR 模式                        # --pr [--repo] (JSON/Lang/GuideME)
-  ├─ filter-only 模式               # --filter-only → 加载 DB → 调用 run_phase5()
   └─ 构建 LLM callable             # create_openai_llm_call()
        │
        ▼
@@ -20,13 +19,13 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   ├─ Phase  1: run_phase1()   ◄── phase1_alignment.py
   │   ├─ src/tools/key_alignment.py     (JSON: load_json_clean + align_keys)
   │   │   └─ check_vanilla_collisions()   (Minecraft.db 原版碰撞检测)
-  │   └─ src/tools/lang_parser.py       (Lang: load_lang → dict)
+  │   ├─ src/tools/lang_parser.py       (Lang: load_lang → dict)
+  │   └─ src/tools/pr/cross_version_diff.py (PR 跨版本差异检测)
   │
   ├─ Phase  2: run_phase2()   ◄── phase2_terminology.py
   │   ├─ src/checkers/terminology_builder.py  (主流程 + LLM术语校验)
   │   ├─ src/tools/terminology_extract.py     (N-gram 提取)
-  │   ├─ src/checkers/lemma_merge.py          (词形归并)
-  │   └─ src/checkers/lemma_cache.py          (缓存, 数据存储于 data/lemma_cache.json)
+  │   ├─ src/checkers/lemma_merge.py          (词形归并: 规则分桶 → inflection 名词单数归一化归并)
   │
   ├─ Phase 3a: run_phase3a()  ◄── phase3a_format.py
   │   └─ src/checkers/format_checker.py
@@ -37,14 +36,15 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   ├─ Phase 3c: run_phase3c()  ◄── phase3c_review.py
   │   ├─ _filter_and_prepare()     筛选+Phase 3b 模糊搜索
   │   ├─ _review_entries()         主线/未翻译审校
-  │   ├─ src/llm/prompts.py       (提示词构建、条目分类、术语覆盖)
-  │   ├─ src/llm/bridge.py        (LLMBridge: 异步批处理、过滤、解析)
+  │   ├─ src/llm/prompts.py       (提示词构建、批量参考信息架构)
+  │   ├─ src/llm/bridge.py        (LLMBridge: 异步批处理、warmup_first 暖场、过滤、解析)
   │   ├─ src/llm/client.py        (OpenAI 客户端工厂、日志、重试)
   │   ├─ src/dictionary/external.py  (外部社区词典按需查询)
+  │   ├─ src/dictionary/vanilla_terms.py (原版术语精筛, scope 预过滤)
   │   └─ 外部 LLM API
   │
   ├─ Phase  4: run_phase4()   ◄── phase4_filter.py
-  │   └─ LLMBridge.filter_verdicts() + filter_cache 表
+  │   └─ LLMBridge.filter_verdicts() → UPDATE entries (state=3)
   │
   └─ Phase  5: run_phase5()   ◄── phase5_report.py
       └─ src/reporting/report_generator.py
@@ -59,7 +59,8 @@ run.py --pr 5979
        │
        ├─ pr/_http.py          # GitHub API / raw 拉取
        ├─ pr/_lang.py          # JSON 语言文件配对对齐
-       └─ pr/_guideme.py       # GuideME 文档配对对齐
+        ├─ pr/_manual_aligner.py # 通用手册文档对齐
+       └─ pr/cross_version_diff.py  # 跨版本差异检测
 ```
 
 ### 存储层架构
@@ -67,26 +68,23 @@ run.py --pr 5979
 ```
 ┌─────────────────────────────────────────────────┐
 │                 pipeline.db                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │ alignment│ │ glossary │ │     verdicts     │ │
-│  │  (key,   │ │ (en, zh) │ │ (key, phase,     │ │
-│  │  en, zh, │ │          │ │  verdict, reason, │ │
-│  │  ns…)    │ │          │ │  filtered, …)     │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │  fuzzy   │ │  filter  │ │       meta       │ │
-│  │ _results │ │  _cache  │ │  (key, value)    │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
+│  ┌──────────────────────────────────────────────┐│
+│  │                  entries                     ││
+│  │  (key TEXT PK, en, zh, format, namespace,    ││
+│  │   version, file_path, slug, old_en, old_zh,  ││
+│  │   state INT, verdict INT, suggestion TEXT,   ││
+│  │   diagnoses TEXT(JSON))                      ││
+│  └──────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────┘
 ```
 
-`src/storage/database.py` — `PipelineDB` 类封装所有数据库操作，各 Phase 通过它读写中间结果。
+`src/storage/database.py` — `PipelineDB` 薄封装（`execute`/`commit`/`close`），各 Phase 直接写单表 `entries`。Glossary 独立存为 `output_dir/glossary.json` 文件。
 
 ## 核心模块
 
 ### 0. `src/models.py` — 领域模型
 
-`PipelineContext` 数据类承载所有 Phase 间的共享状态，各 Phase 是接收 ctx 的纯函数：
+`PipelineContext` 数据类承载所有 Phase 间的共享状态，各 Phase 是接收 ctx 的纯函数。包含类型安全的 `PhaseName`、`SourceType` 等 Literal 常量，避免字符串硬编码。
 
 ```python
 from dataclasses import dataclass
@@ -107,21 +105,23 @@ class PipelineContext:
 
     # PR 模式
     pr_mode: bool; pr_alignment: dict | None
+    pr_full_en_data: dict[str, str] | None
+    pr_full_zh_data: dict[str, str] | None
 
     # 中间结果（各 Phase 渐进填充）
     en_data: dict[str, str]
     zh_data: dict[str, str]
     alignment: AlignmentDict
     glossary: list[GlossaryDict]
-    format_verdicts: list[VerdictDict]
-    term_verdicts: list[VerdictDict]
-    llm_verdicts: list[VerdictDict]
     fuzzy_results_map: FuzzyResultsMap
+
+    # DB 连接
+    db: PipelineDB | None
 ```
 
 ### 1. `src/pipeline/pipeline.py` — 薄编排器
 
-`ReviewPipeline` 只负责构建 `PipelineContext` 并按顺序调用各 Phase 函数：
+`ReviewPipeline` 只负责构建 `PipelineContext` 并按顺序调用各 Phase 函数（123 行）：
 
 ```python
 class ReviewPipeline:
@@ -132,8 +132,7 @@ class ReviewPipeline:
         run_phase1(self.ctx)    # 键对齐 / PR 数据加载
         run_phase2(self.ctx)    # 术语提取 + LLM校验
         run_phase3a(self.ctx)   # 格式检查
-        run_phase3c(self.ctx)   # LLM 审校（含筛选 + 模糊搜索 + 外部词典）
-        _save_merged_verdicts(self.ctx)
+        run_phase3c(self.ctx)   # LLM 审校（含筛选 + Phase 3b 模糊搜索 + 外部词典）
         run_phase4(self.ctx)    # 最终过滤
         run_phase5(self.ctx)    # 报告生成
 ```
@@ -144,10 +143,11 @@ class ReviewPipeline:
 
 | 文件 | 职责 |
 |------|------|
-| `src/llm/client.py` (127 行) | `create_openai_llm_call()` — OpenAI 兼容客户端 + 指数退避重试 + 日志滚动；`label` 参数标记调用来源，日志带 `[label#N] [id=uuid]` 唯一标识 |
-| `src/llm/prompts.py` (378 行) | `build_review_prompt()`、`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。外部词典提示注入。 |
-| `src/llm/bridge.py` (358 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 响应解析（4层容错）。`interactive_entry_review()` — 交互模式。 |
-| `src/dictionary/external.py` (140 行) | `ExternalDictStore` — 按需 SQLite 查询社区词典，`lookup()` 按英文单词匹配历史翻译并注入 LLM 提示词。停用词从 `term_validation.STOP_WORDS` 导入。 |
+| `src/llm/client.py` (95 行) | `create_openai_llm_call()` — OpenAI 兼容客户端 + 指数退避重试 + 日志滚动；`label` 参数标记调用来源，日志带 `[label#N] [id=uuid8]` 唯一标识 |
+| `src/llm/prompts.py` (395 行) | `build_review_prompt()` — 批量参考信息架构，合并模糊匹配、术语表、外部词典、原版术语引用；`build_filter_prompt()`、`classify_entries()`、`filter_for_llm()`、`merge_multipart_entries()` 等。所有提示词构建与条目筛选逻辑。 |
+| `src/llm/bridge.py` (369 行) | `LLMBridge` 类 — `review_batch()`（异步批处理审校 + `warmup_first` 首条串行预热 KV cache）、`filter_verdicts()`（Phase 4 过滤）。`parse_review_response()` — 统一 JSON 解析入口（4层容错）。`interactive_entry_review()` — 交互模式。 |
+| `src/dictionary/external.py` (173 行) | `ExternalDictStore` — 按需 SQLite 查询社区词典，`lookup()` 按英文单词匹配历史翻译并注入 LLM 提示词。实现 `DictStore` Protocol 统一接口。 |
+| `src/dictionary/vanilla_terms.py` (162 行) | `VanillaTermsStore` — 查询 `data/vanilla_terms.db` 获取精筛原版术语，支持 scope 预过滤和 label 标注。实现 `DictStore` Protocol。 |
 
 所有 LLM 功能从 `src.llm` 包导入（`__init__.py` 统一重导出）。
 
@@ -204,7 +204,7 @@ is_valid_term(term) -> bool  # 统一术语有效性检查（长度/数字/停�
 
 ### 5. `src/checkers/format_checker.py` — 格式检查
 
-10 项确定性检查，全部纯规则：
+10 项确定性检查，全部纯规则。唱片名检测共用 `is_music_disc_desc()` 工具函数；阈值参数统一从 `review_config.json` 读取。
 
 | 检查项   | 方法                     | 规则                                                 |
 | 空翻译   | `_check_empty_translation` | zh 为空字符串 → FAIL                              |
@@ -221,8 +221,8 @@ is_valid_term(term) -> bool  # 统一术语有效性检查（长度/数字/停�
 ### 6. `src/reporting/report_generator.py` — 报告生成
 
 `ReportGenerator` 类收集各来源的 verdict，按 key 去重合并，生成：
-- `pipeline.db` verdicts 表（phase=`merged`）— 统一审校报告
 - `report.md` — Markdown 可读报告
+- `report.json` — 完整 JSON 报告
 - `<ns>_report.md` — 按 namespace 拆分的质量报告
 - `glossary.json` — 术语表 JSON 文件
 
@@ -233,21 +233,26 @@ Verdict 优先级：`❌ FAIL`(4) > `🔶 REVIEW`(3) > `⚠️ SUGGEST`(2) > `PA
 
 ### 7. `src/config.py` — 配置加载
 
-从 `review_config.json` 读取所有配置，新增键需加入 `_KNOWN_KEYS` 否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`GUIDEME_PREFIX`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES` 等。
+从 `review_config.json` 读取所有配置，新增配置 key 需加入 `_KNOWN_KEYS`（已更名 `_TOP_GROUPS` + `_PROMPT_WHITELIST`）否则启动告警。多行文本字段支持字符串数组格式（运行时 `\n` join）。常用配置常量（`src/config.py`）：`MANUAL_FORMATS`、`TERM_MIN_FREQ`、`TERM_MAX_NGRAM`、`DESC_KEY_SUFFIXES`、`DICT_STORE_HEADERS_TO_STRIP` 等。
+
+**提示词模板化**：`fc0d336` 将所有硬编码提示词片段改为配置模板，拆分出 30+ 模板常量（`review_full_header`、`reference_section`、`glossary_section`、`fuzzy_section`、`entry_key_line` 等），各模板在 `review_config.json` 的 `prompt_templates` 节配置。`build_review_prompt()` 等函数不再拼接字符串，而是填充 `{变量}` 占位符组装模板。
 
 ### 8. `src/tools/pr/` — PR 对齐（模块化架构）
 
 ```
 src/tools/pr/
-├── __init__.py     # run_pr_aligner() 编排器 (~259 行)
-├── _http.py        # GitHub API 拉取 + raw文件获取
-├── _lang.py        # JSON语言文件: match() + group_mod_files() + align()
-└── _guideme.py     # GuideME文档: match() + align()
+├── __init__.py              # run_pr_aligner() 编排器 (268 行)
+├── _http.py                 # GitHub API 拉取 + raw文件获取
+├── _manual_aligner.py       # 通用手册文档对齐（启发式+Agent兜底）
+├── _lang.py                 # JSON语言文件: match() + group_mod_files() + align()
+└── cross_version_diff.py    # 跨版本差异检测: compute_cross_version_diff()
 ```
 
 **添加新对齐器**：在 `pr/` 下新建 `_xxx.py`，实现 `match(path) → dict|None` 和 `align(...)` 函数，然后在 `__init__.py` 的 `run_pr_aligner()` 中调用。
 
-**GuideME 对齐规则**：
+**手册文档对齐**（如 `ae2guide` 格式）：
+- 由通用 `_manual_aligner.py` 统一处理（取代旧专有 GuideME 模块）
+- 两阶段发现：启发式路径匹配 + Agent 兜底解析
 - 路径匹配：`ae2guide/_zh_cn/xxx.md` ↔ `ae2guide/xxx.md`
 - 以相对路径作为 entry key（如 `ae2guide:crazyguide/ampere_meter.md`）
 - 整篇 `.md` 文件内容作为 `en`/`zh` 值
@@ -268,31 +273,26 @@ JSON/Lang文件
         │
         ├─ load_json_clean() / load_lang()  (自动检测格式)
         ▼
-   key_alignment ──── alignment 表
-        │                     │
-        │ matched_entries      │ missing / extra / suspicious
-        ├─ terminology_builder │
-        │  └─ glossary 表 + verdicts(terminology) 表
+   key_alignment ──── INSERT entries (state=0, verdict=0)
         │
-        ├─ format_checker ───── verdicts(format) 表
+        ├─ terminology_builder ──── glossary.json + UPDATE entries (state≥1)
         │
-        ├─ fuzzy_search ─────── fuzzy_results 表
+        ├─ format_checker ──────── UPDATE entries (state≥1)
         │
-        ├─ LLM review ───────── verdicts(llm) 表
+        ├─ fuzzy_search ────────── fuzzy_results_map (仅内存)
         │
-        ▼
-   verdict merge ────────────── verdicts(merged) 表
+        ├─ LLM review ──────────── UPDATE entries (state=2)
         │
-        ├─ final_filter ─────── verdicts.filtered 字段 + filter_cache 表
+        ├─ final_filter ────────── UPDATE entries (state=3)
         │
         ▼
-   report_generator ────────── meta 表
-        │
-        ▼
+   report_generator ─────────────────────────────────────
+        │                                                   │
+        ▼                                                   ▼
    report.md / report.json / <ns>_report.md / glossary.json
 ```
 
-所有中间数据统一存在 `output/pipeline.db`（单一 SQLite 文件）。
+所有翻译条目数据统一存在 `output/pipeline.db` entries 表的单文件中。术语表独立存为 `output/glossary.json`。
 
 ## 算法详解
 
@@ -304,11 +304,15 @@ JSON/Lang文件
 
 加载 JSON/Lang → 过滤 `_comment*` key → en/zh key 集合比对。`en==zh` 且非代码 → `suspicious_untranslated`。可选原版碰撞检测（`data/Minecraft.db` 含版本区间）。
 
+**跨版本差异检测**（PR 模式）：`compute_cross_version_diff()` 对同一 slug 的多版本 PR 数据递归比对，每个低版本与紧邻高版本比对，产出新增 key 和修改 key 清单，跳过删除 key。数据载入 `ctx.cross_version_diffs` 供 Phase 5 输出跨版本差异报告。
+
 ### Phase 2 — 术语提取与一致性检查
 
 **N-gram 提取**：去 HTML/MC格式码/printf占位符 → 小写 → 过滤 60+ stop words（`term_validation.STOP_WORDS`，合并自四处独立逻辑）→ 产 unigram/bigram/trigram/全短语。`TERM_MIN_FREQ` 和 `TERM_MAX_NGRAM` 从配置读取。
 
-**词形归并（4 级）**：规则分桶 → 缓存查表 → 模糊聚类（Levenshtein ≥ 65% + 并查集）→ LLM 裁决。每级受 **token 真子集守卫** 保护，阻止多词短语被吞入单词（如 `"upgrade adds"` → `"upgrade"`）。缓存持久化于 `data/lemma_cache.json`。
+**公共中文提取**：`_extract_common_zh()` 先尝试整条译文作为子串匹配（如 "方铅岩" 出现在 "方铅岩砖" 中），失败时回退到 `_find_common_substr()` 搜索任意位置最长公共子串（如 "头套" 出现在 "蜜蜂头套/黑色绵羊头套/兔兔头套" 中），需覆盖 ≥ `min_ratio` 比例的译文。
+
+**词形归并（2 级）**：规则分桶 → inflection 名词单数归一化归并。`inflection.singularize()` 将每个词的复数形式归一为单数，按归一化后形式合并 morphological variants（如 swords→sword, ingots→ingot, wolves→wolf）。受 **token 真子集守卫** 保护，阻止多词短语被吞入单词（如 `"upgrade adds"` → `"upgrade"`）。不再需要 `LemmaCache`、`fuzzy_cluster` 或 LLM 归并。
 
 **术语表构建**：共识判定（最高频 ≥ 60% 且 ≥ 3 次）→ 术语表；描述性后缀条目（`.desc`、`.lore` 等）不参与共识统计；中文互斥时短术语二次统计救援（`try_rescue_short_term`）。
 
@@ -328,7 +332,7 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 ### Phase 3c — LLM 审校
 
-**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。GuideME 条目（配置常量 `GUIDEME_PREFIX`，默认 `"ae2guide:"`）逐条发送（文档太长保质量），其余 20 条/批。
+**筛选策略**：仅送自动检查标记/LLM要求前缀（advancements., death., enchantment. 等）/长文本(>80)/术语表未覆盖条目。手册文档条目（如 `ae2guide:`）逐条单独发送（文档太长保质量），其余 50 条/批（`review_batch_size` 配置，可通过 `--batch-size` 覆盖）。
 
 **函数拆分**：`run_phase3c()` 拆为 `_filter_and_prepare()`（筛选+Phase 3b 模糊搜索）和 `_review_entries()`（主线/未翻译审校），提升可读性。
 
@@ -336,19 +340,32 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 **交互模式**：逐条展示 EN/ZH + 自动检查 + 模糊参考，用户 1-4 选择判定并输入理由/建议。
 
-### Phase 3 Merge — 判决合并
-
-按 key 归并所有来源 verdict，取最高优先级。写入 `verdicts` 表 phase='merged'。
-
 ### Phase 4 — 最终 LLM 过滤
 
-LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → 改判 PASS**，**保留 → 维持原 verdict**，全部标记 `filtered=1`。
-
-`filter_cache` 表基于 `blake2b(key + verdict + zh[:150] + reason[:200])` → 16字节 (128-bit) hex hash，已判条目下次跳过 LLM 调用。GuideME 条目同样逐条过滤。
+从 entries 表读取 `state=2 AND verdict>=1` 的条目，LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → 改判 PASS**（`state=3, verdict=0`），**保留 → 维持原 verdict**（`state=3`，不做修改）。手册文档条目同样逐条过滤。
 
 ### Phase 5 — 报告生成
 
-加载 `filtered=1` verdict，PASS 计入统计但不列入问题清单。按 namespace 分组输出 `report.json`、`report.md`、`<ns>_report.md`、`glossary.json`（术语表 JSON 文件）。Console 输出摘要 + 表格（前 30 行）。
+从 entries 表加载 `verdict >= 1` 的条目，PASS 计入统计但不列入问题清单。从 `glossary.json` 加载术语表。按 namespace/slug/version 分组输出 `report.json`、`report.md`、`<ns>_report.md`。PR 模式额外输出跨版本差异报告。
+
+### 跨版本差异检测（PR 多版本审校）
+
+`cross_version_diff.py` 支持同一模组多版本 PR 的差异比对：
+
+- 每个低版本与紧邻高版本比对（如 v1 → v2, v2 → v3），最高版本无差异
+- `compute_cross_version_diff()`：计算单个版本对的新增 key（当前有、参考无）和修改 key（两版本都有但 en/zh 值不同）
+- `compute_all_cross_version_diffs()`：对所有版本执行全量递归对比
+- 删除的 key 跳过（不报告）
+- 值完全相同的 key 跳过
+- 差异数据通过 `PipelineContext.cross_version_diffs` 传递至 Phase 5 报告
+
+### 版本号比较 (`src/tools/version_cmp.py`)
+
+解析 `major.minor[.patch]` 格式（如 `1.20`、`1.20.1`），支持排序和 ≤ 比较：
+
+- `parse_mc_version()` → 整数元组 `(major, minor[, patch])`，非法版本返回空元组 `()`
+- `sort_versions_desc()` → 降序排列，非法版本排最后
+- `version_le(a, b)` → 判断 a ≤ b，用于 vanilla terms scope 匹配
 
 ### LLM 重试机制
 
@@ -363,7 +380,7 @@ python -m venv venv
 pip install openai pytest pyright
 cp .env.example .env
 
-# 运行测试 (291 tests, 19 个模块)
+# 运行测试 (432 tests, 22 个模块)
 pytest tests/ -v
 
 # 类型检查
@@ -387,7 +404,11 @@ GitHub Actions (`.github/workflows/test.yml`): 每次 push/PR 在 Python 3.11/3.
 
 ### 外部词典模块 (`src/dictionary/`)
 
-`ExternalDictStore` 封装外部社区翻译词典查询，采用按需 SQLite 查询模式（替代早期全量内存加载）。`lookup(en_text)` 根据英文原文中的单词在词典中匹配历史翻译，按译文分组返回注入给 LLM 提示词的参考文本。
+所有词典存储实现 `DictStore` Protocol 统一接口（`protocol.py`），通过 `collect_hints()` 函数批量收集各词典的翻译参考并注入 LLM 提示词。
+
+- `ExternalDictStore` — 按需 SQLite 查询 `data/Dict-Sqlite.db`，`lookup()` 按英文单词匹配历史翻译。查无结果时通过 `inflection.singularize()` 做词形回退（复数→单数）再查（替代旧的 `lemma_cache.json` 查表逻辑）。
+- `VanillaTermsStore` — 查询 `data/vanilla_terms.db`，支持 scope 预过滤和 label 标注，精筛原版术语参考。
+- `MinecraftDictStore` — 历史遗留，查询 `data/Minecraft.db` 原版翻译，已由 VanillaTermsStore 替代。
 
 ## 扩展指南
 

@@ -16,8 +16,6 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["term_max_zh_len"], 40)
         self.assertEqual(flat["term_max_en_len"], 60)
         self.assertEqual(flat["term_consensus_min_total"], 3)
-        self.assertEqual(flat["fuzzy_cluster_threshold"], 65.0)
-        self.assertEqual(flat["fuzzy_cluster_top_n"], 200)
         self.assertEqual(flat["default_pr_repo"], "CFPAOrg/Minecraft-Mod-Language-Package")
         self.assertEqual(flat["desc_key_suffixes"], [])
         self.assertEqual(flat["punctuation_spacing_whitelist"], [])
@@ -32,7 +30,6 @@ class TestFlatten(unittest.TestCase):
         flat = _flatten({"terminology": {
             "min_freq": 3, "min_consensus": 0.8, "max_zh_len": 60,
             "max_en_len": 80, "consensus_min_total": 5,
-            "fuzzy_cluster_threshold": 70.0, "fuzzy_cluster_top_n": 150,
             "blacklist": ["foo", "bar"]
         }})
         self.assertEqual(flat["term_min_freq"], 3)
@@ -40,8 +37,6 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["term_max_zh_len"], 60)
         self.assertEqual(flat["term_max_en_len"], 80)
         self.assertEqual(flat["term_consensus_min_total"], 5)
-        self.assertEqual(flat["fuzzy_cluster_threshold"], 70.0)
-        self.assertEqual(flat["fuzzy_cluster_top_n"], 150)
         self.assertEqual(flat["term_blacklist"], ["foo", "bar"])
 
     def test_llm_group(self):
@@ -51,9 +46,6 @@ class TestFlatten(unittest.TestCase):
             "default_review_focus": "accuracy",
             "review_instruction": ["Check 1", "Check 2"],
             "review_principles": ["Be concise"],
-            "merge_system_prompt": ["Merge these"],
-            "keyboard_guidance": "keyboard tips",
-            "mouse_guidance": "mouse tips",
             "filter": {
                 "system_prompt": "Filter prompt",
                 "instruction": ["Filter instruction"]
@@ -67,13 +59,12 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(flat["filter_system_prompt"], "Filter prompt")
         self.assertEqual(flat["filter_instruction"], ["Filter instruction"])
 
-    def test_key_prefixes_llm_required(self):
-        flat = _flatten({"key_prefixes": {
-            "death.": {"llm_required": True},
-            "item.": {"llm_required": False},
-            "block.": {},
+    def test_manual_formats(self):
+        flat = _flatten({"manual_formats": {
+            "ae2guide": {"label": "模组文档", "dir_name": "ae2guide"},
         }})
-        self.assertEqual(flat["llm_required_prefixes"], ["death."])
+        self.assertIn("ae2guide", flat["manual_formats"])
+        self.assertEqual(flat["manual_formats"]["ae2guide"]["label"], "模组文档")
 
     def test_format_group(self):
         flat = _flatten({"format": {
@@ -133,8 +124,9 @@ class TestGetWithMock(unittest.TestCase):
             self.assertEqual(cfg.get("term_min_freq", 5), 3)
             self.assertEqual(cfg.get("nonexistent", 99), 99)
 
+    @patch("src.config.warn")
     @patch("src.config._cfg_cache", None)
-    def test_get_file_not_found_uses_defaults(self):
+    def test_get_file_not_found_uses_defaults(self, mock_warn):
         mock_open = unittest.mock.mock_open()
         mock_open.side_effect = FileNotFoundError
         with patch("builtins.open", mock_open):

@@ -12,8 +12,11 @@ import re
 from typing import Any
 
 from src import config as cfg
+from src.config import RE_INDEXED_KEY
 from src.models import EntryDict, VerdictDict
+from src.models import SOURCE_FORMAT_CHECK, SOURCE_UNTRANSLATED_REVIEW
 from src.tools.code_detection import is_likely_code_or_proper_noun
+from src.tools.term_validation import is_music_disc_desc
 
 # ═══════════════════════════════════════════════════════════
 # 正则模式库
@@ -48,7 +51,8 @@ RE_BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
 RE_NEWLINE = re.compile(r"\\n|\n")
 
 # 能量/体积单位（\b 需 re.ASCII，否则中文被当作 \w 导致边界失效）
-RE_ENERGY_UNIT = re.compile(r"\b(FE|RF|MB|EU|AE|kJ|kW|kRF)\b", re.ASCII)
+_RE_ENERGY_UNITS = [re.escape(u) for u in cfg.ENERGY_UNITS]
+RE_ENERGY_UNIT = re.compile(r"\b(?:" + "|".join(_RE_ENERGY_UNITS) + r")\b", re.ASCII)
 
 # 中文内容检测（含中文字符）
 RE_CHINESE_CHAR = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
@@ -58,6 +62,8 @@ RE_ELLIPSIS_WRONG = re.compile(r"\.{3}")  # 三个英文句号 ...
 
 # tellraw JSON 检测：以 {"text": 开头的字符串
 RE_TELLRAW = re.compile(r'^\s*\{[^}]*"text"\s*:')
+
+
 
 def _compare_placeholder_lists(
     en_items: list[str],
@@ -116,23 +122,16 @@ class FormatChecker:
         """初始化格式检查器。"""
 
     def check_all(self, entry: EntryDict) -> list[VerdictDict]:
-        """对单条 entry 执行所有格式检查，返回 verdict 列表。"""
+        """对单条 entry 执行所有 _check_* 方法，返回 verdict 列表。"""
         key = entry["key"]
         en = entry["en"]
         zh = entry["zh"]
 
-        checks = [
-            self._check_empty_translation,
-            self._check_music_disc_no_translation,
-            self._check_placeholder_integrity,
-            self._check_special_tags,
-            self._check_tellraw_json,
-            self._check_punctuation,
-            self._check_trailing_whitespace,
-            self._check_energy_units,
-            self._check_ellipsis,
-            self._check_sound_subtitle_format,
-        ]
+        checks = sorted(
+            (getattr(self, name) for name in dir(self)
+             if name.startswith("_check_") and callable(getattr(self, name))),
+            key=lambda fn: fn.__name__,
+        )
 
         verdicts: list[VerdictDict] = []
         for check_fn in checks:
@@ -146,21 +145,25 @@ class FormatChecker:
     def _check_empty_translation(
         self, key: str, en: str, zh: str
     ) -> VerdictDict | None:
-        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。"""
+        """检查空翻译：zh 为空或 zh == en 且原文非代码/专有名词。
+        跳过带序号的键（如 tooltip[0]、advancements.story.root.1）。"""
+        if RE_INDEXED_KEY.match(key):
+            return None
         if zh == "" and en != "":
-            if "music_disc" in key and key.endswith(".desc"):
-                return None  # 唱片名(.desc)不翻译
+            if is_music_disc_desc(key):
+                return None
             if not is_likely_code_or_proper_noun(en):
                 return self._verdict(key, en, zh, "❌ FAIL",
                     reason=f"翻译为空，原文'{en[:_EN_PREVIEW_LEN]}'未翻译",
                 )
             return None
         if en == zh and en != "":
-            if "music_disc" in key and key.endswith(".desc"):
-                return None  # 唱片名(.desc)不翻译
+            if is_music_disc_desc(key):
+                return None
             if not is_likely_code_or_proper_noun(en):
                 return self._verdict(key, en, zh, "❌ FAIL",
                     reason=f"值相同（'{en[:_EN_PREVIEW_LEN]}'），疑似未翻译",
+                    source=SOURCE_UNTRANSLATED_REVIEW,
                 )
         return None
 
@@ -168,7 +171,7 @@ class FormatChecker:
         self, key: str, en: str, zh: str
     ) -> VerdictDict | None:
         """唱片名(.desc)不应翻译，已翻译则回报。"""
-        if "music_disc" in key and key.endswith(".desc") and en != zh and en != "" and zh != "":
+        if is_music_disc_desc(key) and en != zh and en != "" and zh != "":
             return self._verdict(key, en, zh, "⚠️ SUGGEST",
                 reason=f"唱片名不应翻译，建议保留原文（'{en[:_EN_PREVIEW_LEN]}'）",
             )
@@ -207,44 +210,24 @@ class FormatChecker:
     def _check_special_tags(
         self, key: str, en: str, zh: str
     ) -> VerdictDict | None:
-        """检查特殊标签完整性：§颜色码、&颜色码、$(action)、HTML标签、<br>、\n。"""
+        """检查 §/& 颜色码、$(action)占位符、HTML标签、<br>、换行符等。"""
+        tag_checks = [
+            (RE_MC_COLOR, "§颜色码"),
+            (RE_ALT_COLOR, "&颜色码"),
+            (RE_PLACEHOLDER_DOLLAR, "$(action)占位符"),
+            (RE_HTML_TAG, "HTML标签"),
+            (RE_BR_TAG, "<br>"),
+            (RE_NEWLINE, "换行符"),
+        ]
         issues: list[str] = []
-
-        # § 格式码
-        en_mc = RE_MC_COLOR.findall(en)
-        zh_mc = RE_MC_COLOR.findall(zh)
-        if sorted(en_mc) != sorted(zh_mc):
-            issues.append(f"§颜色码不一致: EN有{len(en_mc)}个, ZH有{len(zh_mc)}个")
-
-        # & 格式码
-        en_alt = RE_ALT_COLOR.findall(en)
-        zh_alt = RE_ALT_COLOR.findall(zh)
-        if sorted(en_alt) != sorted(zh_alt):
-            issues.append(f"&颜色码不一致: EN有{len(en_alt)}个, ZH有{len(zh_alt)}个")
-
-        # $(action) / $(l:...)
-        en_dollar = RE_PLACEHOLDER_DOLLAR.findall(en)
-        zh_dollar = RE_PLACEHOLDER_DOLLAR.findall(zh)
-        if sorted(en_dollar) != sorted(zh_dollar):
-            issues.append(f"$(action)占位符不一致: EN有{len(en_dollar)}个, ZH有{len(zh_dollar)}个")
-
-        # HTML/XML 标签
-        en_html = RE_HTML_TAG.findall(en)
-        zh_html = RE_HTML_TAG.findall(zh)
-        if sorted(en_html) != sorted(zh_html):
-            issues.append(f"HTML标签不一致: EN有{len(en_html)}个, ZH有{len(zh_html)}个")
-
-        # <br> 标签
-        en_br = len(RE_BR_TAG.findall(en))
-        zh_br = len(RE_BR_TAG.findall(zh))
-        if en_br != zh_br:
-            issues.append(f"<br>数量不一致: EN={en_br}, ZH={zh_br}")
-
-        # \n 换行
-        en_nl = len(RE_NEWLINE.findall(en))
-        zh_nl = len(RE_NEWLINE.findall(zh))
-        if en_nl != zh_nl:
-            issues.append(f"换行符数量不一致: EN={en_nl}, ZH={zh_nl}")
+        for regex, label in tag_checks:
+            en_found = regex.findall(en)
+            zh_found = regex.findall(zh)
+            if sorted(en_found) != sorted(zh_found):
+                if label in ("<br>", "换行符"):
+                    issues.append(f"{label}数量不一致: EN={len(en_found)}, ZH={len(zh_found)}")
+                else:
+                    issues.append(f"{label}不一致: EN有{len(en_found)}个, ZH有{len(zh_found)}个")
 
         if issues:
             return self._verdict(key, en, zh, "❌ FAIL",
@@ -398,6 +381,7 @@ class FormatChecker:
     def _verdict(
         key: str, en: str, zh: str, verdict: str, reason: str,
         suggestion: str = "",
+        source: str = SOURCE_FORMAT_CHECK,
     ) -> VerdictDict:
         return {
             "key": key,
@@ -406,6 +390,6 @@ class FormatChecker:
             "verdict": verdict,
             "suggestion": suggestion,
             "reason": reason,
-            "source": "format_check",
+            "source": source,
         }
 

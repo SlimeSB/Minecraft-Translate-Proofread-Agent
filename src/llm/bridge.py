@@ -2,7 +2,7 @@
 import asyncio
 import json
 import re
-from src.logging import info, warn
+from src.logging import info, warn, debug
 
 from src import config as cfg
 from src.models import (
@@ -12,13 +12,20 @@ from src.models import (
     FuzzyResultsMap,
     GlossaryDict,
     LLMCallable,
+    SOURCE_INTERACTIVE,
+    SOURCE_LLM_ERROR,
+    SOURCE_LLM_REVIEW,
+    SOURCE_UNTRANSLATED_REVIEW,
+    VERDICT_PASS,
     VerdictDict,
+    normalize_verdict,
+    verdict_str_to_int,
 )
 from src.llm.prompts import (
     build_filter_prompt,
     build_review_prompt,
     build_untranslated_prompt,
-    classify_key,
+    manual_format_label,
     merge_multipart_entries,
 )
 
@@ -28,60 +35,146 @@ from src.llm.prompts import (
 # ═══════════════════════════════════════════════════════════
 
 def _normalize_verdict(v: VerdictDict) -> None:
-    for field in ("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"):
-        val = v.get(field, "")
-        if isinstance(val, dict):
-            zh_val = val.get("zh", "") or val.get("text", "") or val.get("value", "")
-            if zh_val:
-                val = zh_val
-            else:
-                val = json.dumps(val, ensure_ascii=False)
-        elif not isinstance(val, str):
-            val = str(val)
-        v[field] = val
+    """桥内规范化——委托给共享 normalize_verdict 再写回。"""
+    nv = normalize_verdict(v, fields=("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"))
+    for k in ("source", "en_current", "zh_current", "suggestion", "reason", "verdict", "key"):
+        v[k] = nv[k]
 
 
-def _is_truncated_json(response: str) -> bool:
-    """检测 JSON 响应是否被截断。"""
-    stripped = response.strip()
-    if not stripped:
-        return False
-    if stripped.count("{") != stripped.count("}"):
-        return True
-    if stripped.count("[") != stripped.count("]"):
-        return True
-    return False
+
+def _extract_top_level_objects(text: str) -> list[str]:
+    """用大括号深度匹配提取顶层 JSON 对象，不受内部未转义引号影响。"""
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objects.append(text[start:i + 1])
+                start = -1
+    return objects
 
 
-def parse_review_response(response: str) -> list[VerdictDict]:
-    # 直接解析整个响应
+def _extract_fields_from_malformed(obj_text: str) -> dict | None:
+    """从单个畸变 JSON 对象中提取字段（key/verdict/suggestion/reason）。
+
+    适用场景：LLM 返回的 reason 字段内含未转义 ASCII 双引号导致 json.loads 失败。
+    key/verdict 用简单正则（不含引号），suggestion 非贪婪匹配，
+    reason 取 "reason": " 到最后一个 " 之前（因为它是最后一个字段）。
+    """
+    import re as _re
+    result: dict[str, str] = {}
+
+    # key — 不含引号的简单值
+    m = _re.search(r'"key":\s*"([^"]*)"', obj_text)
+    if not m:
+        return None
+    result['key'] = m.group(1)
+
+    # verdict — 同样简单
+    m = _re.search(r'"verdict":\s*"([^"]*)"', obj_text)
+    if m:
+        result['verdict'] = m.group(1)
+
+    # suggestion — 稍后可含引号；非贪婪匹配到 , } 或单独 }
+    m = _re.search(r'"suggestion":\s*"(.*?)"\s*[,}]', obj_text)
+    if m:
+        result['suggestion'] = m.group(1)
+
+    # reason — 最可能含未转义引号，且通常是最后一个字段
+    # 取 "reason": " 之后、最后一个 " 之前的内容
+    ridx = obj_text.find('"reason"')
+    if ridx >= 0:
+        colon = obj_text.find(':', ridx)
+        if colon >= 0:
+            open_q = obj_text.find('"', colon + 1)
+            if open_q >= 0:
+                val_start = open_q + 1
+                close_brace = obj_text.rfind('}')
+                if close_brace >= val_start:
+                    close_q = obj_text.rfind('"', val_start, close_brace)
+                    if close_q > val_start:
+                        result['reason'] = obj_text[val_start:close_q]
+                    elif close_q == val_start:
+                        result['reason'] = ''
+
+    return result
+
+
+def _robust_parse_malformed_json(text: str) -> list[dict]:
+    """从畸变 JSON 文本中提取对象：大括号匹配后逐对象回退到字段提取。"""
+    objects = _extract_top_level_objects(text)
+    if not objects:
+        return []
+
+    results: list[dict] = []
+    for obj_text in objects:
+        try:
+            obj = json.loads(obj_text)
+            if isinstance(obj, dict):
+                results.append(obj)
+            continue
+        except json.JSONDecodeError:
+            pass
+        obj = _extract_fields_from_malformed(obj_text)
+        if obj:
+            results.append(obj)
+    return results
+
+
+def parse_llm_json(response: str, *, extract_code_block: bool = False) -> list[dict]:
+    """统一 LLM JSON 响应解析（四层回退：直接→正则提取→逐行→大括号健壮提取）。
+
+    设 extract_code_block=True 时先剥离 markdown 围栏代码块。
+    返回 dict 列表；解析失败返回空列表。
+    """
+    text = response.strip()
+    if extract_code_block and "```" in text:
+        m = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+
     try:
-        data = json.loads(response)
+        data = json.loads(text)
         if isinstance(data, list):
             return data
         if isinstance(data, dict) and "verdicts" in data:
             return data["verdicts"]
-    except json.JSONDecodeError:  # Acceptable — three-tier parse chain (direct→regex→line-by-line)
+    except json.JSONDecodeError:
         pass
-    # 提取 JSON 数组
-    json_match = re.search(r"\[.*\]", response, re.DOTALL)
+
+    json_match = re.search(r"\[.*\]", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group())
-        except json.JSONDecodeError:  # Acceptable fallback
+        except json.JSONDecodeError:
             pass
-    # 逐行解析 JSON 对象
-    results: list[VerdictDict] = []
-    for line in response.split("\n"):
+
+    results: list[dict] = []
+    for line in text.split("\n"):
         line = line.strip()
         if line.startswith("{") and line.endswith("}"):
             try:
                 obj = json.loads(line)
-                if "key" in obj and "verdict" in obj:
-                    results.append(obj)
+                results.append(obj)
             except json.JSONDecodeError:
                 continue
+
+    # 第 4 回退：原文有 verdict 关键字但前三层都空了 → 大括号匹配回退
+    if not results and '"verdict":' in text:
+        robust = _robust_parse_malformed_json(text)
+        if robust:
+            return robust
     return results
+
+
+def parse_review_response(response: str) -> list[VerdictDict]:
+    return parse_llm_json(response)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -97,20 +190,37 @@ async def _llm_call_with_retry(
     total_batches: int,
     max_retries: int,
 ) -> str:
-    """共享异步 LLM 调用: semaphore 门控、指数退避重试、HTML/XML 响应守卫、截断 JSON 检测。
+    """共享异步 LLM 调用: semaphore 门控、指数退避重试、JSON 解析检验、verdict 格式校验。
     返回原始响应字符串。最终失败时抛出 Exception。"""
     async with sem:
         for attempt in range(1, max_retries + 1):
             try:
                 loop = asyncio.get_running_loop()
                 response = await loop.run_in_executor(None, llm_call, prompt)
-                if response.strip().startswith("<!") or response.strip().startswith("<html"):
-                    raise RuntimeError(f"非 JSON 响应: {response[:100]}")
                 parsed = parse_review_response(response)
-                if _is_truncated_json(response) and not parsed:
-                    warn(f"  [{label}] 批次 {batch_idx+1} JSON 截断, 重试第 {attempt} 次")
-                    continue
+                # 解析为空但响应非空
+                if not parsed and response.strip():
+                    # 再试一次 json.loads：区分合法空 JSON([]) 和完全不能解析的垃圾
+                    try:
+                        json.loads(response.strip())
+                    except json.JSONDecodeError:
+                        warn(f"  [{label}] 批次 {batch_idx+1} JSON 解析失败, "
+                             f"重试第 {attempt} 次")
+                        if attempt < max_retries:
+                            continue
+                        raise RuntimeError(
+                            f"[{label}] 批次 {batch_idx+1} JSON 无法解析"
+                        )
+                # 校验每条 verdict 字符串可识别
+                for item in parsed:
+                    v = item.get("verdict", "")
+                    if v:
+                        verdict_str_to_int(v)
                 return response
+            except ValueError as e:
+                if attempt == max_retries:
+                    raise
+                warn(f"  [{label}] 批次 {batch_idx+1} verdict 无法识别 ({e}), 重试第 {attempt} 次")
             except Exception as e:
                 if attempt == max_retries:
                     raise
@@ -129,6 +239,8 @@ async def _batch_process(
     label: str,
     source: str,
     error_return_fn=None,
+    *,
+    warmup_first: bool = False,
 ) -> list[VerdictDict]:
     """共享异步批处理逻辑。
     :param prompts: 待处理的 prompt 列表
@@ -137,31 +249,48 @@ async def _batch_process(
     :param label: 日志中的批次标签（如 "LLM"）
     :param source: verdict 的 source 字段值
     :param error_return_fn: 最终失败时的回调，签名为 (i) -> list[VerdictDict]
+    :param warmup_first: 是否先串行发送首条请求暖场（预热 KV cache），再并发处理剩余
     """
+    if not prompts:
+        return []
     max_retries = cfg.get("llm_review_retries", 2)
     sem = asyncio.Semaphore(max_workers)
 
-    async def _process(i: int, prompt: str) -> list[VerdictDict]:
+    async def _process(i: int, prompt: str, total: int) -> list[VerdictDict]:
         try:
             response = await _llm_call_with_retry(
-                prompt, llm_call, sem, label, i, len(prompts), max_retries,
+                prompt, llm_call, sem, label, i, total, max_retries,
             )
             parsed = parse_review_response(response)
-            warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ({len(prompt)//4} tokens) → {len(parsed)} verdicts")
+            warn(f"  [{label}] 批次 {i+1}/{total} ({len(prompt)//4} tokens) → {len(parsed)} verdicts")
             for v in parsed:
                 v.setdefault("source", source)
                 _normalize_verdict(v)
             return parsed
         except Exception as e:
-            warn(f"  [{label}] 批次 {i+1}/{len(prompts)} ✗ {e}")
+            warn(f"  [{label}] 批次 {i+1}/{total} ✗ {e}")
             if error_return_fn:
                 return error_return_fn(i)
             return []
 
-    tasks = [_process(i, p) for i, p in enumerate(prompts)]
     results: list[VerdictDict] = []
-    for coro in asyncio.as_completed(tasks):
-        results.extend(await coro)
+    if warmup_first and len(prompts) > 1:
+        first = prompts[0]
+        info(f"  [{label}] 暖场请求 ({len(first)//4} tokens) → 预热 KV cache")
+        try:
+            result = await _process(0, first, len(prompts))
+            results.extend(result)
+        except Exception as e:
+            warn(f"  [{label}] 暖场请求失败，跳过热身: {e}")
+        prompts = prompts[1:]
+        start_idx = 1
+    else:
+        start_idx = 0
+
+    if prompts:
+        tasks = [_process(i + start_idx, p, len(prompts) + start_idx) for i, p in enumerate(prompts)]
+        for coro in asyncio.as_completed(tasks):
+            results.extend(await coro)
     return results
 
 
@@ -187,9 +316,9 @@ class LLMBridge:
         glossary_entries: list[GlossaryDict] | None = None,
         auto_verdicts_map: AutoVerdictsMap | None = None,
         fuzzy_results_map: FuzzyResultsMap | None = None,
-        batch_size: int = 20,
+        batch_size: int = 25,
         max_workers: int | None = None,
-        external_dict_store: object = None,
+        dict_stores: list | None = None,
     ) -> list[VerdictDict]:
         if not self.llm_call:
             raise RuntimeError("LLMBridge 未配置 llm_call 函数")
@@ -199,18 +328,19 @@ class LLMBridge:
         prompts = build_review_prompt(
             entries, glossary_entries, auto_verdicts_map,
             fuzzy_results_map, batch_size, merged_context=merged,
-            external_dict_store=external_dict_store,
+            dict_stores=dict_stores,
         )
 
         def _error_return(i: int) -> list[VerdictDict]:
             return [{
                 "key": "__llm_error__", "en_current": "", "zh_current": "",
-                "verdict": "🔶 REVIEW", "suggestion": "",
-                "reason": f"LLM调用失败 (批次{i+1}): error", "source": "llm_error",
+                "verdict": "REVIEW", "suggestion": "",
+                "reason": f"LLM调用失败 (批次{i+1}): error", "source": SOURCE_LLM_ERROR,
             }]
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "LLM", "llm_review", _error_return))
+                                          "LLM", SOURCE_LLM_REVIEW, _error_return,
+                                          warmup_first=True))
 
     # ── 未翻译审校 ────────────────────────────────────
 
@@ -228,7 +358,8 @@ class LLMBridge:
         prompts = build_untranslated_prompt(entries, batch_size)
 
         return asyncio.run(_batch_process(prompts, self.llm_call, max_workers,
-                                          "未翻译", "untranslated_review"))
+                                          "未翻译", SOURCE_UNTRANSLATED_REVIEW,
+                                          warmup_first=True))
 
     # ── 最终过滤 ──────────────────────────────────────
 
@@ -248,18 +379,19 @@ class LLMBridge:
         prompts = build_filter_prompt(verdicts, batch_size)
         warn(f"[Phase 5] 最终过滤: {len(verdicts)} 条 verdict → {len(prompts)} 批")
 
-        async def _run_all() -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
+        async def _run_all(warmup_first: bool = False) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
             sem = asyncio.Semaphore(max_workers)
             discarded_keys: set[str] = set()
             discard_records: list[FilterDiscardRecord] = []
             cleaned_reasons: dict[str, str] = {}
             all_responded: set[str] = set()
             all_input_keys: set[str] = {v.get("key", "") for v in verdicts}
+            total_prompts = len(prompts)
 
             async def _process(i: int, prompt: str) -> tuple[set[str], list[FilterDiscardRecord], dict[str, str], set[str]]:
                 try:
                     response = await _llm_call_with_retry(
-                        prompt, _call, sem, "Filter", i, len(prompts), 2,
+                        prompt, _call, sem, "Filter", i, total_prompts, 2,
                     )
                     parsed = parse_review_response(response)
                     local_keys: set[str] = set()
@@ -272,33 +404,56 @@ class LLMBridge:
                             continue
                         local_responded.add(k)
                         vd = item.get("verdict", "").strip()
-                        if vd == "PASS":
+                        try:
+                            verdict_str_to_int(vd)
+                        except ValueError:
+                            warn(f"  [Filter] 无法识别的 verdict '{vd}' 对 {k}, 按保留处理")
+                        if vd == VERDICT_PASS:
                             local_keys.add(k)
                             local_records.append({"key": k, "reason": item.get("reason", "").strip()})
                             warn(f"  [Filter] 驳回: {k} — {item.get('reason', '')}")
-                        elif vd != "PASS":
+                        elif vd != VERDICT_PASS:
                             r = item.get("reason", "").strip()
                             if r:
                                 local_reasons[k] = r
-                    warn(f"  [Filter] 批次 {i+1}/{len(prompts)} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条")
+                                debug(f"  [Filter] 保留建议: {k} — {r}")
+                    warn(f"  [Filter] 批次 {i+1}/{total_prompts} → 驳回 {len(local_keys)} 条, 清洗 {len(local_reasons)} 条")
                     return local_keys, local_records, local_reasons, local_responded
                 except Exception as e:
-                    warn(f"  [Filter] 批次 {i+1}/{len(prompts)} ✗ {e}")
+                    warn(f"  [Filter] 批次 {i+1}/{total_prompts} ✗ {e}")
                     return set(), [], {}, set()
 
-            tasks = [_process(i, p) for i, p in enumerate(prompts)]
-            for coro in asyncio.as_completed(tasks):
-                keys, records, reasons, responded = await coro
-                discarded_keys.update(keys)
-                discard_records.extend(records)
-                cleaned_reasons.update(reasons)
-                all_responded.update(responded)
+            if warmup_first and total_prompts > 1:
+                first_prompt = prompts[0]
+                info(f"  [Filter] 暖场请求 ({len(first_prompt)//4} tokens) → 预热 KV cache")
+                try:
+                    keys, records, reasons, responded = await _process(0, first_prompt)
+                    discarded_keys.update(keys)
+                    discard_records.extend(records)
+                    cleaned_reasons.update(reasons)
+                    all_responded.update(responded)
+                    remaining = prompts[1:]
+                except Exception as e:
+                    warn(f"  [Filter] 暖场请求失败，继续处理剩余批次: {e}")
+                    remaining = prompts
+            else:
+                remaining = prompts
+
+            if remaining:
+                start_idx = total_prompts - len(remaining)
+                tasks = [_process(start_idx + i, p) for i, p in enumerate(remaining)]
+                for coro in asyncio.as_completed(tasks):
+                    keys, records, reasons, responded = await coro
+                    discarded_keys.update(keys)
+                    discard_records.extend(records)
+                    cleaned_reasons.update(reasons)
+                    all_responded.update(responded)
             missing = all_input_keys - all_responded
             if missing:
                 warn(f"  [Filter] ⚠ LLM 遗漏 {len(missing)} 条, 保留原判: {', '.join(sorted(missing))}")
             return discarded_keys, discard_records, cleaned_reasons, missing
 
-        discarded, discard_records, cleaned_reasons, _ = asyncio.run(_run_all())
+        discarded, discard_records, cleaned_reasons, _ = asyncio.run(_run_all(warmup_first=True))
         warn(f"  最终驳回: {len(discarded)} 条, 清洗 reason: {len(cleaned_reasons)} 条")
         filtered = [v for v in verdicts if v.get("key") not in discarded]
         for v in filtered:
@@ -319,7 +474,7 @@ def interactive_entry_review(
 ) -> list[VerdictDict]:
     verdicts: list[VerdictDict] = []
     options = {
-        "1": ("PASS", ""),
+        "1": (VERDICT_PASS, ""),
         "2": ("⚠️ SUGGEST", ""),
         "3": ("❌ FAIL", ""),
         "4": ("🔶 REVIEW", ""),
@@ -328,13 +483,16 @@ def interactive_entry_review(
         key = entry["key"]
         en = entry.get("en", "")
         zh = entry.get("zh", "")
-        cat = classify_key(key)
-        print(f"\n--- [{i+1}/{len(entries)}] [{cat}] {key} ---")
+        cat = manual_format_label(key)
+        if cat:
+            print(f"\n--- [{i+1}/{len(entries)}] [{cat}] {key} ---")
+        else:
+            print(f"\n--- [{i+1}/{len(entries)}] {key} ---")
         print(f'EN: "{en[:200]}"')
         print(f'ZH: "{zh[:200]}"')
-        auto_v = (auto_verdicts_map or {}).get(key, [])
-        for v in auto_v:
-            print(f"  ⚙️ {v['verdict']}: {v['reason']}")
+        auto_v = (auto_verdicts_map or {}).get(key)
+        if auto_v:
+            print(f"  ⚙️ {auto_v.get('verdict', '')}: {auto_v.get('diagnoses_str', '')}")
         fuzzy_r = (fuzzy_results_map or {}).get(key, [])
         for fr in fuzzy_r[:2]:
             print(f"  🔍 sim={fr['similarity']}% ZH: \"{fr['zh'][:80]}\"")
@@ -344,14 +502,14 @@ def interactive_entry_review(
             verdict, _ = options[choice]
             suggestion = ""
             reason = ""
-            if verdict != "PASS":
+            if verdict != VERDICT_PASS:
                 reason = input("理由: ").strip()
                 if verdict in ("⚠️ SUGGEST", "❌ FAIL"):
                     suggestion = input("建议译文: ").strip()
             verdicts.append({
                 "key": key, "en_current": en, "zh_current": zh,
                 "verdict": verdict, "suggestion": suggestion,
-                "reason": reason, "source": "interactive",
+                "reason": reason, "source": SOURCE_INTERACTIVE,
             })
         else:
             print("跳过")

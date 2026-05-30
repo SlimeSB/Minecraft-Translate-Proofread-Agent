@@ -1,49 +1,69 @@
 """术语构建与匹配器：从 en_us.json 提取术语、词形归并、构建术语表、
 检查翻译一致性。
 
-归并策略: 规则粗筛 → 模糊搜索聚类 → LLM 裁决同形异体
+归并策略: 规则分桶 → inflection 名词单数归一化归并
 
 用法:
     from terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
     tb = TerminologyBuilder()
     tb.load(en_data, zh_data, alignment)
-    glossary = tb.merge_and_build(llm_call=my_llm_fn)
-    glossary = llm_verify_glossary(glossary, tb.en_data, my_llm_fn)
+    glossary = tb.merge_and_build()
+    glossary = llm_verify_glossary(glossary, tb.en_data, tb.zh_data, my_llm_fn)
     verdicts = check_consistency(glossary, tb.matched_entries, tb.merged)
 """
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
-from typing import Any, Callable
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from src.logging import info, warn
-from src.models import AlignmentDict, EntryDict, GlossaryDict, VerdictDict
+from src.models import AlignmentDict, EntryDict, GlossaryDict, SOURCE_TERMINOLOGY_CHECK, VerdictDict
 from src.tools.terminology_extract import extract_terms
 from src import config as cfg
-from .lemma_cache import LemmaCache, DEFAULT_CACHE_PATH
 from .lemma_merge import (
     raw_merge,
-    apply_cache_merge,
-    fuzzy_cluster,
-    build_merge_prompt,
-    parse_merge_response,
-    apply_llm_merge,
+    inflection_lemmatize_term,
+    inflection_merge,
     try_rescue_short_term,
 )
-from src.tools.term_validation import is_valid_term
+from src.tools.term_validation import is_valid_term, is_music_disc_desc
 
 
 # ═══════════════════════════════════════════════════════════
 # 公共中文提取
 # ═══════════════════════════════════════════════════════════
 
+def _find_common_substr(zh_counter: Counter, min_ratio: float) -> str | None:
+    """在所有中文译文中找到最长公共子串（任意位置），需覆盖 ≥ min_ratio 比例的译文。
+
+    例如 {"蜜蜂头套":1, "黑色绵羊头套":1, "兔兔头套":1, ...}
+    → "头套" 出现在所有译文中 → 返回 "头套"。
+    """
+    zh_values = list(zh_counter.keys())
+    if len(zh_values) < 2:
+        return None
+    total = len(zh_values)
+    min_count = total * min_ratio
+    shortest = min(zh_values, key=len)
+    for length in range(len(shortest), 1, -1):
+        seen: set[str] = set()
+        for start in range(len(shortest) - length + 1):
+            sub = shortest[start:start + length]
+            if sub in seen:
+                continue
+            seen.add(sub)
+            count = sum(1 for zh in zh_values if sub in zh)
+            if count >= min_count:
+                return sub
+    return None
+
+
 def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
     """从多个中文译文中提取公共子串，忽略离群值。
 
-    遍历每种译文，若它作为**真子串**出现在 ≥ min_ratio 比例的**其他**译文中，
-    则为公共项。自身匹配不计入。
-    返回最长的公共项，无则返回 None。
+    先尝试整条译文作为子串匹配（如 "方铅岩" 出现在 "方铅岩砖" 中），
+    失败时回退到任意位置公共子串搜索。
 
     例如 {"方铅岩":1, "方铅岩砖":2, "方铅岩台阶":1, "方前言":1}
     → "方铅岩" 出现在 "方铅岩砖" 和 "方铅岩台阶" 中（不含自身），覆盖 3/5=60% → 返回 "方铅岩"。
@@ -62,7 +82,9 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
         )
         if support / total >= min_ratio and len(zh) > len(best):
             best = zh
-    return best if best else None
+    if best:
+        return best
+    return _find_common_substr(zh_counter, min_ratio)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -71,20 +93,8 @@ def _extract_common_zh(zh_counter: Counter, min_ratio: float) -> str | None:
 
 def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
     """解析 LLM 返回的术语修正 JSON 数组。"""
-    import json
-    import re
-    jt = response.strip()
-    if "```" in jt:
-        m = re.search(r"```(?:json)?\\s*\\n?(.*?)```", jt, re.DOTALL)
-        if m:
-            jt = m.group(1).strip()
-    try:
-        arr = json.loads(jt)
-    except json.JSONDecodeError as e:
-        from src.logging import warn; warn(f"[TerminologyBuilder] LLM 响应 JSON 解析失败: {e}")
-        arr = []
-    if not isinstance(arr, list):
-        return {}
+    from src.llm.bridge import parse_llm_json
+    arr = parse_llm_json(response, extract_code_block=True)
     result = {}
     for item in arr:
         if not isinstance(item, dict):
@@ -101,6 +111,13 @@ def _parse_glossary_corrections(response: str) -> dict[str, dict[str, str]]:
 # ═══════════════════════════════════════════════════════════
 
 
+def _clean_zh_for_glossary(zh: str) -> str:
+    zh = re.sub(r"%(\d+\$)?[+-]?\d*\.?\d*[dsf]", "", zh)
+    zh = zh.strip(cfg.ZH_GLOSSARY_STRIP_PUNCTUATION)
+    zh = zh.strip()
+    return zh
+
+
 def _collect_zh_translations(
     merged: dict[str, dict[str, Any]],
     matched_entries: list[EntryDict],
@@ -112,40 +129,76 @@ def _collect_zh_translations(
 ) -> list[GlossaryDict]:
     """从 matched_entries 统计每组术语的中文译文，构建初始术语表。"""
     glossary: list[GlossaryDict] = []
-    for norm, info in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
-        if len(info["keys"]) < min_freq or not is_valid_term(norm):
+    stats = {"total": 0, "keys_fail": 0, "valid_fail": 0, "no_zh": 0, "total_fail": 0, "consensus_fail": 0, "pass": 0}
+    for norm, bucket in sorted(merged.items(), key=lambda x: -len(x[1]["keys"])):
+        stats["total"] += 1
+        n_keys = len(bucket["keys"])
+        if n_keys < min_freq:
+            stats["keys_fail"] += 1
+            continue
+        if not is_valid_term(norm):
+            stats["valid_fail"] += 1
             continue
 
         zh_counter: Counter = Counter()
-        for k in info["keys"]:
+        skipped_no_entry = 0
+        skipped_desc = 0
+        skipped_empty_or_long = 0
+        skipped_variant_mismatch = 0
+        for k in bucket["keys"]:
             entry = next((e for e in matched_entries if e["key"] == k), None)
             if not entry:
+                skipped_no_entry += 1
                 continue
             if any(p in k for p in cfg.DESC_KEY_SUFFIXES):
+                skipped_desc += 1
                 continue
-            zh_val = entry.get("zh", "").strip()
+            zh_val = _clean_zh_for_glossary(entry.get("zh", ""))
             en_val = entry.get("en", "")
             if not zh_val or zh_val == en_val or len(zh_val) > max_zh_len or len(en_val) > max_en_len:
+                skipped_empty_or_long += 1
                 continue
-            variants = info["variants"]
+            variants = bucket["variants"]
             if not any(re.search(r"\b" + re.escape(v) + r"\b", en_val, re.IGNORECASE) for v in variants):
+                skipped_variant_mismatch += 1
                 continue
             zh_counter[zh_val[:120]] += 1
 
         if not zh_counter:
+            stats["no_zh"] += 1
+            warn(f"  [术语表·无ZH] \"{norm}\": keys={n_keys}, "
+                 f"no_entry={skipped_no_entry} desc={skipped_desc} "
+                 f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
             continue
 
         best_zh, best_count = zh_counter.most_common(1)[0]
         total = sum(zh_counter.values())
-        variants = sorted(info["variants"], key=len)
+        variants = sorted(bucket["variants"], key=len)
         en_term = variants[0] if variants else norm
         if total >= min_total and best_count / total >= min_consensus:
+            stats["pass"] += 1
             glossary.append({"en": en_term, "zh": best_zh})
         elif total >= min_total:
             common = _extract_common_zh(zh_counter, min_consensus)
             if common:
+                stats["pass"] += 1
                 glossary.append({"en": en_term, "zh": common})
+            else:
+                stats["consensus_fail"] += 1
+                warn(f"  [术语表·共识不足] \"{en_term}\": {len(zh_counter)} 种不同译文, "
+                     f"共识 {best_count}/{total}={best_count/total:.0%}, 公共子串空, "
+                     f"keys={n_keys}, no_entry={skipped_no_entry} desc={skipped_desc} "
+                     f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
+        else:
+            stats["total_fail"] += 1
+            warn(f"  [术语表·总数不足] \"{en_term}\": total={total} < min_total={min_total}, "
+                 f"keys={n_keys}, no_entry={skipped_no_entry} desc={skipped_desc} "
+                 f"empty_or_long={skipped_empty_or_long} variant_mismatch={skipped_variant_mismatch}")
 
+    info(f"  [术语表] 统计: 总数={stats['total']}, "
+         f"keys不足(<{min_freq})={stats['keys_fail']}, 无效术语={stats['valid_fail']}, "
+         f"无ZH={stats['no_zh']}, 总数不足(<{min_total})={stats['total_fail']}, "
+         f"共识不足={stats['consensus_fail']}, 通过={stats['pass']}")
     return glossary
 
 
@@ -200,14 +253,18 @@ def _dedup_zh_conflicts(
 def llm_verify_glossary(
     glossary: Sequence[GlossaryDict],
     en_data: dict[str, str],
+    zh_data: dict[str, str],
     llm_call: Callable[[str], str] | None,
+    term_hints: dict[str, str] | None = None,
 ) -> list[GlossaryDict]:
     """LLM 校验术语表: 每条术语取 1 最长 + 4 最短含术语原文, 交 LLM 复核。
 
     Args:
         glossary: 术语表列表，每项含 "en" 和 "zh" 键
         en_data: 英文条目数据 (key -> en text)
+        zh_data: 中文条目数据 (key -> zh text)
         llm_call: LLM 调用函数
+        term_hints: 预计算的词典参考，key 为术语英文原文小写，value 为已拼接提示文本
 
     Returns:
         修正后的术语表（与传入的 glossary 为同一列表对象）
@@ -216,15 +273,20 @@ def llm_verify_glossary(
         return glossary
 
     import re
-    term_sources: dict[str, list[str]] = {}
+    term_sources: dict[str, list[tuple[str, str]]] = {}
     for g in glossary:
         en_lower = g["en"].lower()
         term_sources[en_lower] = []
-        for en_val in en_data.values():
+        seen_en: set[str] = set()
+        for key, en_val in en_data.items():
             if not isinstance(en_val, str):
                 continue
+            if en_val in seen_en:
+                continue
             if re.search(r"\b" + re.escape(en_lower) + r"\b", en_val, re.IGNORECASE):
-                term_sources[en_lower].append(en_val)
+                seen_en.add(en_val)
+                zh_val = zh_data.get(key, "")
+                term_sources[en_lower].append((en_val, zh_val))
 
     lines: list[str] = []
     verify_items: list[GlossaryDict] = []
@@ -233,37 +295,49 @@ def llm_verify_glossary(
         sources = term_sources.get(en_lower, [])
         if not sources:
             continue
-        unique = list(dict.fromkeys(sources))
-        if len(unique) < 2:
+        if len(sources) < 2:
             continue
-        sorted_len = sorted(unique, key=len)
-        ctx = [sorted_len[-1]] + sorted_len[:4]
-        block = 'Term: "' + g["en"] + '" -> "' + g["zh"] + '"\n'
-        for j, txt in enumerate(ctx):
-            block += '  [' + str(j + 1) + '] "' + txt + '"\n'
+        sorted_sources = sorted(sources, key=lambda x: len(x[0]))
+        ctx = [sorted_sources[-1]] + sorted_sources[:4]
+        block = cfg.PROMPT_TERM_VERIFY_TERM_LINE.format(en=g["en"], zh=g["zh"])
+        for j, (en_txt, zh_txt) in enumerate(ctx):
+            block += cfg.PROMPT_TERM_VERIFY_CTX_LINE.format(index=j + 1, en=en_txt, zh=zh_txt)
+        if term_hints:
+            hint = term_hints.get(en_lower, "")
+            if hint:
+                block += "\n" + hint
         lines.append(block)
         verify_items.append(g)
 
     if not verify_items:
         return glossary
 
-    prompt = (
-        '你是Minecraft模组翻译术语专家。请校验以下自动提取的术语表。\n'
-        '自动术语表从多个模组统计提取，可能存在错误。\n'
-        '判断每条术语译文是否合适，不合适给出修正。\n'
-        '输出JSON: [{"en":"原文","old_zh":"原中文","new_zh":"修正或原中文","reason":"理由"}]\n'
-        '仅输出需要修正的。仅输出JSON数组。\n\n'
-        + "\n\n".join(lines)
+    prompt = cfg.PROMPT_TERM_VERIFICATION.format(
+        term_blocks="\n\n".join(lines)
     )
 
-    try:
-        response = llm_call(prompt)
-        corrections = _parse_glossary_corrections(response)
-    except Exception as e:
-        warn(f"[术语校验] LLM 术语校验调用异常: {type(e).__name__}: {e}")
-        return glossary
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm_call(prompt)
+        except Exception as e:
+            warn(f"[术语校验] LLM 调用异常: {type(e).__name__}: {e}")
+            return glossary
 
-    if not corrections:
+        try:
+            raw = json.loads(response.strip())
+        except json.JSONDecodeError:
+            if attempt < max_retries:
+                continue
+            warn(f"[术语校验] LLM 响应 JSON 格式错误, 放弃")
+            return glossary
+
+        corrections = _parse_glossary_corrections(response)
+        if corrections or (isinstance(raw, list) and not raw):
+            break  # 有有效修正, 或 LLM 明确说不需要修正 ([])
+        if attempt < max_retries:
+            continue
+        warn(f"[术语校验] LLM 响应缺少有效修正, 放弃")
         return glossary
 
     corrected = 0
@@ -320,7 +394,7 @@ def check_consistency(
         if not isinstance(en, str) or not isinstance(zh, str) or not zh.strip():
             continue
 
-        if "music_disc" in key and key.endswith(".desc"):
+        if is_music_disc_desc(key):
             continue
 
         for en_term, std_zh, pattern in term_info:
@@ -335,7 +409,7 @@ def check_consistency(
                 "verdict": "❌ FAIL",
                 "suggestion": std_zh,
                 "reason": f'术语不一致——“{en_term}”在术语表中译为“{std_zh}”，此处未使用',
-                "source": "terminology_check",
+                "source": SOURCE_TERMINOLOGY_CHECK,
             })
 
     return verdicts
@@ -344,15 +418,13 @@ def check_consistency(
 class TerminologyBuilder:
     """术语提取、归并、匹配的完整流水线。"""
 
-    def __init__(self, cache_path: str = DEFAULT_CACHE_PATH):
+    def __init__(self):
         self.en_data: dict[str, str] = {}
         self.zh_data: dict[str, str] = {}
         self.matched_entries: list[EntryDict] = []
         self.extracted: dict[str, Any] = {}
         self.glossary: list[GlossaryDict] = []
         self.merged: dict[str, dict[str, Any]] = {}
-        self.cache = LemmaCache(cache_path)
-        self._cache_hits = 0
 
     def load(
         self,
@@ -371,55 +443,19 @@ class TerminologyBuilder:
         self.extracted = extract_terms(self.en_data, min_freq, max_ngram)
         return self.extracted
 
-    # ── 归并（3+1 步：分桶 → 缓存查表 → 模糊聚类 → LLM 裁决 → 写回缓存）──
+    # ── 归并（2 步：分桶 → inflection 归并）──
 
-    def merge_lemmas(
-        self,
-        llm_call: Callable[[str], str] | None = None,
-        fuzzy_threshold: float | None = None,
-    ) -> dict[str, dict[str, Any]]:
+    def merge_lemmas(self) -> dict[str, dict[str, Any]]:
         if not self.extracted:
             self.extract()
-        fuzzy_threshold = fuzzy_threshold if fuzzy_threshold is not None else float(cfg.get("fuzzy_cluster_threshold", 65.0))  # type: ignore[arg-type]
-
-        self.cache.load()
 
         # Step 1: 原始分桶
         self.merged = raw_merge(self.extracted)
         info(f"  [术语归并] 原始分桶: {len(self.merged)} 个")
 
-        # Step 2: 缓存查表
-        if self.cache.map:
-            self.merged, self._cache_hits = apply_cache_merge(self.merged, self.cache)
-            info(f"  [术语归并] 缓存命中: {self._cache_hits} 条, 归并后: {len(self.merged)} 个")
-
-        # Step 3: 模糊聚类（纯算法，不需要 LLM）
-        if not self.merged:
-            return self.merged
-
-        clusters = fuzzy_cluster(self.merged, threshold=fuzzy_threshold)
-        if not clusters:
-            return self.merged
-
-        info(f"  [术语归并] 模糊聚类候选组: {len(clusters)} 组, 共 {sum(len(c) for c in clusters)} 个术语")
-
-        # Step 4: LLM 裁决 + 写回缓存（仅在有 llm_call 时）
-        if llm_call is not None:
-            prompt = build_merge_prompt(clusters)
-            try:
-                response = llm_call(prompt)
-                mapping = parse_merge_response(response)
-                if mapping:
-                    canon_map: dict[str, list[str]] = {}
-                    for member, canon in mapping.items():
-                        canon_map.setdefault(canon, []).append(member)
-                    for canon, members in canon_map.items():
-                        self.cache.record(canon, members, source="llm")
-
-                    self.merged = apply_llm_merge(self.merged, mapping)
-                    info(f"  [术语归并] LLM 合并完成: 缓存 {len(self.cache.map)} 条, 归并后 {len(self.merged)} 个桶")
-            except Exception as e:
-                warn(f"[术语归并] LLM 归并调用异常: {type(e).__name__}: {e}")
+        # Step 2: inflection 名词单数归一化归并
+        self.merged = inflection_merge(self.merged)
+        info(f"  [术语归并] inflection 归并后: {len(self.merged)} 个")
 
         return self.merged
 
@@ -453,11 +489,7 @@ class TerminologyBuilder:
 
     # ── 便捷入口 ──────────────────────────────────────────
 
-    def merge_and_build(
-        self, llm_call: Callable[[str], str] | None = None
-    ) -> list[GlossaryDict]:
+    def merge_and_build(self) -> list[GlossaryDict]:
         """归并 + 纯程序提取术语表（一步完成）。"""
-        self.merge_lemmas(llm_call=llm_call)
+        self.merge_lemmas()
         return self.build_glossary()
-
-

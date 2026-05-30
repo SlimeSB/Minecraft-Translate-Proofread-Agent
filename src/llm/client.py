@@ -3,13 +3,10 @@
 日志中的 [id=xxxxxxx] 是每次调用的唯一识别码，用于在异步并发日志中
 对齐 request (Prompt) 和 response (Response)。
 """
-import datetime
 import time
 import uuid
-from pathlib import Path
-from typing import Callable
 
-from src.logging import info, warn
+from src.logging import info, warn, log_to_file
 
 from src.models import LLMCallable
 from src import config as _cfg
@@ -21,12 +18,14 @@ def create_openai_llm_call(
     base_url: str = "https://api.openai.com/v1",
     *,
     system_prompt: str | None = None,
-    log_dir: str = "logs",
+    log_dir: str | None = None,
     reasoning_effort: str | None = None,
     label: str = "LLM",
 ) -> LLMCallable:
     if system_prompt is None:
         system_prompt = _cfg.REVIEW_SYSTEM_PROMPT
+    if log_dir is None:
+        log_dir = _cfg.LOG_DIR
 
     # OpenAI SDK 会自动追加 /chat/completions，不要让它重复
     base_url = base_url.rstrip("/")
@@ -42,20 +41,7 @@ def create_openai_llm_call(
     call_count = 0
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
 
-    log_dir_path = Path(log_dir)
-    log_dir_path.mkdir(parents=True, exist_ok=True)
-    latest_path = log_dir_path / "latest.log"
-
-    # 仅轮转有内容的日志（多 label 共用同一 log_dir 时避免空文件轮转）
-    if latest_path.exists() and latest_path.stat().st_size > 0:
-        mtime = latest_path.stat().st_mtime
-        archive_name = time.strftime("%Y-%m-%d-%H%M%S", time.localtime(mtime))
-        latest_path.rename(log_dir_path / f"latest.{archive_name}.log")
-
-    def _log(level: str, msg: str) -> None:
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(latest_path, "a", encoding="utf-8") as f:
-            f.write(f"[{ts}] [{level}] {msg}\n")
+    _ = log_dir  # log_dir retained for API compatibility, file logging now centralized in src.logging
 
     MAX_RETRIES = _cfg.get("llm_max_retries", 5)
     _temperature = _cfg.get("llm_temperature", 0.1)
@@ -67,8 +53,8 @@ def create_openai_llm_call(
         n = call_count
         call_id = uuid.uuid4().hex[:8]
         tag = f"[{label}#{n}] [id={call_id}]"
-        _log("INFO", f"{tag} === Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")
-        _log("INFO", f"{tag} Prompt:\n{prompt}")
+        log_to_file("INFO", f"{tag} === Call #{n} ({len(prompt)} chars, ~{len(prompt)//4} tokens) ===")
+        log_to_file("INFO", f"{tag} Prompt:\n{prompt}")
 
         retries = 0
         while True:
@@ -86,7 +72,7 @@ def create_openai_llm_call(
                     kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
                 resp = client.chat.completions.create(**kwargs)
                 content = resp.choices[0].message.content or ""
-                _log("INFO", f"{tag} Response:\n{content}")
+                log_to_file("INFO", f"{tag} Response:\n{content}")
                 if resp.usage:
                     usage["prompt_tokens"] += resp.usage.prompt_tokens or 0
                     usage["completion_tokens"] += resp.usage.completion_tokens or 0
@@ -108,12 +94,11 @@ def create_openai_llm_call(
                 if retryable and retries < MAX_RETRIES:
                     delay = min(5 * (1 << retries), 60)
                     retries += 1
-                    _log("WARN", f"{tag} 可重试错误, {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:200]}")
-                    warn(f"  {tag} {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:120]}")
+                    warn(f"  {tag} {delay}s 后重试 (第{retries}/{MAX_RETRIES}次): {err_str[:200]}")
                     time.sleep(delay)
                 else:
                     if retries >= MAX_RETRIES:
-                        _log("ERROR", f"{tag} 已达最大重试次数({MAX_RETRIES}): {err_str[:200]}")
+                        warn(f"  {tag} 已达最大重试次数({MAX_RETRIES}): {err_str[:200]}")
                     raise
 
     call.usage = usage  # type: ignore[attr-defined]

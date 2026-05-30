@@ -4,16 +4,17 @@
 
 不再全量加载到内存，每次 lookup 直接查询 SQLite。
 """
-import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
-from src.logging import warn
+import inflection
 
-DEFAULT_DB_PATH = "data/Dict-Sqlite.db"
-DEFAULT_LEMMA_PATH = "data/lemma_cache.json"
+from src.logging import info, warn
+from src.config import WORD_EXTRACT_PATTERN, RE_FORMAT_SPECIFIER_STRIP, PROMPT_EXTERNAL_DICT_OUTPUT, EXTERNAL_DICT_HEADING, DATA_DIR, EXTERNAL_DICT_MAX_GROUPS, EXTERNAL_DICT_MAX_MODIDS
+from src.dictionary.protocol import SHORT, LookupModeStr, setup_fts
 
-_RE_WORD = re.compile(r"[A-Za-z]+")
+DEFAULT_DB_PATH = DATA_DIR + "/Dict-Sqlite.db"
 
 from src.tools.term_validation import STOP_WORDS
 
@@ -21,25 +22,26 @@ from src.tools.term_validation import STOP_WORDS
 class ExternalDictStore:
     """按需查询外部 SQLite 词典，避免全量内存加载（~200-300MB）。"""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH, lemma_cache_path: str = DEFAULT_LEMMA_PATH):
+    lookup_heading = EXTERNAL_DICT_HEADING
+    default_lookup_mode = SHORT
+
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._conn: sqlite3.Connection | None = None
-        self._lemma_map: dict[str, str] = {}
         self._loaded = False
         self._db_path = db_path
-        self._lemma_cache_path = lemma_cache_path
+        self._use_fts = False
 
     def load(self) -> None:
         if self._loaded:
             return
-        self._load_lemma_cache()
         db_path = Path(self._db_path)
         if not db_path.exists():
-            print(f"[ExternalDict] 词典文件不存在: {db_path}")
+            info(f"[ExternalDict] 词典文件不存在: {db_path}")
             self._loaded = True
             return
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
-        # 加速按 EN 原文查询（首次加载时创建索引）
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         try:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS ix_dict_origin_lower "
@@ -47,92 +49,106 @@ class ExternalDictStore:
             )
         except sqlite3.OperationalError:
             warn(f"[ExternalDict] 索引创建失败（可能为只读文件系统）")
+        self._use_fts = setup_fts(
+            self._conn, "dict_fts",
+            "ORIGIN_NAME, TRANS_NAME, MODID", "dict",
+            label="ExternalDict",
+        )
         total = self._conn.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
         unique = self._conn.execute(
             "SELECT COUNT(DISTINCT LOWER(ORIGIN_NAME)) FROM dict"
         ).fetchone()[0]
         self._loaded = True
-        print(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
+        info(f"[ExternalDict] 就绪: {unique} 个唯一 EN 词条, {total} 条总记录（按需查询模式）")
 
-    def _load_lemma_cache(self) -> None:
-        import json
-        cache_path = Path(self._lemma_cache_path)
-        if cache_path.exists():
-            try:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for canonical, entry in data.items():
-                    variants = entry.get("variants", [canonical])
-                    for v in variants:
-                        vk = v.lower().strip()
-                        if vk not in self._lemma_map:
-                            self._lemma_map[vk] = canonical
-            except (json.JSONDecodeError, IOError) as e:
-                warn(f"[ExternalDict] lemma 缓存加载失败: {e}")
-                self._lemma_map = {}
-
-    def _query_word(self, word_lower: str) -> list[tuple[str, str]]:
-        """查询单个英文单词的翻译记录，返回 [(zh, modid), ...]."""
+    def _query_index(self, word_lower: str) -> list[tuple[str, str, str]]:
+        """索引精确匹配 LOWER(ORIGIN_NAME)。"""
         if self._conn is None:
             return []
         rows = self._conn.execute(
-            "SELECT TRANS_NAME, MODID FROM dict WHERE LOWER(ORIGIN_NAME) = ?",
+            "SELECT TRANS_NAME, MODID, ORIGIN_NAME FROM dict WHERE LOWER(ORIGIN_NAME) = ?",
             (word_lower,),
         ).fetchall()
-        return [(r["TRANS_NAME"], r["MODID"]) for r in rows]
+        return [(r["TRANS_NAME"], r["MODID"], r["ORIGIN_NAME"]) for r in rows]
 
-    def lookup(self, en_text: str, max_groups: int = 3, max_modids: int = 5) -> str:
-        """在 EN 原文中搜索已知翻译，返回注入文本（空串表示无匹配）。"""
+    def _query_fts(self, word: str) -> list[tuple[str, str, str]]:
+        """FTS5 搜索 ORIGIN_NAME 列。"""
+        if self._conn is None or not self._use_fts:
+            return []
+        try:
+            rows = self._conn.execute(
+                "SELECT TRANS_NAME, MODID, ORIGIN_NAME FROM dict_fts "
+                "WHERE dict_fts MATCH ?",
+                (f"ORIGIN_NAME:{word}",),
+            ).fetchall()
+            return [(r["TRANS_NAME"], r["MODID"], r["ORIGIN_NAME"]) for r in rows]
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            self._use_fts = False
+            return []
+
+    def lookup(self, en_text: str, mode: LookupModeStr = "mixed", **kwargs: Any) -> str:
         if not self._loaded:
             self.load()
         if self._conn is None:
             return ""
 
-        words = _RE_WORD.findall(en_text)
+        clean_text = RE_FORMAT_SPECIFIER_STRIP.sub(" ", en_text)
+        words = WORD_EXTRACT_PATTERN.findall(clean_text)
         if not words:
             return ""
 
         stop_words = STOP_WORDS
-        pairs: dict[tuple[str, str], set[str]] = {}  # (en_word, zh) -> {modids}
-        seen: set[tuple[str, str]] = set()
+        pairs: dict[tuple[str, str], tuple[str, set[str]]] = {}
 
         for w in words:
             w_lower = w.lower()
             if w_lower in stop_words:
                 continue
-            candidates = self._query_word(w_lower)
+
+            if self._use_fts:
+                candidates = self._query_fts(w)
+            else:
+                candidates = self._query_index(w_lower)
+
             if not candidates:
-                canon = self._lemma_map.get(w_lower)
-                if canon:
-                    canon_lower = canon.lower()
-                    if canon_lower != w_lower:
-                        candidates = self._query_word(canon_lower)
+                singular = inflection.singularize(w_lower)
+                if singular != w_lower:
+                    if self._use_fts:
+                        candidates = self._query_fts(singular)
+                    else:
+                        candidates = self._query_index(singular.lower())
             if not candidates:
                 continue
 
-            for zh, modid in candidates:
-                pair_key = (w, zh)
-                if pair_key in seen:
-                    pairs[pair_key].add(modid)
+            for zh, modid, origin in candidates:
+                origin_normalized = origin.strip()
+                key = (origin_normalized.lower(), zh)
+                if key in pairs:
+                    pairs[key][1].add(modid)
                 else:
-                    seen.add(pair_key)
-                    pairs[pair_key] = {modid}
+                    pairs[key] = (origin_normalized, {modid})
 
         if not pairs:
             return ""
 
-        sorted_pairs = sorted(pairs.items(), key=lambda x: -len(x[1]))
+        max_groups = kwargs.get("max_groups", EXTERNAL_DICT_MAX_GROUPS)
+        max_modids = kwargs.get("max_modids", EXTERNAL_DICT_MAX_MODIDS)
+
+        if mode == SHORT:
+            sorted_items = sorted(pairs.items(), key=lambda x: (len(x[1][0]), -len(x[1][1])))
+        else:
+            sorted_items = sorted(pairs.items(), key=lambda x: -len(x[1][1]))
         lines: list[str] = []
-        for (en_word, zh), modids in sorted_pairs[:max_groups]:
+        for (_, zh), (origin, modids) in sorted_items[:max_groups]:
             modid_list = sorted(modids)[:max_modids]
             modid_str = ", ".join(modid_list)
             if len(modids) > max_modids:
                 modid_str += f" +{len(modids) - max_modids}"
-            lines.append(f"\"{en_word}\" -> \"{zh}\" 来源Mod: [{modid_str}]")
+            lines.append(f"{origin} -> {zh} [{modid_str}]")
 
         if not lines:
             return ""
-        return "  外部词典: " + " | ".join(lines)
+        return PROMPT_EXTERNAL_DICT_OUTPUT.format(entries="\n".join(lines))
 
     def close(self) -> None:
         if self._conn:

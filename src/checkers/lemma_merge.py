@@ -1,22 +1,23 @@
 """
 词形归并与中文互斥处理。
 
-归并策略: 规则粗筛 → 缓存查表 → 模糊搜索聚类 → LLM 裁决同形异体
+归并策略: 规则分桶 → inflection 名词单数归一化归并
 """
 import json
 import re
 from collections import defaultdict, Counter
 from typing import Any
 
-from src.tools.fuzzy_search import calc_similarity
+import inflection
+
+from src.logging import debug
 from src import config as cfg
-from .lemma_cache import LemmaCache
 
 _MAX_KEYS_PER_TERM = cfg.get("max_keys_per_term", 20)
 
 
 # ═══════════════════════════════════════════════════════════
-# 第一遍：按原始形式分桶（不做词形归并——归并交给缓存+LLM）
+# 第一遍：按原始形式分桶（不做词形归并——归并交给 inflection）
 # ═══════════════════════════════════════════════════════════
 
 def raw_merge(extracted: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -64,6 +65,7 @@ def _apply_merge_map(
     for norm, info in merged.items():
         target = redirect.get(norm, norm)
         if guard_token_subset and target != norm and _is_token_proper_subset(norm, target):
+            debug(f"  [归并守卫] 阻止: \"{norm}\" 并入 \"{target}\" (token 真子集)")
             target = norm
         if target not in new_merged:
             new_merged[target] = {
@@ -83,128 +85,44 @@ def _apply_merge_map(
     return new_merged
 
 
-def apply_cache_merge(
+# ═══════════════════════════════════════════════════════════
+# Inflection 名词单数归一化归并
+# ═══════════════════════════════════════════════════════════
+
+def inflection_lemmatize_term(term: str) -> str:
+    """对 N-gram 术语的每个词做名词单数归一化后重组。"""
+    return " ".join(inflection.singularize(w.lower()) for w in term.split())
+
+
+def inflection_merge(
     merged: dict[str, dict[str, Any]],
-    cache: LemmaCache,
-) -> tuple[dict[str, dict[str, Any]], int]:
-    """
-    用缓存中的已知映射归并 merged 桶。
-    返回 (归并后的 merged, 命中次数)。
-    """
-    hits = 0
+) -> dict[str, dict[str, Any]]:
+    """按 inflection 归一化形式合并 merged 桶。"""
+    lemma_map: dict[str, list[str]] = defaultdict(list)
+    for norm in merged:
+        lemma = inflection_lemmatize_term(norm)
+        lemma_map[lemma].append(norm)
+
     redirect: dict[str, str] = {}
-    for raw_key in merged:
-        canon = cache.lookup(raw_key)
-        if canon and canon != raw_key and not _is_token_proper_subset(raw_key, canon):
-            redirect[raw_key] = canon
-            hits += 1
-            cache.lookup(canon)  # bump canonical freq so it stays "hot"
+    for lemma, terms in lemma_map.items():
+        if len(terms) < 2:
+            continue
+        if lemma in merged:
+            for t in terms:
+                if t != lemma:
+                    redirect[t] = lemma
+                    debug(f"  [术语归并] \"{t}\" → \"{lemma}\" (inflection)")
+        else:
+            best = max(terms, key=lambda t: len(merged[t]["keys"]))
+            for t in terms:
+                if t != best:
+                    redirect[t] = best
+                    debug(f"  [术语归并] \"{t}\" → \"{best}\" (inflection, max keys)")
 
     if not redirect:
-        return merged, 0
+        return merged
 
-    return _apply_merge_map(merged, redirect, guard_token_subset=False), hits
-
-
-# ═══════════════════════════════════════════════════════════
-# 模糊聚类 + LLM 裁决
-# ═══════════════════════════════════════════════════════════
-
-def fuzzy_cluster(
-    merged: dict[str, dict[str, Any]],
-    threshold: float = 65.0,
-) -> list[list[str]]:
-    """
-    在已规则归并的桶之间做模糊聚类。
-    返回: [[norm_a, norm_b, ...], ...] 候选合并组
-    """
-    norms = sorted(merged.keys(), key=lambda n: -len(merged[n]["keys"]))
-    parents = {n: n for n in norms}
-
-    def find(n: str) -> str:
-        while parents[n] != n:
-            parents[n] = parents[parents[n]]
-            n = parents[n]
-        return n
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parents[ra] = rb
-
-    # 两两比对（限制高频词范围以避免 O(n²) 爆炸）
-    top_n = min(len(norms), cfg.get("fuzzy_cluster_top_n", 200))
-    for i in range(top_n):
-        for j in range(i + 1, top_n):
-            ni, nj = norms[i], norms[j]
-            sim = calc_similarity(ni, nj)
-            if sim >= threshold:
-                # 额外条件：至少共享一个 token 或长度比例为 0.5~2
-                ti, tj = set(ni.split()), set(nj.split())
-                len_ratio = min(len(ni), len(nj)) / max(len(ni), len(nj), 1)
-                if ti & tj or len_ratio > 0.4:
-                    # 阻止单词语吞噬多词术语
-                    if ti < tj or tj < ti:
-                        continue
-                    union(ni, nj)
-
-    # 收集 >=2 成员的组
-    groups: dict[str, list[str]] = defaultdict(list)
-    for n in norms:
-        groups[find(n)].append(n)
-
-    return [sorted(g, key=lambda n: -merged[n]["freq"]) for g in groups.values() if len(g) >= 2]
-
-
-def build_merge_prompt(clusters: list[list[str]]) -> str:
-    """构建 LLM 归并 prompt。"""
-    blocks: list[str] = [cfg.MERGE_SYSTEM_PROMPT]
-    for i, group in enumerate(clusters):
-        lines = [f"## 候选组 {i+1}"]
-        for term in group:
-            lines.append(f"  - {term}")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
-
-
-def parse_merge_response(response: str) -> dict[str, str]:
-    """解析 LLM 归并响应: {member: canonical, ...}"""
-    mapping: dict[str, str] = {}
-    try:
-        data = json.loads(response)
-        if isinstance(data, list):
-            for item in data:
-                canon = item.get("canonical", "")
-                members = item.get("members", [])
-                if canon and members:
-                    for m in members:
-                        mapping[m] = canon
-                    if canon not in mapping:
-                        mapping[canon] = canon
-    except json.JSONDecodeError:
-        m = re.search(r"\[.*\]", response, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group())
-                for item in data:
-                    canon = item.get("canonical", "")
-                    members = item.get("members", [])
-                    if canon and members:
-                        for mb in members:
-                            mapping[mb] = canon
-                        if canon not in mapping:
-                            mapping[canon] = canon
-            except json.JSONDecodeError:  # Acceptable fallback — direct parse already tried, this is regex rescue
-                pass
-    return mapping
-
-
-def apply_llm_merge(
-    merged: dict[str, dict[str, Any]],
-    llm_mapping: dict[str, str],
-) -> dict[str, dict[str, Any]]:
-    """根据 LLM 裁决将 merged 桶合并。过滤多词→单词的非法映射。"""
-    return _apply_merge_map(merged, llm_mapping, guard_token_subset=True)
+    return _apply_merge_map(merged, redirect, guard_token_subset=True)
 
 
 # ═══════════════════════════════════════════════════════════

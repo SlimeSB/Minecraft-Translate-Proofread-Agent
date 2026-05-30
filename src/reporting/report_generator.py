@@ -4,78 +4,30 @@
 用法:
     from report_generator import ReportGenerator
     rg = ReportGenerator()
-    rg.collect(format_v, term_v, llm_v)
+    rg.collect(verdicts)
     rg.generate(output_dir)
 """
 from collections import defaultdict
 from collections.abc import Sequence
 
 from src.cli import safe_print as _print
-from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VERDICT_PASS, VerdictDict, normalize_verdict
+
 
 # ═══════════════════════════════════════════════════════════
-# Verdict 优先级与去重
+# 辅助
 # ═══════════════════════════════════════════════════════════
 
-# 来源优先级：LLM 手动审校 > 格式自动检查 > 术语自动检查
-# 同一条目同级别时，手动判断优先
-SOURCE_PRIORITY: dict[str, int] = {
-    "llm_review": 3,
-    "interactive": 3,
-    "format_check": 2,
-    "terminology_check": 2,
-    "llm_error": 1,
+_VERDICT_RANK: dict[str, int] = {
+    "❌ FAIL": 4,
+    "🔶 REVIEW": 3,
+    "⚠️ SUGGEST": 2,
+    "PASS": 1,
 }
 
 
-def merge_verdicts(
-    *verdict_lists: Sequence[VerdictDict],
-    keep_all: bool = False,
-) -> list[VerdictDict]:
-    """
-    合并多个 verdict 列表，按 key 去重。
-    同一 key 保留最高优先级的 verdict。
-
-    :param keep_all: 如果为 True，保留同一 key 的所有 verdict（用于审查）
-    :return: 合并后的 verdict 列表
-    """
-    if keep_all:
-        all_v: list[VerdictDict] = []
-        seen: set[tuple[str, str]] = set()
-        for vl in verdict_lists:
-            for v in vl:
-                sig = (v.get("key", ""), v.get("reason", ""))
-                if sig not in seen:
-                    seen.add(sig)
-                    all_v.append(v)
-        return sorted(all_v, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
-
-    # 按 key 归并
-    by_key: dict[str, list[VerdictDict]] = defaultdict(list)
-    for vl in verdict_lists:
-        for v in vl:
-            key = v.get("key", "")
-            if key:
-                by_key[key].append(v)
-
-    merged: list[VerdictDict] = []
-    for key, verdicts in by_key.items():
-        # 选最高优先级
-        best = max(verdicts, key=lambda v: (
-            VERDICT_PRIORITY.get(v.get("verdict", ""), 0),
-            SOURCE_PRIORITY.get(v.get("source", ""), 0),
-        ))
-        # 收集所有 reason 去重
-        reasons: list[str] = []
-        for v in verdicts:
-            r = v.get("reason", "")
-            if r and r not in reasons:
-                reasons.append(r)
-        if len(reasons) > 1:
-            best["reason"] = "; ".join(reasons)
-        merged.append(best)
-
-    return sorted(merged, key=lambda v: VERDICT_PRIORITY.get(v.get("verdict", ""), 0), reverse=True)
+def _verdict_rank(v: str) -> int:
+    return _VERDICT_RANK.get(v, 0)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -97,8 +49,8 @@ class ReportGenerator:
         self.matched_entries = alignment.get("matched_entries", [])
 
     def collect(self, *verdict_lists: Sequence[VerdictDict]) -> None:
-        """收集并合并所有 verdict。"""
-        self.verdicts = merge_verdicts(*verdict_lists)
+        """收集 verdict。Phase 5 传入已从 entries 表查询的单一列表。"""
+        self.verdicts = list(verdict_lists[0]) if verdict_lists else []
 
     def compute_stats(self) -> dict[str, int]:
         """计算审校统计。"""
@@ -125,12 +77,20 @@ class ReportGenerator:
 
         en_zh_map: dict[str, dict[str, str]] = {}
         namespace_map: dict[str, str] = {}
+        version_map: dict[str, str] = {}
+        filepath_map: dict[str, str] = {}
         for entry in self.matched_entries:
             key = entry["key"]
             en_zh_map[key] = {"en": entry.get("en", ""), "zh": entry.get("zh", "")}
             ns = entry.get("namespace", "")
             if ns:
                 namespace_map[key] = ns
+            ver = entry.get("version", "")
+            if ver:
+                version_map[key] = ver
+            fp = entry.get("file_path", "")
+            if fp:
+                filepath_map[key] = fp
 
         _VERDICT_MAP = {
             "FAIL": "❌ FAIL", "REVIEW": "🔶 REVIEW", "SUGGEST": "⚠️ SUGGEST",
@@ -138,17 +98,12 @@ class ReportGenerator:
         }
 
         def _normalize(v: VerdictDict) -> VerdictDict | None:
-            out: VerdictDict = {
-                "key":        v.get("key", ""),
-                "en_current": v.get("en_current", ""),
-                "zh_current": v.get("zh_current", ""),
-                "verdict":    _VERDICT_MAP.get(v.get("verdict", ""), v.get("verdict", "")),
-                "suggestion": v.get("suggestion", ""),
-                "reason":     v.get("reason", ""),
-                "source":     v.get("source", ""),
-                "namespace":  v.get("namespace") or namespace_map.get(v.get("key", ""), ""),
-            }
-            if not out["en_current"] and not out["zh_current"]:
+            out = normalize_verdict(dict(v))
+            out["verdict"] = _VERDICT_MAP.get(out.get("verdict", ""), out.get("verdict", ""))
+            out["namespace"] = out["namespace"] or namespace_map.get(v.get("key", ""), "")
+            out["version"] = out["version"] or version_map.get(v.get("key", ""), "")
+            out["file_path"] = out["file_path"] or filepath_map.get(v.get("key", ""), "")
+            if not out.get("en_current") and not out.get("zh_current"):
                 pair = en_zh_map.get(out["key"], {})
                 out["en_current"] = pair.get("en", "")
                 out["zh_current"] = pair.get("zh", "")
@@ -173,13 +128,13 @@ class ReportGenerator:
                     if part:
                         reasons.add(part)
             existing["reason"] = "; ".join(reasons)
-            if VERDICT_PRIORITY.get(nv["verdict"], 0) > VERDICT_PRIORITY.get(existing["verdict"], 0):
+            if _verdict_rank(nv["verdict"]) > _verdict_rank(existing["verdict"]):
                 existing["verdict"] = nv["verdict"]
                 existing["suggestion"] = nv["suggestion"] or existing["suggestion"]
 
         merged = sorted(
             by_key.values(),
-            key=lambda v: VERDICT_PRIORITY.get(v["verdict"], 0),
+            key=lambda v: _verdict_rank(v["verdict"]),
             reverse=True,
         )
 
@@ -206,7 +161,7 @@ class ReportGenerator:
 
     def print_verdict_table(self, max_rows: int = 30) -> None:
         """打印非 PASS verdict 表格。"""
-        non_pass = [v for v in self.verdicts if v.get("verdict") != "PASS"]
+        non_pass = [v for v in self.verdicts if v.get("verdict") != VERDICT_PASS]
         if not non_pass:
             _print("所有条目均 PASS ✓")
             return
@@ -221,4 +176,3 @@ class ReportGenerator:
             _print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
         if len(non_pass) > max_rows:
             _print(f"... 还有 {len(non_pass) - max_rows} 条")
-

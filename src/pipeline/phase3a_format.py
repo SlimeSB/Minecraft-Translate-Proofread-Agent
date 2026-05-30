@@ -1,8 +1,7 @@
 """Phase 3a: 全自动格式检查。"""
 from src.logging import info
-from src.models import EntryDict, PipelineContext, VerdictDict
+from src.models import PipelineContext, SOURCE_PR_WARNING, VERDICT_PASS, VerdictDict, update_diagnosis, verdict_str_to_int
 from src.checkers.format_checker import FormatChecker
-from src.storage.database import PipelineDB
 
 
 def run_phase3a(ctx: PipelineContext) -> None:
@@ -21,15 +20,31 @@ def run_phase3a(ctx: PipelineContext) -> None:
             all_v.append({
                 "key": key,
                 "verdict": "⚠️ SUGGEST",
-                "source": "pr_warning",
+                "source": SOURCE_PR_WARNING,
                 "reason": f"原文变更但翻译未变更。旧EN: {meta.get('old_en', '')[:60]!r} → 新EN: {ctx.en_data.get(key, '')[:60]!r}",
                 "suggestion": "",
             })
 
-    ctx.format_verdicts = all_v
     info(f"  格式问题: {len(all_v)} 条")
     if ctx.pr_warnings:
         info(f"  PR 警告注入: {len(ctx.pr_warnings)} 条")
 
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(all_v, "format")
+    # 6.1: Write verdicts directly to entries table
+    db = ctx.db
+    for v in all_v:
+        key = v.get("key", "")
+        if not key:
+            continue
+        checker_verdict = v.get("verdict", VERDICT_PASS)
+        verdict_int = verdict_str_to_int(checker_verdict)
+        reason = v.get("reason", "")
+        source = v.get("source", "format_check")
+
+        diagnoses_json = update_diagnosis(db, key, source, reason)
+        db.execute(
+            "UPDATE entries SET state=MAX(state,1), verdict=MAX(verdict,?), diagnoses=? WHERE key=?",
+            (verdict_int, diagnoses_json, key))
+
+    # 6.2: Blanket push all entries to state >= 1 (idempotent)
+    db.execute("UPDATE entries SET state=MAX(state,1)")
+    db.commit()

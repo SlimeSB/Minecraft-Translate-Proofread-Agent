@@ -8,7 +8,6 @@ import unittest
 from src.llm.bridge import (
     LLMBridge,
     _batch_process,
-    _is_truncated_json,
     _llm_call_with_retry,
     _normalize_verdict,
     parse_review_response,
@@ -51,29 +50,7 @@ class TestParseReviewResponse(unittest.TestCase):
         self.assertEqual(results[1]["key"], "c.d")
 
 
-# ═══════════════════════════════════════════════════════════
-# 1.2 TestIsTruncatedJson
-# ═══════════════════════════════════════════════════════════
 
-
-class TestIsTruncatedJson(unittest.TestCase):
-    def test_unbalanced_braces_is_truncated(self):
-        self.assertTrue(_is_truncated_json('[{"key":"a.b","value'))
-
-    def test_balanced_braces_not_truncated(self):
-        self.assertFalse(_is_truncated_json('[{"key":"a.b","verdict":"PASS"}]'))
-
-    def test_empty_string_not_truncated(self):
-        self.assertFalse(_is_truncated_json(""))
-
-    def test_unbalanced_brackets(self):
-        self.assertTrue(_is_truncated_json('[{"key":"a"},{"key":"b"'))
-
-    def test_nested_braces_balanced(self):
-        self.assertFalse(_is_truncated_json('{"a":{"b":"c"},"d":"e"}'))
-
-
-# ═══════════════════════════════════════════════════════════
 # 1.3 TestNormalizeVerdict
 # ═══════════════════════════════════════════════════════════
 

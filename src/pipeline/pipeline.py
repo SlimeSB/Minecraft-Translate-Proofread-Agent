@@ -2,7 +2,6 @@
 
 只负责按顺序调用各 Phase，状态全部通过 PipelineContext 传递。
 """
-import json
 import shutil
 from pathlib import Path
 
@@ -14,10 +13,20 @@ from src.pipeline.phase3a_format import run_phase3a
 from src.pipeline.phase3c_review import run_phase3c
 from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
-from src.reporting.report_generator import ReportGenerator
 from src.storage.database import PipelineDB
 from src.dictionary.external import ExternalDictStore
+from src.dictionary.vanilla_terms import VanillaTermsStore
 from src import config as cfg
+
+# 阶段注册表 — 新增阶段只需在此追加，编排器自动按序调用
+PHASES = [
+    ("alignment",  run_phase1),
+    ("terminology", run_phase2),
+    ("format",     run_phase3a),
+    ("llm_review", run_phase3c),
+    ("filter",     run_phase4),
+    ("report",     run_phase5),
+]
 
 
 class ReviewPipeline:
@@ -38,7 +47,7 @@ class ReviewPipeline:
         min_term_freq: int = 3,
         fuzzy_threshold: float = 60.0,
         fuzzy_top: int = 5,
-        batch_size: int = 20,
+        batch_size: int = 0,
         pr_alignment: PRAlignmentWrapper | None = None,
         external_dict: bool = True,
     ):
@@ -59,8 +68,19 @@ class ReviewPipeline:
             pr_mode=pr_alignment is not None,
             pr_alignment=pr_alignment,
         )
-        self.ctx.external_dict_store = ExternalDictStore() if external_dict else None
+        ext_store = ExternalDictStore() if external_dict else None
+        vt_store = VanillaTermsStore()
+        self.ctx.external_dict_store = ext_store
+        stores: list = []
+        if ext_store is not None:
+            stores.append(ext_store)
+        stores.append(vt_store)
+        self.ctx.dict_stores = stores
         self.ctx.ensure_output_dir()
+
+        # 创建单一 DB 连接并传递给 context
+        self.db = PipelineDB(self.ctx.output_dir / "pipeline.db")
+        self.ctx.db = self.db
 
     def run(self) -> None:
         ctx = self.ctx
@@ -82,31 +102,15 @@ class ReviewPipeline:
         info(f"{'='*60}")
 
         try:
-            run_phase1(ctx)       # 键对齐 / PR 数据加载
-            run_phase2(ctx)       # 术语提取与一致性检查
-            run_phase3a(ctx)      # 全自动格式检查
-            run_phase3c(ctx)      # LLM 审校（含筛选 + 模糊搜索）
-
-            # 合并 verdict 写入 DB（供 P4 过滤使用）
-            _save_merged_verdicts(ctx)
-
-            run_phase4(ctx)       # 最终 LLM 过滤
-            run_phase5(ctx)       # 报告生成（从 DB 加载已过滤数据）
+            for name, phase_fn in PHASES:
+                phase_fn(ctx)
         except Exception as e:
-            warn(f"\n错误: {e}")
+            warn(f"\n错误: 流水线在阶段 '{name}' 出错: {e}")
             raise
-
-
-def _save_merged_verdicts(ctx: PipelineContext) -> None:
-    """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
-    rg = ReportGenerator()
-    rg.load_alignment(ctx.alignment)
-    rg.collect(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
-
-    report = rg.build_report()
-    verdicts = report.get("verdicts", [])
-    stats = report.get("stats", {})
-
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(verdicts, "merged")
-        db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
+        finally:
+            for store in ctx.dict_stores:
+                try:
+                    store.close()
+                except Exception:
+                    pass
+            self.db.close()
