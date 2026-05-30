@@ -3,17 +3,14 @@ __pycache__/
 *.pyo
 output/
 logs/
-.venv/
 venv/
-.env
 .DS_Store
 
 lemma_cache.json
-/.commandcode
 AGENTS.md
 *.db
 !data/Minecraft.db
-/.opencode
 /openspec
-/.reasonix
-/.claude
+/.*
+.*
+opencode.jsonc
