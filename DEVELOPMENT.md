@@ -1,6 +1,6 @@
 # 开发文档
 
-> 源码总计约 6003 行 Python（46 个源文件），测试约 3752 行（23 个测试模块，421 个用例）。
+> 源码总计约 6003 行 Python（46 个源文件），测试约 3752 行（22 个测试模块，432 个用例）。
 
 ## 架构概览
 
@@ -396,7 +396,7 @@ python -m venv venv
 pip install openai pytest pyright
 cp .env.example .env
 
-# 运行测试 (421 tests, 23 个模块)
+# 运行测试 (432 tests, 22 个模块)
 pytest tests/ -v
 
 # 类型检查
