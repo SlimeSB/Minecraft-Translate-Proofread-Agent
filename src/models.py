@@ -369,6 +369,50 @@ def _format_diagnoses(diagnoses_raw: str) -> str:
     return "; ".join(parts)
 
 
+def merge_diagnoses_for_report(diagnoses_raw: str) -> str:
+    """合并诊断为一条自然段落（用于最终报告输出）。
+
+    策略：
+    - 优先取 llm_review 的 reason（LLM 已在 prompt 中看到自动检查结果，应已整合）
+    - 无 llm_review 时，拼接所有非空 reason（去掉 [source] 标签），去重后用中文分号连接
+    """
+    import json as _json
+    try:
+        diags = _json.loads(diagnoses_raw)
+    except (_json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(diags, list):
+        return ""
+
+    llm_reason = ""
+    other_reasons: list[str] = []
+    seen: set[str] = set()
+
+    for d in diags:
+        if not isinstance(d, dict):
+            continue
+        reason = (d.get("reason") or "").strip()
+        if not reason:
+            continue
+        # 去重（同一内容的诊断只取一条）
+        if reason in seen:
+            continue
+        seen.add(reason)
+
+        source = (d.get("source") or "unknown").strip()
+        if source == "llm_review":
+            llm_reason = reason
+        else:
+            other_reasons.append(reason)
+
+    # 优先返回 LLM 的 reason（已经是自然语言段落）
+    if llm_reason:
+        return llm_reason
+
+    # 无 LLM 时：去掉 [source] 标签后拼接
+    return "；".join(other_reasons) if other_reasons else ""
+
+
 def update_diagnosis(db: Any, key: str, source: str, reason: str) -> str:
     """读取 entries 表中 key 的 diagnoses，按 source 替换/追加，返回 JSON 字符串。
 

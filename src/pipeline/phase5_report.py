@@ -5,7 +5,7 @@ from src.logging import info
 from src.models import (
     EntryDict, PipelineContext, VerdictDict,
     VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST, VERDICT_PASS,
-    _format_diagnoses, verdict_int_to_str,
+    merge_diagnoses_for_report, verdict_int_to_str,
 )
 from src.config import DEFAULT_NAMESPACE
 from src.reporting.report_generator import ReportGenerator
@@ -24,7 +24,7 @@ def run_phase5(ctx: PipelineContext) -> None:
             "en_current": r["en"],
             "zh_current": r["zh"],
             "verdict": verdict_int_to_str(r["verdict"]),
-            "reason": _format_diagnoses(r["diagnoses"]),
+            "reason": merge_diagnoses_for_report(r["diagnoses"]),
             "suggestion": r["suggestion"] or "",
             "source": "",
             "namespace": r["namespace"] or "",

@@ -240,5 +240,76 @@ class TestFormatDiagnoses(unittest.TestCase):
         self.assertEqual(_format_diagnoses("not json"), "")
 
 
+class TestMergeDiagnosesForReport(unittest.TestCase):
+    """测试 merge_diagnoses_for_report 函数。"""
+    import json as _json
+
+    def test_empty_array(self):
+        from src.models import merge_diagnoses_for_report
+        self.assertEqual(merge_diagnoses_for_report("[]"), "")
+
+    def test_invalid_json(self):
+        from src.models import merge_diagnoses_for_report
+        self.assertEqual(merge_diagnoses_for_report("not json"), "")
+
+    def test_single_auto_check(self):
+        """仅有自动检查（无 llm_review）时，去标签拼接。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([{"source": "terminology_check", "reason": "术语不一致"}])
+        result = merge_diagnoses_for_report(diags)
+        self.assertEqual(result, "术语不一致")
+        self.assertNotIn("[terminology_check]", result)
+
+    def test_multiple_auto_checks(self):
+        """多条自动检查，去标签后分号连接。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([
+            {"source": "format_check", "reason": "格式错误"},
+            {"source": "terminology_check", "reason": "术语不一致"},
+        ])
+        result = merge_diagnoses_for_report(diags)
+        self.assertIn("格式错误", result)
+        self.assertIn("术语不一致", result)
+        self.assertNotIn("[format_check]", result)
+        self.assertNotIn("[terminology_check]", result)
+
+    def test_prefer_llm_review(self):
+        """同时有 llm_review 和自动检查时，优先取 llm_review 的 reason。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([
+            {"source": "terminology_check", "reason": "术语不一致，sifting应译为过筛"},
+            {"source": "llm_review", "reason": "漏译 data，且sifting术语应为过筛"},
+        ])
+        result = merge_diagnoses_for_report(diags)
+        self.assertEqual(result, "漏译 data，且sifting术语应为过筛")
+
+    def test_only_llm_review(self):
+        """仅有 llm_review 时，直接返回其 reason。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([{"source": "llm_review", "reason": "漏译 data，建议译为机械动力过筛数据"}])
+        result = merge_diagnoses_for_report(diags)
+        self.assertEqual(result, "漏译 data，建议译为机械动力过筛数据")
+
+    def test_dedup(self):
+        """相同 reason 去重。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([
+            {"source": "format_check", "reason": "格式错误"},
+            {"source": "format_check", "reason": "格式错误"},
+        ])
+        result = merge_diagnoses_for_report(diags)
+        self.assertEqual(result, "格式错误")
+
+    def test_empty_reason_skipped(self):
+        """空 reason 跳过。"""
+        from src.models import merge_diagnoses_for_report
+        diags = self._json.dumps([
+            {"source": "format_check", "reason": ""},
+            {"source": "terminology_check", "reason": "术语不一致"},
+        ])
+        result = merge_diagnoses_for_report(diags)
+        self.assertEqual(result, "术语不一致")
+
+
 if __name__ == "__main__":
     unittest.main()
