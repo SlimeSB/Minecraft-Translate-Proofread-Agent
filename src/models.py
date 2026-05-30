@@ -17,14 +17,6 @@ if TYPE_CHECKING:
 # 共享常量
 # ═══════════════════════════════════════════════════════════
 
-PhaseName = Literal["format", "terminology", "llm", "merged"]
-"""管道阶段标识符。拼写错误在类型检查时捕获。"""
-
-PHASE_FORMAT: PhaseName = "format"
-PHASE_TERMINOLOGY: PhaseName = "terminology"
-PHASE_LLM: PhaseName = "llm"
-PHASE_MERGED: PhaseName = "merged"
-
 SourceType = Literal[
     "format_check", "terminology_check", "llm_review",
     "untranslated_review", "interactive", "pr_warning", "llm_error",
@@ -113,8 +105,10 @@ class VerdictDict(TypedDict, total=False):
     suggestion: str
     reason: str
     source: str          # "format_check" | "terminology_check" | "llm_review" | "interactive" | "pr_warning" | "llm_error"
+    namespace: str
     version: str
     file_path: str
+    slug: str
 
 
 class GlossaryDict(TypedDict):
@@ -216,8 +210,8 @@ class ManualFormatConfig(TypedDict):
 # {key: (full_en, full_zh)}
 MultipartContext = dict[str, tuple[str, str]]
 
-# {key: [verdicts]}
-AutoVerdictsMap = dict[str, list[VerdictDict]]
+# {key: {"verdict": str, "diagnoses_str": str}}
+AutoVerdictsMap = dict[str, dict[str, str]]
 
 # {key: [fuzzy results]}
 FuzzyResultsMap = dict[str, list[FuzzyResultDict]]
@@ -270,12 +264,85 @@ VERDICT_SUGGEST = "⚠️ SUGGEST"
 VERDICT_REVIEW  = "🔶 REVIEW"
 VERDICT_FAIL    = "❌ FAIL"
 
-VERDICT_PRIORITY: dict[str, int] = {
-    VERDICT_FAIL:    4,
-    VERDICT_REVIEW:  3,
-    VERDICT_SUGGEST: 2,
-    VERDICT_PASS:    1,
+# ── 整数 verdict（DB 存储格式）──
+
+VERDICT_STR_TO_INT: dict[str, int] = {
+    "PASS": 0,
+    "⚠️ SUGGEST": 1,
+    "🔶 REVIEW": 2,
+    "❌ FAIL": 3,
 }
+
+VERDICT_INT_TO_STR: dict[int, str] = {
+    0: "PASS",
+    1: "⚠️ SUGGEST",
+    2: "🔶 REVIEW",
+    3: "❌ FAIL",
+}
+
+
+def verdict_str_to_int(s: str) -> int:
+    """字符串 verdict → 整数。非法输入返回 0 (PASS)。"""
+    return VERDICT_STR_TO_INT.get(s, 0)
+
+
+def verdict_int_to_str(i: int) -> str:
+    """整数 verdict → 字符串。非法输入返回 "PASS"。"""
+    return VERDICT_INT_TO_STR.get(i, "PASS")
+
+
+def _format_diagnoses(diagnoses_raw: str) -> str:
+    """从 diagnoses JSON 数组格式化诊断文本。
+
+    过滤非空 reason，每项格式化为 `[source] reason`，去重后 `; ` join。
+    """
+    import json as _json
+    try:
+        diags = _json.loads(diagnoses_raw)
+    except (_json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(diags, list):
+        return ""
+    seen: set[str] = set()
+    parts: list[str] = []
+    for d in diags:
+        if not isinstance(d, dict):
+            continue
+        reason = (d.get("reason") or "").strip()
+        if not reason:
+            continue
+        source = (d.get("source") or "unknown").strip()
+        formatted = f"[{source}] {reason}"
+        if formatted not in seen:
+            seen.add(formatted)
+            parts.append(formatted)
+    return "; ".join(parts)
+
+
+def update_diagnosis(db: Any, key: str, source: str, reason: str) -> str:
+    """读取 entries 表中 key 的 diagnoses，按 source 替换/追加，返回 JSON 字符串。
+
+    调用方将此返回值用于 UPDATE 语句中的 diagnoses=? 参数。
+    """
+    import json as _json
+    row = db.execute("SELECT diagnoses FROM entries WHERE key=?", (key,)).fetchone()
+    if row:
+        try:
+            diagnoses = _json.loads(row["diagnoses"])
+        except (_json.JSONDecodeError, TypeError):
+            diagnoses = []
+    else:
+        diagnoses = []
+    existing_idx = next(
+        (i for i, d in enumerate(diagnoses) if isinstance(d, dict) and d.get("source") == source),
+        None,
+    )
+    new_diag = {"source": source, "reason": reason}
+    if existing_idx is not None:
+        diagnoses[existing_idx] = new_diag
+    else:
+        diagnoses.append(new_diag)
+    return _json.dumps(diagnoses, ensure_ascii=False)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -328,10 +395,6 @@ class PipelineContext:
 
     glossary: list[GlossaryDict] = field(default_factory=list)
 
-    format_verdicts: list[VerdictDict] = field(default_factory=list)
-    term_verdicts: list[VerdictDict] = field(default_factory=list)
-    llm_verdicts: list[VerdictDict] = field(default_factory=list)
-
     fuzzy_results_map: FuzzyResultsMap = field(default_factory=dict)
 
     dict_stores: list[DictStore] = field(default_factory=list)
@@ -339,8 +402,8 @@ class PipelineContext:
 
     config: dict[str, Any] = field(default_factory=dict)
 
-    filter_cache_hits: int = 0
-    filter_cache_total: int = 0
+    # ── DB 连接 ──
+    db: Any | None = None  # PipelineDB (lazy import to avoid circular)
 
     def ensure_output_dir(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -349,9 +412,23 @@ class PipelineContext:
         return self.alignment.get("matched_entries", [])
 
     def auto_verdicts_map(self) -> AutoVerdictsMap:
+        """从 entries 表查询有诊断的条目，返回 {key: {verdict, diagnoses_str}}。
+
+        diagnoses_str 格式为 `[source] reason; [source] reason`，供 LLM prompt 直接消费。
+        """
+        import json as _json
         m: AutoVerdictsMap = {}
-        for v in self.format_verdicts + self.term_verdicts:
-            k = v.get("key", "")
-            if k:
-                m.setdefault(k, []).append(v)
+        if self.db is None:
+            return m
+        rows = self.db.execute(
+            "SELECT key, verdict, diagnoses FROM entries WHERE diagnoses != '[]'"
+        ).fetchall()
+        for r in rows:
+            diag_str = _format_diagnoses(r["diagnoses"])
+            if not diag_str:
+                continue
+            m[r["key"]] = {
+                "verdict": verdict_int_to_str(r["verdict"]),
+                "diagnoses_str": diag_str,
+            }
         return m

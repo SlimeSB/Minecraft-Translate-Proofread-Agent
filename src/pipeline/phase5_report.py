@@ -1,23 +1,45 @@
-"""Phase 5: 报告生成 —— 从 DB 加载已过滤判决，生成 report.md + report.json。"""
+"""Phase 5: 报告生成 —— 从 entries 表加载 verdict，生成 report.md + report.json。"""
 import json
 
 from src.logging import info
 from src.models import (
-    EntryDict, PHASE_MERGED, PipelineContext, VerdictDict,
-    VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST,
+    EntryDict, PipelineContext, VerdictDict,
+    VERDICT_FAIL, VERDICT_REVIEW, VERDICT_SUGGEST, VERDICT_PASS,
+    _format_diagnoses, verdict_int_to_str,
 )
 from src.config import DEFAULT_NAMESPACE
 from src.reporting.report_generator import ReportGenerator
-from src.storage.database import PipelineDB
 
 
 def run_phase5(ctx: PipelineContext) -> None:
     info("[Phase 5] 报告生成...")
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        kept: list[VerdictDict] = db.load_verdicts(phase=PHASE_MERGED, filtered=1)  # type: ignore[assignment]
-        if not kept:
-            kept = db.load_verdicts(phase=PHASE_MERGED, filtered=0)  # type: ignore[assignment]
-        glossary = ctx.glossary if ctx.glossary else db.load_glossary()
+    db = ctx.db
+
+    # 10.1: Load entries with verdict >= 1 (all problematic entries)
+    rows = db.execute("SELECT * FROM entries WHERE verdict >= 1").fetchall()
+    kept: list[VerdictDict] = []
+    for r in rows:
+        kept.append({
+            "key": r["key"],
+            "en_current": r["en"],
+            "zh_current": r["zh"],
+            "verdict": verdict_int_to_str(r["verdict"]),
+            "reason": _format_diagnoses(r["diagnoses"]),
+            "suggestion": r["suggestion"] or "",
+            "source": "",
+            "namespace": r["namespace"] or "",
+            "version": r["version"] or "",
+            "file_path": r["file_path"] or "",
+        })
+
+    # 10.3: Load glossary from output_dir/glossary.json
+    glossary_path = ctx.output_dir / "glossary.json"
+    glossary: list = []
+    if glossary_path.exists():
+        with open(glossary_path, "r", encoding="utf-8") as f:
+            glossary = json.load(f)
+    if not glossary:
+        glossary = ctx.glossary
 
     # ── console 摘要 + 表格 ──
     rg = ReportGenerator()
@@ -37,7 +59,6 @@ def run_phase5(ctx: PipelineContext) -> None:
         json.dump(report_data, f, ensure_ascii=False, indent=2)
 
     # ── glossary.json ──
-    glossary_path = ctx.output_dir / "glossary.json"
     with open(glossary_path, "w", encoding="utf-8") as f:
         json.dump(glossary, f, ensure_ascii=False, indent=2)
     info(f"  术语表: {glossary_path}")

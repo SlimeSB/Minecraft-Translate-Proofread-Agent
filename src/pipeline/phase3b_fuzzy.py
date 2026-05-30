@@ -2,7 +2,6 @@
 from src.logging import info
 from src.models import EntryDict, FuzzyResultDict, FuzzyResultsMap, PipelineContext
 from src.tools.fuzzy_search import fuzzy_search_lines
-from src.storage.database import PipelineDB
 from src import config as cfg
 
 
@@ -32,6 +31,4 @@ def run_phase3b(ctx: PipelineContext, llm_entries: list[EntryDict]) -> None:
             ctx.fuzzy_results_map[key] = results
 
     info(f"  模糊搜索: {len(to_search)} 条查询, {len(ctx.fuzzy_results_map)} 条有结果")
-
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_fuzzy_results(ctx.fuzzy_results_map)
+    # No DB write — fuzzy_results_map stays in memory only

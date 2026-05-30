@@ -12,7 +12,6 @@ from src.models import (
     PRVersionGroups,
     VersionGroupData,
 )
-from src.storage.database import PipelineDB
 from src.tools.key_alignment import align_keys, load_json_clean, merge_indexed_entries
 from src.tools.version_cmp import sort_versions_desc
 from src.tools.pr.cross_version_diff import CrossVersionDiff, compute_all_cross_version_diffs
@@ -173,8 +172,20 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
     ctx.alignment = merge_indexed_entries(ctx.alignment)
     matched = ctx.alignment["matched_entries"]
 
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_alignment(ctx.alignment)
+    # Phase 1: INSERT OR REPLACE INTO entries (state=0, verdict=0, diagnoses='[]')
+    db = ctx.db
+    for e in matched:
+        chg = e.get("_change") or {}
+        db.execute(
+            "INSERT OR REPLACE INTO entries "
+            "(key, en, zh, format, namespace, version, file_path, slug, old_en, old_zh, state, verdict, diagnoses) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,0,0,'[]')",
+            (e["key"], e.get("en", ""), e.get("zh", ""),
+             e.get("format", ""), e.get("namespace", ""),
+             e.get("version", ""), e.get("file_path", ""),
+             e.get("slug", ""),
+             chg.get("old_en", ""), chg.get("old_zh", "")))
+    db.commit()
 
     for entry in data.get("all_entries", []):
         key = entry["key"]
@@ -233,5 +244,18 @@ def _align_keys(ctx: PipelineContext) -> None:
     stats = ctx.alignment["stats"]
     info(f"  ✅ 已对齐: {stats['matched']} | ❌ 未翻译: {stats['missing_zh']} | "
           f"⚠️ 多余键: {stats['extra_zh']} | 🔶 疑似未翻译: {stats['suspicious_untranslated']}")
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_alignment(ctx.alignment)
+
+    # Phase 1: INSERT OR REPLACE INTO entries (state=0, verdict=0, diagnoses='[]')
+    db = ctx.db
+    for e in ctx.alignment.get("matched_entries", []):
+        chg = e.get("_change") or {}
+        db.execute(
+            "INSERT OR REPLACE INTO entries "
+            "(key, en, zh, format, namespace, version, file_path, slug, old_en, old_zh, state, verdict, diagnoses) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,0,0,'[]')",
+            (e["key"], e.get("en", ""), e.get("zh", ""),
+             e.get("format", ""), e.get("namespace", ""),
+             e.get("version", ""), e.get("file_path", ""),
+             e.get("slug", ""),
+             chg.get("old_en", ""), chg.get("old_zh", "")))
+    db.commit()

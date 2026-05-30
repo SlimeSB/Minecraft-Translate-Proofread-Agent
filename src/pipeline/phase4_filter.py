@@ -1,18 +1,11 @@
 """Phase 4: 最终 LLM 过滤。
 
-从 pipeline.db 读取合并后的判决，查过滤缓存，对未命中条目调 LLM，
-结果写回 DB（驳回 → 改判为 PASS；保留 → 维持原 verdict）。
+从 entries 表读取 state=2 且有问题的条目，调 LLM 过滤，
+结果写回 DB（驳回 → verdict=0, state=3；保留 → state=3，维持原 verdict）。
 """
-import json
-from collections.abc import Mapping
-from typing import Any
-
 from src.logging import info, debug
-from src.models import (
-    FilterDiscardRecord, PHASE_MERGED, PipelineContext, VerdictDict,
-)
+from src.models import PipelineContext, VerdictDict, _format_diagnoses, verdict_int_to_str
 from src.llm.bridge import LLMBridge
-from src.storage.database import PipelineDB
 
 
 def run_phase4(ctx: PipelineContext) -> None:
@@ -20,86 +13,56 @@ def run_phase4(ctx: PipelineContext) -> None:
         return
 
     info("[Phase 4] 最终 LLM 过滤...")
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        verdicts: list[VerdictDict] = db.load_verdicts(phase=PHASE_MERGED, filtered=0)  # type: ignore[assignment]
-        if not verdicts:
-            info("  无 verdict 需要过滤")
-            return
+    db = ctx.db
 
-        cached_pass_keys: set[str] = set()
-        cached_clean_reasons: dict[str, str] = {}
-        uncached: list[VerdictDict] = []
+    # 9.1: Load verdicts from entries table (state=2=reviewed, unfiltered; only problematic)
+    rows = db.execute(
+        "SELECT * FROM entries WHERE state=2 AND verdict >= 1"
+    ).fetchall()
+    if not rows:
+        info("  无 verdict 需要过滤")
+        return
 
-        for v in verdicts:
-            ck = _cache_key(v)
-            result = db.lookup_filter_cache(ck)
-            if result is not None:
-                action, cleaned = result
-                if action == "PASS":
-                    cached_pass_keys.add(v["key"])
-                elif cleaned:
-                    cached_clean_reasons[v["key"]] = cleaned
-            else:
-                uncached.append(v)
+    verdicts: list[VerdictDict] = []
+    for r in rows:
+        verdicts.append({
+            "key": r["key"],
+            "en_current": r["en"],
+            "zh_current": r["zh"],
+            "verdict": verdict_int_to_str(r["verdict"]),
+            "reason": _format_diagnoses(r["diagnoses"]),
+            "suggestion": r["suggestion"] or "",
+        })
 
-        cache_hits = len(verdicts) - len(uncached)
-        info(f"  缓存: {db.filter_cache_size()} 条, 命中 {cache_hits}, 需LLM {len(uncached)}")
-        ctx.filter_cache_hits = cache_hits
-        ctx.filter_cache_total = len(verdicts)
+    info(f"  待过滤: {len(verdicts)} 条")
 
-        bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
+    bridge = LLMBridge(ctx.llm_call, filter_llm_call=ctx.filter_llm_call)
+    filtered_uncached, passes_uncached = bridge.filter_verdicts(verdicts)
 
-        if uncached:
-            filtered_uncached, passes_uncached = bridge.filter_verdicts(uncached)
+    pass_keys: set[str] = {d["key"] for d in passes_uncached}
 
-            pass_keys: set[str] = {d["key"] for d in passes_uncached}
-            uncached_reasons: dict[str, str] = {}
-            for v in filtered_uncached:
-                k = v["key"]
-                r = v.get("reason", "")
-                if r and k not in pass_keys:
-                    uncached_reasons[k] = r
-
-            for v in uncached:
-                ck = _cache_key(v)
-                k = v["key"]
-                if k in pass_keys:
-                    db.store_filter_cache(ck, "PASS", "")
-                else:
-                    db.store_filter_cache(ck, "KEEP", uncached_reasons.get(k, ""))
-            db.commit_filter_cache()
+    # 9.3: Write filter results directly to entries table
+    for v in verdicts:
+        k = v["key"]
+        if k in pass_keys:
+            # 驳回 → PASS (verdict=0, state=3)
+            db.execute("UPDATE entries SET state=3, verdict=0 WHERE key=?", (k,))
+            debug(f"  [过滤·驳回] {k}: {v.get('verdict', '')} → PASS")
         else:
-            pass_keys = set()
-            uncached_reasons = {}
+            # 保留 → state=3, maintain verdict
+            db.execute("UPDATE entries SET state=3 WHERE key=?", (k,))
+            debug(f"  [过滤·保留] {k}: 维持 {v.get('verdict', '')}")
 
-        all_pass = cached_pass_keys | pass_keys
-        all_reasons = {**cached_clean_reasons, **uncached_reasons}
+    removed = len(pass_keys)
+    kept = len(verdicts) - removed
 
-        for v in verdicts:
-            k = v["key"]
-            if k in all_pass:
-                db.set_filtered(k, "PASS", "")
-                debug(f"  [过滤·驳回] {k}: {v.get('verdict', '')} → PASS")
-            else:
-                if k in all_reasons:
-                    v["reason"] = all_reasons[k]
-                db.set_filtered(k, v.get("verdict", ""), v.get("reason", ""))
-                debug(f"  [过滤·保留] {k}: 维持 {v.get('verdict', '')}")
+    # 9.4: Stats via SELECT COUNT
+    total_count = db.execute("SELECT COUNT(*) FROM entries WHERE state=3").fetchone()[0]
+    pass_count = db.execute("SELECT COUNT(*) FROM entries WHERE state=3 AND verdict=0").fetchone()[0]
+    suggest_count = db.execute("SELECT COUNT(*) FROM entries WHERE state=3 AND verdict=1").fetchone()[0]
+    review_count = db.execute("SELECT COUNT(*) FROM entries WHERE state=3 AND verdict=2").fetchone()[0]
+    fail_count = db.execute("SELECT COUNT(*) FROM entries WHERE state=3 AND verdict=3").fetchone()[0]
 
-        removed = len(all_pass)
-        kept = len(verdicts) - removed
-        info(f"  驳回(PASS) {removed} 条, 保留 {kept} 条")
-
-        stats = db.get_merged_stats()
-        db.set_meta("filtered_stats", json.dumps(stats, ensure_ascii=False))
-
-
-def _cache_key(v: Mapping[str, Any]) -> str:
-    import hashlib
-    raw = ":".join([
-        v.get("key", ""),
-        v.get("verdict", ""),
-        v.get("zh_current", "")[:150],
-        v.get("reason", "")[:200],
-    ])
-    return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()
+    db.commit()
+    info(f"  驳回(PASS) {removed} 条, 保留 {kept} 条")
+    info(f"  过滤后统计: 总计{total_count} | PASS {pass_count} | SUGGEST {suggest_count} | REVIEW {review_count} | FAIL {fail_count}")

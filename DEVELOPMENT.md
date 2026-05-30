@@ -10,7 +10,6 @@ run.py                              # CLI 入口（269行），参数解析，�
   │
   ├─ 传统模式                       # --en / --zh (JSON或.lang自动检测)
   ├─ PR 模式                        # --pr [--repo] (JSON/Lang/GuideME)
-  ├─ filter-only 模式               # --filter-only → 加载 DB → 调用 run_phase5()
   └─ 构建 LLM callable             # create_openai_llm_call()
        │
        ▼
@@ -45,7 +44,7 @@ ReviewPipeline                      # 薄编排器 (112 行)，6 阶段纯函数
   │   └─ 外部 LLM API
   │
   ├─ Phase  4: run_phase4()   ◄── phase4_filter.py
-  │   └─ LLMBridge.filter_verdicts() + filter_cache 表
+  │   └─ LLMBridge.filter_verdicts() → UPDATE entries (state=3)
   │
   └─ Phase  5: run_phase5()   ◄── phase5_report.py
       └─ src/reporting/report_generator.py
@@ -69,20 +68,17 @@ run.py --pr 5979
 ```
 ┌─────────────────────────────────────────────────┐
 │                 pipeline.db                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │ alignment│ │ glossary │ │     verdicts     │ │
-│  │  (key,   │ │ (en, zh) │ │ (key, phase,     │ │
-│  │  en, zh, │ │          │ │  verdict, reason, │ │
-│  │  ns…)    │ │          │ │  filtered, …)     │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │  fuzzy   │ │  filter  │ │       meta       │ │
-│  │ _results │ │  _cache  │ │  (key, value)    │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
+│  ┌──────────────────────────────────────────────┐│
+│  │                  entries                     ││
+│  │  (key TEXT PK, en, zh, format, namespace,    ││
+│  │   version, file_path, slug, old_en, old_zh,  ││
+│  │   state INT, verdict INT, suggestion TEXT,   ││
+│  │   diagnoses TEXT(JSON))                      ││
+│  └──────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────┘
 ```
 
-`src/storage/database.py` — `PipelineDB` 类封装所有数据库操作，各 Phase 通过它读写中间结果。
+`src/storage/database.py` — `PipelineDB` 薄封装（`execute`/`commit`/`close`），各 Phase 直接写单表 `entries`。Glossary 独立存为 `output_dir/glossary.json` 文件。
 
 ## 核心模块
 
@@ -117,10 +113,10 @@ class PipelineContext:
     zh_data: dict[str, str]
     alignment: AlignmentDict
     glossary: list[GlossaryDict]
-    format_verdicts: list[VerdictDict]
-    term_verdicts: list[VerdictDict]
-    llm_verdicts: list[VerdictDict]
     fuzzy_results_map: FuzzyResultsMap
+
+    # DB 连接
+    db: PipelineDB | None
 ```
 
 ### 1. `src/pipeline/pipeline.py` — 薄编排器
@@ -137,7 +133,6 @@ class ReviewPipeline:
         run_phase2(self.ctx)    # 术语提取 + LLM校验
         run_phase3a(self.ctx)   # 格式检查
         run_phase3c(self.ctx)   # LLM 审校（含筛选 + Phase 3b 模糊搜索 + 外部词典）
-        _save_merged_verdicts(self.ctx)  # 合并判决后写入 DB
         run_phase4(self.ctx)    # 最终过滤
         run_phase5(self.ctx)    # 报告生成
 ```
@@ -226,8 +221,8 @@ is_valid_term(term) -> bool  # 统一术语有效性检查（长度/数字/停�
 ### 6. `src/reporting/report_generator.py` — 报告生成
 
 `ReportGenerator` 类收集各来源的 verdict，按 key 去重合并，生成：
-- `pipeline.db` verdicts 表（phase=`merged`）— 统一审校报告
 - `report.md` — Markdown 可读报告
+- `report.json` — 完整 JSON 报告
 - `<ns>_report.md` — 按 namespace 拆分的质量报告
 - `glossary.json` — 术语表 JSON 文件
 
@@ -278,31 +273,26 @@ JSON/Lang文件
         │
         ├─ load_json_clean() / load_lang()  (自动检测格式)
         ▼
-   key_alignment ──── alignment 表
-        │                     │
-        │ matched_entries      │ missing / extra / suspicious
-        ├─ terminology_builder │
-        │  └─ glossary 表 + verdicts(terminology) 表
+   key_alignment ──── INSERT entries (state=0, verdict=0)
         │
-        ├─ format_checker ───── verdicts(format) 表
+        ├─ terminology_builder ──── glossary.json + UPDATE entries (state≥1)
         │
-        ├─ fuzzy_search ─────── fuzzy_results 表
+        ├─ format_checker ──────── UPDATE entries (state≥1)
         │
-        ├─ LLM review ───────── verdicts(llm) 表
+        ├─ fuzzy_search ────────── fuzzy_results_map (仅内存)
         │
-        ▼
-   verdict merge ────────────── verdicts(merged) 表
+        ├─ LLM review ──────────── UPDATE entries (state=2)
         │
-        ├─ final_filter ─────── verdicts.filtered 字段 + filter_cache 表
+        ├─ final_filter ────────── UPDATE entries (state=3)
         │
         ▼
-   report_generator ────────── meta 表
-        │
-        ▼
+   report_generator ─────────────────────────────────────
+        │                                                   │
+        ▼                                                   ▼
    report.md / report.json / <ns>_report.md / glossary.json
 ```
 
-所有中间数据统一存在 `output/pipeline.db`（单一 SQLite 文件）。
+所有翻译条目数据统一存在 `output/pipeline.db` entries 表的单文件中。术语表独立存为 `output/glossary.json`。
 
 ## 算法详解
 
@@ -350,19 +340,13 @@ SQLite FTS5 前缀召回 → Levenshtein 编辑距离精排 → 排除自身。�
 
 **交互模式**：逐条展示 EN/ZH + 自动检查 + 模糊参考，用户 1-4 选择判定并输入理由/建议。
 
-### Phase 3 Merge — 判决合并
-
-按 key 归并所有来源 verdict，取最高优先级。写入 `verdicts` 表 phase='merged'。
-
 ### Phase 4 — 最终 LLM 过滤
 
-LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → 改判 PASS**，**保留 → 维持原 verdict**，全部标记 `filtered=1`。
-
-`filter_cache` 表基于 `blake2b(key + verdict + zh[:150] + reason[:200])` → 16字节 (128-bit) hex hash，已判条目下次跳过 LLM 调用。手册文档条目同样逐条过滤。
+从 entries 表读取 `state=2 AND verdict>=1` 的条目，LLM 逐条判断是否驳回（过激的术语/标点判定）。**驳回 → 改判 PASS**（`state=3, verdict=0`），**保留 → 维持原 verdict**（`state=3`，不做修改）。手册文档条目同样逐条过滤。
 
 ### Phase 5 — 报告生成
 
-加载 `filtered=1` verdict，PASS 计入统计但不列入问题清单。按 namespace 分组输出 `report.json`、`report.md`、`<ns>_report.md`、`glossary.json`（术语表 JSON 文件）。PR 模式额外输出跨版本差异报告（版本间新增/修改 key 清单）。Console 输出摘要 + 表格（前 30 行）。
+从 entries 表加载 `verdict >= 1` 的条目，PASS 计入统计但不列入问题清单。从 `glossary.json` 加载术语表。按 namespace/slug/version 分组输出 `report.json`、`report.md`、`<ns>_report.md`。PR 模式额外输出跨版本差异报告。
 
 ### 跨版本差异检测（PR 多版本审校）
 

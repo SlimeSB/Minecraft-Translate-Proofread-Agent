@@ -2,13 +2,11 @@
 
 只负责按顺序调用各 Phase，状态全部通过 PipelineContext 传递。
 """
-import json
 import shutil
 from pathlib import Path
 
 from src.logging import info, warn
-from src.models import LLMCallable, PHASE_MERGED, PipelineContext, PRAlignmentWrapper
-from src.verdict_merger import merge_verdicts, compute_merged_stats
+from src.models import LLMCallable, PipelineContext, PRAlignmentWrapper
 from src.pipeline.phase1_alignment import run_phase1
 from src.pipeline.phase2_terminology import run_phase2
 from src.pipeline.phase3a_format import run_phase3a
@@ -80,6 +78,10 @@ class ReviewPipeline:
         self.ctx.dict_stores = stores
         self.ctx.ensure_output_dir()
 
+        # 创建单一 DB 连接并传递给 context
+        self.db = PipelineDB(self.ctx.output_dir / "pipeline.db")
+        self.ctx.db = self.db
+
     def run(self) -> None:
         ctx = self.ctx
         if ctx.output_dir.exists():
@@ -101,8 +103,6 @@ class ReviewPipeline:
 
         try:
             for name, phase_fn in PHASES:
-                if name == "filter":
-                    _save_merged_verdicts(ctx)
                 phase_fn(ctx)
         finally:
             for store in ctx.dict_stores:
@@ -110,14 +110,4 @@ class ReviewPipeline:
                     store.close()
                 except Exception:
                     pass
-
-
-def _save_merged_verdicts(ctx: PipelineContext) -> None:
-    """将各阶段 verdict 合并去重后写入 DB 的 merged phase。"""
-    verdicts = merge_verdicts(ctx.format_verdicts, ctx.term_verdicts, ctx.llm_verdicts)
-    total = len(ctx.alignment.get("matched_entries", []))
-    stats = compute_merged_stats(verdicts, total)
-
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_verdicts(verdicts, PHASE_MERGED)
-        db.set_meta("stats", json.dumps(stats, ensure_ascii=False))
+            self.db.close()

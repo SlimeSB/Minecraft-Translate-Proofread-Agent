@@ -4,15 +4,30 @@
 用法:
     from report_generator import ReportGenerator
     rg = ReportGenerator()
-    rg.collect(format_v, term_v, llm_v)
+    rg.collect(verdicts)
     rg.generate(output_dir)
 """
 from collections import defaultdict
 from collections.abc import Sequence
 
 from src.cli import safe_print as _print
-from src.verdict_merger import merge_verdicts
-from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, VERDICT_PRIORITY, normalize_verdict
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, normalize_verdict
+
+
+# ═══════════════════════════════════════════════════════════
+# 辅助
+# ═══════════════════════════════════════════════════════════
+
+_VERDICT_RANK: dict[str, int] = {
+    "❌ FAIL": 4,
+    "🔶 REVIEW": 3,
+    "⚠️ SUGGEST": 2,
+    "PASS": 1,
+}
+
+
+def _verdict_rank(v: str) -> int:
+    return _VERDICT_RANK.get(v, 0)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -34,8 +49,8 @@ class ReportGenerator:
         self.matched_entries = alignment.get("matched_entries", [])
 
     def collect(self, *verdict_lists: Sequence[VerdictDict]) -> None:
-        """收集并合并所有 verdict。"""
-        self.verdicts = merge_verdicts(*verdict_lists)
+        """收集 verdict。Phase 5 传入已从 entries 表查询的单一列表。"""
+        self.verdicts = list(verdict_lists[0]) if verdict_lists else []
 
     def compute_stats(self) -> dict[str, int]:
         """计算审校统计。"""
@@ -113,13 +128,13 @@ class ReportGenerator:
                     if part:
                         reasons.add(part)
             existing["reason"] = "; ".join(reasons)
-            if VERDICT_PRIORITY.get(nv["verdict"], 0) > VERDICT_PRIORITY.get(existing["verdict"], 0):
+            if _verdict_rank(nv["verdict"]) > _verdict_rank(existing["verdict"]):
                 existing["verdict"] = nv["verdict"]
                 existing["suggestion"] = nv["suggestion"] or existing["suggestion"]
 
         merged = sorted(
             by_key.values(),
-            key=lambda v: VERDICT_PRIORITY.get(v["verdict"], 0),
+            key=lambda v: _verdict_rank(v["verdict"]),
             reverse=True,
         )
 
@@ -161,4 +176,3 @@ class ReportGenerator:
             _print(f"| {verdict:<10} | {key:<45} | {reason:<50} |")
         if len(non_pass) > max_rows:
             _print(f"... 还有 {len(non_pass) - max_rows} 条")
-

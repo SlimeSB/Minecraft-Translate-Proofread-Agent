@@ -21,11 +21,8 @@ from pathlib import Path
 
 from src.cli import load_dotenv, configure_utf8_output, safe_print, check_api_health
 from src.llm.client import create_openai_llm_call
-from src.models import PHASE_MERGED, PipelineContext, PRAlignmentWrapper
+from src.models import PipelineContext, PRAlignmentWrapper
 from src.pipeline.pipeline import ReviewPipeline
-from src.pipeline.phase4_filter import run_phase4
-from src.pipeline.phase5_report import run_phase5
-from src.storage.database import PipelineDB
 from src import config as cfg
 from src.dictionary.external import DEFAULT_DB_PATH
 
@@ -65,11 +62,6 @@ def main() -> None:
     if is_pr:
         output_dir = str(Path(args.output_dir) / f"pr{args.pr}")
 
-    # ── filter-only 模式 ──
-    if args.filter_only:
-        _run_filter_only(args, output_dir)
-        return
-
     # ── 构建 LLM（API 健康检查提前）──
     llm_call, filter_llm_call = _build_llm_calls(args)
 
@@ -104,10 +96,10 @@ def main() -> None:
     _elapsed = time.time() - _start
     safe_print(f"\n⏱ 结束: {time.strftime('%Y-%m-%d %H:%M:%S')} | 耗时: {_elapsed/60:.1f} 分 ({_elapsed:.0f} 秒)")
 
-    _print_token_usage(llm_call, filter_llm_call, pipeline.ctx)
+    _print_token_usage(llm_call, filter_llm_call)
 
 
-def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
+def _print_token_usage(llm_call, filter_llm_call) -> None:
     review_u = getattr(llm_call, "usage", {}) if llm_call else {}
     filter_u = getattr(filter_llm_call, "usage", {}) if filter_llm_call else {}
 
@@ -131,16 +123,6 @@ def _print_token_usage(llm_call, filter_llm_call, ctx) -> None:
               f"{filter_u['total_tokens']:,} tokens "
               f"(prompt: {filter_u['prompt_tokens']:,}, completion: {filter_u['completion_tokens']:,})")
 
-    # 缓存估算
-    cache_hits = getattr(ctx, "filter_cache_hits", 0)
-    cache_total = getattr(ctx, "filter_cache_total", 0)
-    if cache_hits and filter_u.get("calls", 0):
-        avg_per_call = filter_u["total_tokens"] / filter_u["calls"]
-        cached_verdicts_per_call = (cache_total - cache_hits) / filter_u["calls"] if filter_u["calls"] else 1
-        if cached_verdicts_per_call > 0:
-            saved = int(cache_hits / cached_verdicts_per_call * avg_per_call)
-            safe_print(f"  缓存命中 (Phase 4):            {cache_hits}/{cache_total} 条, 节省约 {saved:,} tokens")
-
     safe_print(f"  {'─' * 38}")
     safe_print(f"  实际消耗:                     {total_calls} 次调用, {total_tokens:,} tokens "
           f"(prompt: {total_prompt:,}, completion: {total_completion:,})")
@@ -160,9 +142,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="干运行：显示统计不调 LLM")
     parser.add_argument("--min-term-freq", type=int, default=5, help="术语最低频次阈值")
     parser.add_argument("--fuzzy-threshold", type=float, default=60.0, help="模糊搜索相似度阈值")
-    parser.add_argument("--batch-size", type=int, default=25, help="LLM 每批条目数")
-    parser.add_argument("--filter-only", action="store_true",
-                        help="仅重跑 Phase 4 最终过滤 + Phase 5 报告（需已有 pipeline.db）")
+    parser.add_argument("--batch-size", type=int, default=50, help="LLM 每批条目数")
     parser.add_argument("--no-external-dict", action="store_true", default=False,
                         help="不加载外部社区翻译词典（默认加载 data/Dict-Sqlite.db）")
 
@@ -201,46 +181,6 @@ def _validate_input_files(en_path: str, zh_path: str) -> None:
     if not os.path.exists(zh_path):
         safe_print(f"错误: ZH 文件不存在: {zh_path}", file=sys.stderr)
         sys.exit(1)
-
-
-def _run_filter_only(args, output_dir_str: str) -> None:
-    output_dir = Path(output_dir_str)
-    db_path = output_dir / "pipeline.db"
-    if not db_path.exists():
-        safe_print(f"错误: 未找到 {db_path}，请先运行完整流水线", file=sys.stderr)
-        sys.exit(1)
-
-    api_key = os.environ.get("REVIEW_OPENAI_API_KEY", "")
-    if not api_key:
-        safe_print("错误: 未设置 REVIEW_OPENAI_API_KEY", file=sys.stderr)
-        sys.exit(1)
-
-    base_url = os.environ.get("REVIEW_OPENAI_BASE_URL", "https://api.deepseek.com")
-    model = os.environ.get("REVIEW_OPENAI_MODEL", "deepseek-v4-flash")
-    llm_call = create_openai_llm_call(api_key, model, base_url, label="Review")
-    filter_llm_call = create_openai_llm_call(api_key, model, base_url,
-                                              system_prompt=cfg.FILTER_SYSTEM_PROMPT,
-                                              reasoning_effort="high",
-                                              label="Filter")
-
-    db = PipelineDB(db_path)
-    verdicts = db.load_verdicts(phase=PHASE_MERGED, filtered=0)
-    alignment = db.load_alignment()
-    db.close()
-
-    if not verdicts:
-        safe_print("无待过滤 verdict")
-        sys.exit(0)
-
-    ctx = PipelineContext(
-        output_dir=output_dir,
-        llm_call=llm_call,
-        filter_llm_call=filter_llm_call,
-    )
-    ctx.alignment = alignment
-
-    run_phase4(ctx)
-    run_phase5(ctx)
 
 
 def _load_pr_alignment(args, is_pr: bool, is_pr_alignment: bool, output_dir: str, llm_call_fn=None) -> PRAlignmentWrapper | None:

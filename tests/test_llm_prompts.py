@@ -190,7 +190,7 @@ class TestBuildReviewPrompt(unittest.TestCase):
 
     def test_prompt_contains_auto_verdict_info(self):
         entry = _entry("block.copper", "Copper", "铜")
-        auto_map = {"block.copper": [_verdict("block.copper", verdict="❌ FAIL", reason="占位符")]}
+        auto_map = {"block.copper": {"verdict": "❌ FAIL", "diagnoses_str": "占位符"}}
         prompts = build_review_prompt([entry], None, auto_map, None, 25)
         self.assertIn("❌ FAIL", prompts[0])
 
@@ -290,7 +290,7 @@ class TestBuildEntryBlock(unittest.TestCase):
 
     def test_block_with_auto_verdicts(self):
         entry = _entry("block.test", "Copper", "铜")
-        auto = [_verdict("block.test", verdict="❌ FAIL", reason="缺少占位符")]
+        auto = {"verdict": "❌ FAIL", "diagnoses_str": "缺少占位符"}
         block = build_entry_block(entry, auto_verdicts=auto)
         self.assertIn("❌ FAIL", block)
 

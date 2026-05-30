@@ -133,7 +133,7 @@ def filter_for_llm(
 
 def build_entry_block(
     entry: EntryDict,
-    auto_verdicts: list[VerdictDict] | None = None,
+    auto_verdicts: dict[str, str] | None = None,
     full_en: str = "",
     full_zh: str = "",
 ) -> str:
@@ -166,11 +166,13 @@ def build_entry_block(
             ))
 
     if auto_verdicts:
-        lines.append("")
-        for v in auto_verdicts:
+        verdict_str = auto_verdicts.get("verdict", "")
+        diagnoses_str = auto_verdicts.get("diagnoses_str", "")
+        if verdict_str or diagnoses_str:
+            lines.append("")
             lines.append(cfg.PROMPT_AUTO_CHECK_LINE.format(
-                verdict=v["verdict"],
-                reason=v["reason"],
+                verdict=verdict_str,
+                reason=diagnoses_str,
             ))
     return "\n".join(lines)
 
@@ -373,7 +375,7 @@ def build_review_prompt(
                 blocks = [batch_shared_prefix]
                 for e in batch:
                     key = e["key"]
-                    auto_v = auto_verdicts_map.get(key, []) if auto_verdicts_map else []
+                    auto_v = auto_verdicts_map.get(key) if auto_verdicts_map else None
                     full_en, full_zh = merged_context.get(key, ("", "")) if merged_context else ("", "")
                     block = build_entry_block(e, auto_v, full_en, full_zh)
                     blocks.append(block)

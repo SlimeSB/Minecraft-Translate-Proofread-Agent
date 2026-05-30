@@ -1,4 +1,5 @@
-"""测试 PipelineDB — SQLite 数据库 CRUD 操作。"""
+"""测试 PipelineDB — 新 entries 单表 schema。"""
+import json
 import os
 import tempfile
 import unittest
@@ -23,192 +24,229 @@ class TestPipelineDB(unittest.TestCase):
     def test_db_creates_file(self):
         self.assertTrue(self.db_path.exists())
 
-    def test_save_and_load_alignment(self):
-        alignment = {
-            "matched_entries": [
-                {"key": "item.sword", "en": "Sword", "zh": "剑",
-                 "format": "json", "namespace": "mod_a",
-                 "_change": {"old_en": "Blade", "old_zh": "刀"}},
-                {"key": "item.shield", "en": "Shield", "zh": "盾",
-                 "format": "json", "namespace": "mod_a"},
-            ]
-        }
-        self.db.save_alignment(alignment)
-        loaded = self.db.load_alignment()
-        self.assertEqual(loaded["stats"]["matched"], 2)
-        entries = loaded["matched_entries"]
-        self.assertEqual(entries[0]["key"], "item.sword")
-        self.assertEqual(entries[0]["en"], "Sword")
+    def test_entries_schema_creates_table(self):
+        """新 schema：entries 表创建成功。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh) VALUES (?,?,?)",
+            ("item.sword", "Sword", "剑"))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.sword",)).fetchone()
+        self.assertEqual(row["key"], "item.sword")
+        self.assertEqual(row["en"], "Sword")
+        self.assertEqual(row["zh"], "剑")
 
-    def test_save_and_load_glossary(self):
-        glossary = [
-            {"en": "copper", "zh": "铜"},
-            {"en": "iron", "zh": "铁"},
-        ]
-        self.db.save_glossary(glossary)
-        loaded = self.db.load_glossary()
-        self.assertEqual(len(loaded), 2)
-        self.assertEqual(loaded[0]["en"], "copper")
-        self.assertEqual(loaded[0]["zh"], "铜")
+    def test_entries_default_values(self):
+        """新 schema：默认值正确。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh) VALUES (?,?,?)",
+            ("item.shield", "Shield", "盾"))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.shield",)).fetchone()
+        self.assertEqual(row["state"], 0)
+        self.assertEqual(row["verdict"], 0)
+        self.assertEqual(row["suggestion"], "")
+        self.assertEqual(row["diagnoses"], "[]")
+        self.assertEqual(row["format"], "")
+        self.assertEqual(row["namespace"], "")
+        self.assertEqual(row["version"], "")
+        self.assertEqual(row["file_path"], "")
+        self.assertEqual(row["slug"], "")
+        self.assertEqual(row["old_en"], "")
+        self.assertEqual(row["old_zh"], "")
 
-    def test_save_and_load_verdicts(self):
-        verdicts = [
-            {"key": "item.sword", "en_current": "Sword", "zh_current": "剑",
-             "verdict": "❌ FAIL", "suggestion": "长剑", "reason": "wrong",
-             "source": "format_check", "namespace": "mod_a"},
-            {"key": "item.shield", "en_current": "Shield", "zh_current": "盾",
-             "verdict": "PASS", "suggestion": "", "reason": "",
-             "source": "", "namespace": "mod_a"},
-        ]
-        self.db.save_verdicts(verdicts, "format")
-        loaded = self.db.load_verdicts(phase="format")
-        self.assertEqual(len(loaded), 2)
+    def test_insert_or_replace(self):
+        """INSERT OR REPLACE：同一 key 后写入覆盖。"""
+        self.db.execute(
+            "INSERT OR REPLACE INTO entries (key, en, zh, state) VALUES (?,?,?,?)",
+            ("item.x", "X", "某物", 0))
+        self.db.execute(
+            "INSERT OR REPLACE INTO entries (key, en, zh, state) VALUES (?,?,?,?)",
+            ("item.x", "X_v2", "某物_v2", 1))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.x",)).fetchone()
+        self.assertEqual(row["en"], "X_v2")
+        self.assertEqual(row["state"], 1)
 
-    def test_load_verdicts_by_namespace(self):
-        verdicts = [
-            {"key": "a", "namespace": "ns1"},
-            {"key": "b", "namespace": "ns2"},
-        ]
-        self.db.save_verdicts(verdicts, "format")
-        ns1 = self.db.load_verdicts(phase="format", namespace="ns1")
-        self.assertEqual(len(ns1), 1)
-        self.assertEqual(ns1[0]["key"], "a")
+    def test_state_max_update(self):
+        """state 使用 MAX(state, N) 单调推进。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, state) VALUES (?,?,?,0)",
+            ("item.a", "A", "甲"))
+        self.db.commit()
+        # 推进到 1
+        self.db.execute("UPDATE entries SET state=MAX(state,1) WHERE key=?", ("item.a",))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.a",)).fetchone()
+        self.assertEqual(row["state"], 1)
+        # 推进到 2
+        self.db.execute("UPDATE entries SET state=MAX(state,2) WHERE key=?", ("item.a",))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.a",)).fetchone()
+        self.assertEqual(row["state"], 2)
 
-    def test_set_filtered_changes_verdict(self):
-        verdicts = [{"key": "item.x", "verdict": "❌ FAIL", "reason": "bad"}]
-        self.db.save_verdicts(verdicts, "merged")
-        self.db.set_filtered("item.x", "PASS", "")
-        loaded = self.db.load_verdicts(phase="merged", filtered=None)
+    def test_verdict_max_update(self):
+        """verdict 使用 MAX(verdict, N) 单调推进。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, verdict) VALUES (?,?,?,0)",
+            ("item.b", "B", "乙"))
+        self.db.commit()
+        # check: FAIL=3
+        self.db.execute("UPDATE entries SET verdict=MAX(verdict,3) WHERE key=?", ("item.b",))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.b",)).fetchone()
+        self.assertEqual(row["verdict"], 3)
+        # PASS=0 < 3, should stay 3
+        self.db.execute("UPDATE entries SET verdict=MAX(verdict,0) WHERE key=?", ("item.b",))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("item.b",)).fetchone()
+        self.assertEqual(row["verdict"], 3)
+
+    def test_diagnoses_json_append(self):
+        """diagnoses JSON 数组追加/替换操作。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, diagnoses) VALUES (?,?,?,'[]')",
+            ("item.c", "C", "丙"))
+        self.db.commit()
+        # 追加 format_check 诊断
+        diag1 = [{"source": "format_check", "reason": "格式错误"}]
+        self.db.execute(
+            "UPDATE entries SET diagnoses=? WHERE key=?",
+            (json.dumps(diag1, ensure_ascii=False), "item.c"))
+        self.db.commit()
+        row = self.db.execute("SELECT diagnoses FROM entries WHERE key=?", ("item.c",)).fetchone()
+        loaded = json.loads(row["diagnoses"])
         self.assertEqual(len(loaded), 1)
-        self.assertEqual(loaded[0]["verdict"], "PASS")
+        self.assertEqual(loaded[0]["source"], "format_check")
 
-    def test_set_filtered_overwrites_reason(self):
-        verdicts = [{"key": "item.x", "verdict": "FAIL", "reason": "old reason"}]
-        self.db.save_verdicts(verdicts, "merged")
-        self.db.set_filtered("item.x", "PASS", "cleaned reason")
-        loaded = self.db.load_verdicts(phase="merged", filtered=None)
-        self.assertEqual(loaded[0]["verdict"], "PASS")
-        self.assertEqual(loaded[0]["reason"], "cleaned reason")
+        # 追加 terminology_check 诊断
+        loaded.append({"source": "terminology_check", "reason": "术语不一致"})
+        self.db.execute(
+            "UPDATE entries SET diagnoses=? WHERE key=?",
+            (json.dumps(loaded, ensure_ascii=False), "item.c"))
+        self.db.commit()
+        row = self.db.execute("SELECT diagnoses FROM entries WHERE key=?", ("item.c",)).fetchone()
+        loaded2 = json.loads(row["diagnoses"])
+        self.assertEqual(len(loaded2), 2)
 
-    def test_set_filtered_only_affects_merged_phase(self):
-        verdicts_fmt = [{"key": "item.x", "verdict": "❌ FAIL", "reason": "bad"}]
-        verdicts_merged = [{"key": "item.x", "verdict": "❌ FAIL", "reason": "bad"}]
-        self.db.save_verdicts(verdicts_fmt, "format")
-        self.db.save_verdicts(verdicts_merged, "merged")
-        self.db.set_filtered("item.x", "PASS", "")
-        fmt_loaded = self.db.load_verdicts(phase="format", filtered=None)
-        self.assertEqual(fmt_loaded[0]["verdict"], "❌ FAIL")
+    def test_blanket_update(self):
+        """blanket UPDATE 推进全部条目的 state。"""
+        for i in range(3):
+            self.db.execute(
+                "INSERT INTO entries (key, en, zh, state) VALUES (?,?,?,0)",
+                (f"item.{i}", f"EN{i}", f"ZH{i}"))
+        self.db.commit()
+        # 全部推进到 1
+        self.db.execute("UPDATE entries SET state=MAX(state,1)")
+        self.db.commit()
+        rows = self.db.execute("SELECT state FROM entries").fetchall()
+        for r in rows:
+            self.assertEqual(r["state"], 1)
 
-    def test_set_merged_reason(self):
-        verdicts = [{"key": "item.x", "verdict": "❌ FAIL", "reason": "old"}]
-        self.db.save_verdicts(verdicts, "merged")
-        self.db.set_merged_reason("item.x", "new reason")
-        loaded = self.db.load_verdicts(phase="merged", filtered=None)
-        self.assertEqual(loaded[0]["reason"], "new reason")
-
-    def test_get_merged_stats(self):
-        verdicts = [
-            {"key": "a", "verdict": "❌ FAIL", "reason": "bad"},
-            {"key": "b", "verdict": "PASS", "reason": ""},
-            {"key": "c", "verdict": "⚠️ SUGGEST", "reason": "meh"},
-            {"key": "d", "verdict": "🔶 REVIEW", "reason": "check"},
+    def test_select_by_verdict(self):
+        """按 verdict >= N 查询正常。"""
+        data = [
+            ("item.a", "A", "甲", 0),
+            ("item.b", "B", "乙", 1),
+            ("item.c", "C", "丙", 2),
+            ("item.d", "D", "丁", 3),
         ]
-        self.db.save_verdicts(verdicts, "merged")
-        for v in verdicts:
-            self.db.set_filtered(v["key"], v["verdict"], v.get("reason", ""))
-        stats = self.db.get_merged_stats()
-        self.assertEqual(stats["total"], 4)
-        self.assertEqual(stats["PASS"], 1)
-        self.assertEqual(stats["❌ FAIL"], 1)
-        self.assertEqual(stats["⚠️ SUGGEST"], 1)
-        self.assertEqual(stats["🔶 REVIEW"], 1)
+        for key, en, zh, v in data:
+            self.db.execute(
+                "INSERT INTO entries (key, en, zh, verdict) VALUES (?,?,?,?)",
+                (key, en, zh, v))
+        self.db.commit()
+        rows = self.db.execute("SELECT * FROM entries WHERE verdict >= 1").fetchall()
+        self.assertEqual(len(rows), 3)  # verdict 1,2,3
+        rows2 = self.db.execute("SELECT * FROM entries WHERE verdict >= 3").fetchall()
+        self.assertEqual(len(rows2), 1)  # only FAIL
 
-    def test_filter_cache(self):
-        self.assertIsNone(self.db.lookup_filter_cache("abc123"))
-        self.db.store_filter_cache("abc123", "PASS", "")
-        self.db.commit_filter_cache()
-        result = self.db.lookup_filter_cache("abc123")
-        self.assertEqual(result, ("PASS", ""))
-        self.assertEqual(self.db.filter_cache_size(), 1)
+    def test_count_by_state(self):
+        """SELECT COUNT 即时统计正确。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, state) VALUES (?,?,?,0)",
+            ("item.a", "A", "甲"))
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, state) VALUES (?,?,?,1)",
+            ("item.b", "B", "乙"))
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, state) VALUES (?,?,?,2)",
+            ("item.c", "C", "丙"))
+        self.db.commit()
+        count = self.db.execute("SELECT COUNT(*) FROM entries WHERE state >= 1").fetchone()[0]
+        self.assertEqual(count, 2)
 
-    def test_filter_cache_overwrite(self):
-        self.db.store_filter_cache("key1", "KEEP", "old reason")
-        self.db.commit_filter_cache()
-        self.db.store_filter_cache("key1", "PASS", "")
-        self.db.commit_filter_cache()
-        result = self.db.lookup_filter_cache("key1")
-        self.assertEqual(result, ("PASS", ""))
-        self.assertEqual(self.db.filter_cache_size(), 1)
+    def test_commit_and_close(self):
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh) VALUES (?,?,?)",
+            ("test.close", "Close", "关闭"))
+        self.db.commit()
+        self.db.close()
+        # Reconnect
+        db2 = PipelineDB(self.db_path)
+        row = db2.execute("SELECT * FROM entries WHERE key=?", ("test.close",)).fetchone()
+        self.assertEqual(row["key"], "test.close")
+        db2.close()
 
-    def test_save_fuzzy_results(self):
-        fm = {
-            "item.a": [{"similarity": 85.0, "key": "item.b", "en": "Sword", "zh": "剑"}],
-        }
-        self.db.save_fuzzy_results(fm)
-        loaded = self.db.load_fuzzy_results()
-        self.assertIn("item.a", loaded)
-        self.assertEqual(loaded["item.a"][0]["similarity"], 85.0)
+    def test_old_verdicts_table_does_not_exist(self):
+        """旧 verdicts 表不应创建。"""
+        try:
+            self.db.execute("SELECT * FROM verdicts")
+            self.fail("旧 verdicts 表不应存在")
+        except Exception:
+            pass
 
-    def test_meta_set_and_get(self):
-        self.assertIsNone(self.db.get_meta("version"))
-        self.db.set_meta("version", "1.0")
-        self.assertEqual(self.db.get_meta("version"), "1.0")
+    def test_old_alignment_table_does_not_exist(self):
+        """旧 alignment 表不应创建。"""
+        try:
+            self.db.execute("SELECT * FROM alignment")
+            self.fail("旧 alignment 表不应存在")
+        except Exception:
+            pass
 
-    def test_meta_overwrite(self):
-        self.db.set_meta("key", "old")
-        self.db.set_meta("key", "new")
-        self.assertEqual(self.db.get_meta("key"), "new")
+    def test_old_glossary_table_does_not_exist(self):
+        """旧 glossary 表不应创建。"""
+        try:
+            self.db.execute("SELECT * FROM glossary")
+            self.fail("旧 glossary 表不应存在")
+        except Exception:
+            pass
 
-    def test_save_alignment_overwrites(self):
-        a1 = {"matched_entries": [{"key": "a", "en": "A", "zh": "甲"}]}
-        a2 = {"matched_entries": [{"key": "b", "en": "B", "zh": "乙"}]}
-        self.db.save_alignment(a1)
-        self.db.save_alignment(a2)
-        loaded = self.db.load_alignment()
-        self.assertEqual(loaded["stats"]["matched"], 1)
-        self.assertEqual(loaded["matched_entries"][0]["key"], "b")
+    def test_old_filter_cache_table_does_not_exist(self):
+        """旧 filter_cache 表不应创建。"""
+        try:
+            self.db.execute("SELECT * FROM filter_cache")
+            self.fail("旧 filter_cache 表不应存在")
+        except Exception:
+            pass
 
-    def test_save_verdicts_overwrites_by_phase(self):
-        v1 = [{"key": "a", "verdict": "PASS"}]
-        v2 = [{"key": "b", "verdict": "❌ FAIL"}]
-        self.db.save_verdicts(v1, "format")
-        self.db.save_verdicts(v2, "format")
-        loaded = self.db.load_verdicts(phase="format")
-        self.assertEqual(len(loaded), 1)
-        self.assertEqual(loaded[0]["key"], "b")
+    def test_context_manager(self):
+        """__enter__ / __exit__ 正常工作。"""
+        db_path = Path(self.tmpdir) / "ctx.db"
+        with PipelineDB(db_path) as db:
+            db.execute(
+                "INSERT INTO entries (key, en, zh) VALUES (?,?,?)",
+                ("ctx.test", "CTX", "上下文"))
+            db.commit()
+        # 确认连接已关闭，数据已持久化
+        db2 = PipelineDB(db_path)
+        row = db2.execute("SELECT * FROM entries WHERE key=?", ("ctx.test",)).fetchone()
+        self.assertIsNotNone(row)
+        db2.close()
 
-    def test_save_glossary_overwrites(self):
-        self.db.save_glossary([{"en": "a", "zh": "甲"}])
-        self.db.save_glossary([{"en": "b", "zh": "乙"}])
-        loaded = self.db.load_glossary()
-        self.assertEqual(len(loaded), 1)
-        self.assertEqual(loaded[0]["en"], "b")
-
-    def test_same_key_different_version_coexist(self):
-        a1 = {
-            "matched_entries": [
-                {"key": "item.sword", "version": "1.21", "en": "Sword", "zh": "剑", "slug": "mod_a"},
-                {"key": "item.sword", "version": "1.20.1", "en": "Blade", "zh": "刀", "slug": "mod_a"},
-            ]
-        }
-        self.db.save_alignment(a1)
-        loaded = self.db.load_alignment()
-        self.assertEqual(loaded["stats"]["matched"], 2)
-        entries = {e["version"]: e for e in loaded["matched_entries"]}
-        self.assertIn("1.21", entries)
-        self.assertIn("1.20.1", entries)
-        self.assertEqual(entries["1.21"]["en"], "Sword")
-        self.assertEqual(entries["1.20.1"]["en"], "Blade")
-
-    def test_slug_stored_and_loaded(self):
-        alignment = {
-            "matched_entries": [
-                {"key": "item.x", "version": "1.19", "en": "X", "zh": "某", "slug": "my_mod"},
-            ]
-        }
-        self.db.save_alignment(alignment)
-        loaded = self.db.load_alignment()
-        self.assertEqual(loaded["matched_entries"][0]["slug"], "my_mod")
+    def test_pr_fields_preserved(self):
+        """PR 模式字段 (old_en, old_zh, slug, version, file_path) 存储正确。"""
+        self.db.execute(
+            "INSERT INTO entries (key, en, zh, old_en, old_zh, slug, version, file_path) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("pr.key", "New EN", "新中文", "Old EN", "旧中文",
+             "my_mod", "1.21", "path/to/file.json"))
+        self.db.commit()
+        row = self.db.execute("SELECT * FROM entries WHERE key=?", ("pr.key",)).fetchone()
+        self.assertEqual(row["old_en"], "Old EN")
+        self.assertEqual(row["old_zh"], "旧中文")
+        self.assertEqual(row["slug"], "my_mod")
+        self.assertEqual(row["version"], "1.21")
+        self.assertEqual(row["file_path"], "path/to/file.json")
 
 
 if __name__ == "__main__":

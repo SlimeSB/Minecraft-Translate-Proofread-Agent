@@ -1,44 +1,55 @@
-"""测试 Phase 4 过滤 — 缓存键生成与 DB 写入逻辑。"""
+"""测试 Phase 4 过滤 — DB 查询与写入逻辑。"""
+import json
 import unittest
 
-from src.pipeline.phase4_filter import _cache_key
+from src.models import verdict_int_to_str, _format_diagnoses
 
 
-class TestCacheKey(unittest.TestCase):
+class TestIntVerdictToStr(unittest.TestCase):
 
-    def test_deterministic(self):
-        v = {"key": "item.sword", "verdict": "❌ FAIL", "reason": "bad", "zh_current": "剑"}
-        self.assertEqual(_cache_key(v), _cache_key(v))
+    def test_all_values(self):
+        self.assertEqual(verdict_int_to_str(0), "PASS")
+        self.assertEqual(verdict_int_to_str(1), "⚠️ SUGGEST")
+        self.assertEqual(verdict_int_to_str(2), "🔶 REVIEW")
+        self.assertEqual(verdict_int_to_str(3), "❌ FAIL")
 
-    def test_different_key_different_hash(self):
-        a = {"key": "a", "verdict": "PASS", "reason": "", "zh_current": ""}
-        b = {"key": "b", "verdict": "PASS", "reason": "", "zh_current": ""}
-        self.assertNotEqual(_cache_key(a), _cache_key(b))
+    def test_out_of_range(self):
+        self.assertEqual(verdict_int_to_str(999), "PASS")
 
-    def test_different_verdict_different_hash(self):
-        a = {"key": "x", "verdict": "❌ FAIL", "reason": "", "zh_current": ""}
-        b = {"key": "x", "verdict": "PASS", "reason": "", "zh_current": ""}
-        self.assertNotEqual(_cache_key(a), _cache_key(b))
 
-    def test_different_reason_different_hash(self):
-        a = {"key": "x", "verdict": "PASS", "reason": "r1", "zh_current": ""}
-        b = {"key": "x", "verdict": "PASS", "reason": "r2", "zh_current": ""}
-        self.assertNotEqual(_cache_key(a), _cache_key(b))
+class TestFormatDiagnosesForFilter(unittest.TestCase):
 
-    def test_zh_current_same_first_150_chars(self):
-        prefix = "剑" * 150
-        a = {"key": "x", "verdict": "PASS", "reason": "", "zh_current": prefix + "extra1"}
-        b = {"key": "x", "verdict": "PASS", "reason": "", "zh_current": prefix + "extra2"}
-        self.assertEqual(_cache_key(a), _cache_key(b))
+    def test_empty_array(self):
+        self.assertEqual(_format_diagnoses("[]"), "")
 
-    def test_empty_zh_current(self):
-        key = _cache_key({"key": "x", "verdict": "PASS", "reason": "", "zh_current": ""})
-        self.assertIsInstance(key, str)
+    def test_single_diagnosis(self):
+        diags = json.dumps([{"source": "format_check", "reason": "格式错误"}])
+        result = _format_diagnoses(diags)
+        self.assertIn("格式错误", result)
 
-    def test_hex_output(self):
-        key = _cache_key({"key": "a", "verdict": "PASS", "reason": "", "zh_current": ""})
-        self.assertEqual(len(key), 32)
-        int(key, 16)
+    def test_multiple_diagnoses(self):
+        diags = json.dumps([
+            {"source": "format_check", "reason": "格式错误"},
+            {"source": "terminology_check", "reason": "术语不一致"},
+        ])
+        result = _format_diagnoses(diags)
+        self.assertIn("格式错误", result)
+        self.assertIn("术语不一致", result)
+
+    def test_empty_reason_skipped(self):
+        diags = json.dumps([
+            {"source": "format_check", "reason": ""},
+            {"source": "terminology_check", "reason": "术语不一致"},
+        ])
+        result = _format_diagnoses(diags)
+        self.assertIn("术语不一致", result)
+        self.assertNotIn("格式错误", result)
+
+    def test_invalid_json(self):
+        self.assertEqual(_format_diagnoses("not json"), "")
+
+    def test_non_list(self):
+        self.assertEqual(_format_diagnoses('{"a":1}'), "")
 
 
 if __name__ == "__main__":

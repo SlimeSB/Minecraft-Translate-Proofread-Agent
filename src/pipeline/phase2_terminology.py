@@ -1,11 +1,15 @@
 """Phase 2: 术语提取、归并、一致性检查。"""
+import json
+
 from src import config as cfg
 from src.logging import info
 from src.llm.prompts import is_excluded_from_terminology
-from src.models import GlossaryDict, PHASE_TERMINOLOGY, PipelineContext, VerdictDict
+from src.models import (
+    GlossaryDict, PipelineContext, VerdictDict,
+    update_diagnosis, verdict_str_to_int,
+)
 from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
 from src.dictionary.protocol import SHORT, collect_hints
-from src.storage.database import PipelineDB
 
 
 def run_phase2(ctx: PipelineContext) -> None:
@@ -54,11 +58,33 @@ def run_phase2(ctx: PipelineContext) -> None:
                 if hint:
                     term_hints[en_term] = hint
         ctx.glossary = llm_verify_glossary(ctx.glossary, tb.en_data, tb.zh_data, ctx.llm_call, term_hints=term_hints)
-    ctx.term_verdicts = check_consistency(ctx.glossary, tb.matched_entries, tb.merged)
+    term_verdicts = check_consistency(ctx.glossary, tb.matched_entries, tb.merged)
 
     info(f"  术语表: {len(ctx.glossary)} 条")
-    info(f"  术语不一致 verdicts: {len(ctx.term_verdicts)} 条")
+    info(f"  术语不一致 verdicts: {len(term_verdicts)} 条")
 
-    with PipelineDB(ctx.output_dir / "pipeline.db") as db:
-        db.save_glossary(ctx.glossary)
-        db.save_verdicts(ctx.term_verdicts, PHASE_TERMINOLOGY)
+    # 5.1: Write glossary to output_dir/glossary.json
+    glossary_path = ctx.output_dir / "glossary.json"
+    with open(glossary_path, "w", encoding="utf-8") as f:
+        json.dump(ctx.glossary, f, ensure_ascii=False, indent=2)
+    info(f"  术语表已写入: {glossary_path}")
+
+    # 5.2: Write verdicts directly to entries table
+    db = ctx.db
+    source = "terminology_check"
+    for v in term_verdicts:
+        key = v.get("key", "")
+        if not key:
+            continue
+        checker_verdict = v.get("verdict", "PASS")
+        verdict_int = verdict_str_to_int(checker_verdict)
+        reason = v.get("reason", "")
+
+        diagnoses_json = update_diagnosis(db, key, source, reason)
+        db.execute(
+            "UPDATE entries SET state=MAX(state,1), verdict=MAX(verdict,?), diagnoses=? WHERE key=?",
+            (verdict_int, diagnoses_json, key))
+
+    # 5.3: Blanket push all entries to state >= 1
+    db.execute("UPDATE entries SET state=MAX(state,1)")
+    db.commit()

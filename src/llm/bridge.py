@@ -387,9 +387,9 @@ def interactive_entry_review(
             print(f"\n--- [{i+1}/{len(entries)}] {key} ---")
         print(f'EN: "{en[:200]}"')
         print(f'ZH: "{zh[:200]}"')
-        auto_v = (auto_verdicts_map or {}).get(key, [])
-        for v in auto_v:
-            print(f"  ⚙️ {v['verdict']}: {v['reason']}")
+        auto_v = (auto_verdicts_map or {}).get(key)
+        if auto_v:
+            print(f"  ⚙️ {auto_v.get('verdict', '')}: {auto_v.get('diagnoses_str', '')}")
         fuzzy_r = (fuzzy_results_map or {}).get(key, [])
         for fr in fuzzy_r[:2]:
             print(f"  🔍 sim={fr['similarity']}% ZH: \"{fr['zh'][:80]}\"")
