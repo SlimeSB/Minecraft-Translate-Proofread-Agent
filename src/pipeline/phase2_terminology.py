@@ -5,7 +5,7 @@ from src import config as cfg
 from src.logging import info
 from src.llm.prompts import is_excluded_from_terminology
 from src.models import (
-    GlossaryDict, PipelineContext, VerdictDict,
+    GlossaryDict, PipelineContext, VERDICT_PASS, VerdictDict,
     update_diagnosis, verdict_str_to_int,
 )
 from src.checkers.terminology_builder import TerminologyBuilder, llm_verify_glossary, check_consistency
@@ -76,7 +76,7 @@ def run_phase2(ctx: PipelineContext) -> None:
         key = v.get("key", "")
         if not key:
             continue
-        checker_verdict = v.get("verdict", "PASS")
+        checker_verdict = v.get("verdict", VERDICT_PASS)
         verdict_int = verdict_str_to_int(checker_verdict)
         reason = v.get("reason", "")
 

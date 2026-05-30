@@ -10,6 +10,7 @@
 
 ## 目前待办
 
+- [ ] `test_database.py:190-220` — 4 个旧表不存在测试使用裸 `except Exception: pass`，应收窄为 `sqlite3.OperationalError`
 - [ ] 架构：Vite + React 前端，调用 FastAPI 接口。后端 `run_in_executor` 独立线程池隔离 pipeline 执行。见 `openspec/changes/review-frontend/`
 - [ ] **双词典注入 prompt 膨胀（原 Issue #4）** — 每条条目同时对 `ExternalDictStore` + `MinecraftDictStore` 调用 `lookup()`，每 batch ~75 tokens 开销。与 @anomaly 另有安排，暂不动。
 - [ ] **`minecraft_dict.py` 未接入管线（331 行）** — `MinecraftDictStore` 仅被 `scripts/migrate_minecraft_db.py` 和测试引用，管线实际使用 `VanillaTermsStore`。功能与 `vanilla_terms.py` 重叠，待双词典方案确定后决定合并或接入。

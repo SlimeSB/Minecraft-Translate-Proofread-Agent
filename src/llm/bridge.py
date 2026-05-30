@@ -16,6 +16,7 @@ from src.models import (
     SOURCE_LLM_ERROR,
     SOURCE_LLM_REVIEW,
     SOURCE_UNTRANSLATED_REVIEW,
+    VERDICT_PASS,
     VerdictDict,
     normalize_verdict,
     verdict_str_to_int,
@@ -403,11 +404,15 @@ class LLMBridge:
                             continue
                         local_responded.add(k)
                         vd = item.get("verdict", "").strip()
-                        if vd == "PASS":
+                        try:
+                            verdict_str_to_int(vd)
+                        except ValueError:
+                            warn(f"  [Filter] 无法识别的 verdict '{vd}' 对 {k}, 按保留处理")
+                        if vd == VERDICT_PASS:
                             local_keys.add(k)
                             local_records.append({"key": k, "reason": item.get("reason", "").strip()})
                             warn(f"  [Filter] 驳回: {k} — {item.get('reason', '')}")
-                        elif vd != "PASS":
+                        elif vd != VERDICT_PASS:
                             r = item.get("reason", "").strip()
                             if r:
                                 local_reasons[k] = r
@@ -469,7 +474,7 @@ def interactive_entry_review(
 ) -> list[VerdictDict]:
     verdicts: list[VerdictDict] = []
     options = {
-        "1": ("PASS", ""),
+        "1": (VERDICT_PASS, ""),
         "2": ("⚠️ SUGGEST", ""),
         "3": ("❌ FAIL", ""),
         "4": ("🔶 REVIEW", ""),
@@ -497,7 +502,7 @@ def interactive_entry_review(
             verdict, _ = options[choice]
             suggestion = ""
             reason = ""
-            if verdict != "PASS":
+            if verdict != VERDICT_PASS:
                 reason = input("理由: ").strip()
                 if verdict in ("⚠️ SUGGEST", "❌ FAIL"):
                     suggestion = input("建议译文: ").strip()

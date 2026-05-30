@@ -3,10 +3,10 @@ import json
 
 from src.logging import info
 from src.models import (
-    EntryDict, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VerdictDict,
+    EntryDict, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VERDICT_PASS, VerdictDict,
     update_diagnosis, verdict_str_to_int,
 )
-from src.llm.prompts import filter_for_llm, build_review_prompt, merge_multipart_entries, is_manual_format, manual_format_label
+from src.llm.prompts import filter_for_llm, build_review_prompt, merge_multipart_entries, is_manual_format
 from src.llm.bridge import LLMBridge, interactive_entry_review
 from src.pipeline.phase3b_fuzzy import run_phase3b
 from src import config as cfg
@@ -157,7 +157,7 @@ def run_phase3c(ctx: PipelineContext) -> None:
         key = v.get("key", "")
         if not key:
             continue
-        llm_verdict_str = v.get("verdict", "PASS")
+        llm_verdict_str = v.get("verdict", VERDICT_PASS)
         verdict_int = verdict_str_to_int(llm_verdict_str)
         suggestion = v.get("suggestion", "")
         reason = v.get("reason", "")

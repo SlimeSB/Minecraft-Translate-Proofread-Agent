@@ -316,14 +316,28 @@ def llm_verify_glossary(
         term_blocks="\n\n".join(lines)
     )
 
-    try:
-        response = llm_call(prompt)
-        corrections = _parse_glossary_corrections(response)
-    except Exception as e:
-        warn(f"[术语校验] LLM 术语校验调用异常: {type(e).__name__}: {e}")
-        return glossary
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm_call(prompt)
+        except Exception as e:
+            warn(f"[术语校验] LLM 调用异常: {type(e).__name__}: {e}")
+            return glossary
 
-    if not corrections:
+        try:
+            raw = json.loads(response.strip())
+        except json.JSONDecodeError:
+            if attempt < max_retries:
+                continue
+            warn(f"[术语校验] LLM 响应 JSON 格式错误, 放弃")
+            return glossary
+
+        corrections = _parse_glossary_corrections(response)
+        if corrections or (isinstance(raw, list) and not raw):
+            break  # 有有效修正, 或 LLM 明确说不需要修正 ([])
+        if attempt < max_retries:
+            continue
+        warn(f"[术语校验] LLM 响应缺少有效修正, 放弃")
         return glossary
 
     corrected = 0

@@ -49,7 +49,7 @@ def run_phase5(ctx: PipelineContext) -> None:
     rg.print_verdict_table()
 
     # ── report.json ──
-    non_pass_verdicts = [v for v in kept if v.get("verdict") != "PASS"]
+    non_pass_verdicts = [v for v in kept if v.get("verdict") != VERDICT_PASS]
     report_data = {
         "verdicts": non_pass_verdicts,
         "alignment_stats": ctx.alignment.get("stats", {}),
@@ -98,7 +98,7 @@ def _group_by_namespace(verdicts: list[VerdictDict], ctx: PipelineContext, entri
     ns_map = _build_ns_map(verdicts, entries)
     result = {}
     for ns, vs in sorted(ns_map.items()):
-        issues = [v for v in vs if v.get("verdict") != "PASS"]
+        issues = [v for v in vs if v.get("verdict") != VERDICT_PASS]
         result[ns] = {
             "total": sum(1 for e in entries if (e.get("namespace") or DEFAULT_NAMESPACE) == ns) or len(vs),
             "issues": len(issues),
@@ -142,7 +142,7 @@ def _generate_summary_md(ctx: PipelineContext, verdicts: list[VerdictDict],
     for ns in sorted(ns_groups):
         if ns == DEFAULT_NAMESPACE:
             continue
-        lines.append(f"- [{ns}]({ns}/{ns}_report.md)")
+        lines.append(f"- [{ns}]({ns}/report.md)")
     lines.append("")
     lines.append("> 完整数据见 report.json，可筛选查询所有 verdict 详情。")
 
@@ -159,7 +159,7 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
     for ns, vs in sorted(ns_map.items()):
         if ns == DEFAULT_NAMESPACE:
             continue
-        issues = [v for v in vs if v.get("verdict") != "PASS"]
+        issues = [v for v in vs if v.get("verdict") != VERDICT_PASS]
         if not issues:
             continue
         ns_dir = ctx.output_dir / ns
@@ -193,7 +193,7 @@ def _build_slug_ver_ns_map(
         info_dict = result[slug][ver][ns]
         info_dict["verdicts"].append(v)
         info_dict["total"] += 1
-        if v.get("verdict") != "PASS":
+        if v.get("verdict") != VERDICT_PASS:
             info_dict["issues"] += 1
         if v.get("verdict") == VERDICT_FAIL:
             info_dict["fail"] += 1
@@ -212,7 +212,7 @@ def _generate_namespace_reports_3level(
     for slug, versions in sorted(groups.items()):
         for ver, namespaces in sorted(versions.items()):
             for ns, info in sorted(namespaces.items()):
-                issues = [v for v in info["verdicts"] if v.get("verdict") != "PASS"]
+                issues = [v for v in info["verdicts"] if v.get("verdict") != VERDICT_PASS]
                 if not issues:
                     continue
                 ns_dir = ctx.output_dir / slug / ver / ns

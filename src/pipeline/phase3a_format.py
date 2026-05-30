@@ -1,6 +1,6 @@
 """Phase 3a: 全自动格式检查。"""
 from src.logging import info
-from src.models import EntryDict, PipelineContext, SOURCE_PR_WARNING, VerdictDict, update_diagnosis, verdict_str_to_int
+from src.models import PipelineContext, SOURCE_PR_WARNING, VERDICT_PASS, VerdictDict, update_diagnosis, verdict_str_to_int
 from src.checkers.format_checker import FormatChecker
 
 
@@ -35,7 +35,7 @@ def run_phase3a(ctx: PipelineContext) -> None:
         key = v.get("key", "")
         if not key:
             continue
-        checker_verdict = v.get("verdict", "PASS")
+        checker_verdict = v.get("verdict", VERDICT_PASS)
         verdict_int = verdict_str_to_int(checker_verdict)
         reason = v.get("reason", "")
         source = v.get("source", "format_check")

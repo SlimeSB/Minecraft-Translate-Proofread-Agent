@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from src.cli import safe_print as _print
-from src.models import AlignmentDict, EntryDict, ReviewReportDict, VerdictDict, normalize_verdict
+from src.models import AlignmentDict, EntryDict, ReviewReportDict, VERDICT_PASS, VerdictDict, normalize_verdict
 
 
 # ═══════════════════════════════════════════════════════════
@@ -161,7 +161,7 @@ class ReportGenerator:
 
     def print_verdict_table(self, max_rows: int = 30) -> None:
         """打印非 PASS verdict 表格。"""
-        non_pass = [v for v in self.verdicts if v.get("verdict") != "PASS"]
+        non_pass = [v for v in self.verdicts if v.get("verdict") != VERDICT_PASS]
         if not non_pass:
             _print("所有条目均 PASS ✓")
             return
