@@ -103,6 +103,7 @@ class VanillaTermsStore:
             ).fetchall()
             return [dict(r) for r in rows]
         except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            self._use_fts = False
             return []
 
     def lookup(self, en_text: str, mode: LookupModeStr = MIXED, **kwargs: Any) -> str:

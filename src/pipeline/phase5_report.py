@@ -164,7 +164,7 @@ def _generate_namespace_reports(ctx: PipelineContext, verdicts: list[VerdictDict
             continue
         ns_dir = ctx.output_dir / ns
         ns_dir.mkdir(parents=True, exist_ok=True)
-        _generate_namespace_md(ns, issues, ns_groups.get(ns, {}), ns_dir, None)
+        _generate_namespace_md(ns, issues, ns_groups.get(ns, {}), ns_dir)
         _generate_namespace_json(ns, issues, ns_groups.get(ns, {}), ns_dir)
 
 
@@ -217,7 +217,7 @@ def _generate_namespace_reports_3level(
                     continue
                 ns_dir = ctx.output_dir / slug / ver / ns
                 ns_dir.mkdir(parents=True, exist_ok=True)
-                _generate_namespace_md(ns, issues, info, ns_dir, ctx.pr_version_groups.get(slug))
+                _generate_namespace_md(ns, issues, info, ns_dir)
                 _generate_namespace_json(ns, issues, info, ns_dir)
 
 
@@ -346,8 +346,7 @@ def _generate_namespace_json(ns: str, verdicts: list[VerdictDict],
 
 
 def _generate_namespace_md(ns: str, verdicts: list[VerdictDict],
-                            ns_info: dict, ns_dir,
-                            version_group=None) -> None:
+                            ns_info: dict, ns_dir) -> None:
     lines = [
         f"# {ns} — 翻译审校报告",
         "",

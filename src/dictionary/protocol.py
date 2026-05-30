@@ -26,7 +26,7 @@ class DictStore(Protocol):
 
 def collect_hints(
     en_text: str,
-    stores: list,
+    stores: list[DictStore],
     *,
     mode: LookupModeStr | None = None,
     mode_fn: Callable[[object], LookupModeStr] | None = None,

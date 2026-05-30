@@ -14,6 +14,9 @@ from src.pipeline.phase3c_review import run_phase3c
 from src.pipeline.phase4_filter import run_phase4
 from src.pipeline.phase5_report import run_phase5
 from src.storage.database import PipelineDB
+from src.dictionary.external import ExternalDictStore
+from src.dictionary.vanilla_terms import VanillaTermsStore
+from src import config as cfg
 
 # 阶段注册表 — 新增阶段只需在此追加，编排器自动按序调用
 PHASES = [
@@ -24,9 +27,6 @@ PHASES = [
     ("filter",     run_phase4),
     ("report",     run_phase5),
 ]
-from src.dictionary.external import ExternalDictStore
-from src.dictionary.vanilla_terms import VanillaTermsStore
-from src import config as cfg
 
 
 class ReviewPipeline:
@@ -104,6 +104,9 @@ class ReviewPipeline:
         try:
             for name, phase_fn in PHASES:
                 phase_fn(ctx)
+        except Exception as e:
+            warn(f"\n错误: 流水线在阶段 '{name}' 出错: {e}")
+            raise
         finally:
             for store in ctx.dict_stores:
                 try:

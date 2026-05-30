@@ -74,13 +74,9 @@ class TestPipelineIntegration:
         self._run_pipeline()
         db = PipelineDB(self.tmpdir / "pipeline.db")
 
-        # 查询有诊断的条目
-        rows = db.execute("SELECT * FROM entries WHERE diagnoses != '[]'").fetchall()
-        assert isinstance(rows, list), "诊断查询应返回列表"
-
         # 至少有一些 verdict 条目（取决于测试数据）
         non_zero = db.execute("SELECT COUNT(*) FROM entries WHERE verdict > 0").fetchone()[0]
-        assert non_zero >= 0, f"verdict 统计应 >= 0, 实际={non_zero}"
+        assert non_zero > 0, f"期望至少一个非 PASS verdict, 实际={non_zero}"
 
         db.close()
 

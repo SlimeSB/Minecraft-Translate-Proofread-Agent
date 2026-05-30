@@ -1,5 +1,4 @@
 """Phase 1: 键对齐（传统模式）或 PR 数据加载。"""
-import json
 
 from src.logging import info, warn
 from src.models import (
@@ -70,7 +69,6 @@ def _build_combined_full_data(
 
 def _build_pr_en_zh_data(
     ctx: PipelineContext,
-    data: object,
     matched: list[EntryDict],
     version_groups: dict[str, PRVersionGroups],
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -157,7 +155,7 @@ def _load_pr_alignment(ctx: PipelineContext) -> None:
         info(f"  全量合并数据: {len(combined_en)} 个复合 key")
 
     # 构建 en/zh data 并注入跨版本 ref
-    en_data, zh_data = _build_pr_en_zh_data(ctx, data, matched, version_groups)
+    en_data, zh_data = _build_pr_en_zh_data(ctx, matched, version_groups)
     ctx.en_data = en_data
     ctx.zh_data = zh_data
 

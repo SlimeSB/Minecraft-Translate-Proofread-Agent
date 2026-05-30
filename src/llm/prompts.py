@@ -7,9 +7,6 @@ import re
 from src import config as cfg
 from src.config import DEFAULT_NAMESPACE
 from src.logging import debug
-from src.dictionary.external import ExternalDictStore
-from src.dictionary.vanilla_terms import VanillaTermsStore
-from src.dictionary.protocol import collect_hints
 from src.tools.key_alignment import iter_indexed_groups
 from src.models import (
     AutoVerdictsMap,

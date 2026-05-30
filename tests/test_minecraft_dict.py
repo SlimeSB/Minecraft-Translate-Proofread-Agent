@@ -180,7 +180,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             store.load()
             result = store.lookup("test", target_version="1.20.1")
             lines = [l for l in result.split("\n") if l.strip()]
-            self.assertGreater(len(lines), 1)
+            self.assertGreaterEqual(len(lines), 3)
             primary_line = lines[2]  # lines[0]=header, lines[1]=word header
             self.assertIn("新版", primary_line)
         finally:
@@ -199,7 +199,7 @@ class TestMinecraftDictStore(unittest.TestCase):
             store.load()
             result = store.lookup("test")
             lines = [l for l in result.split("\n") if l.strip()]
-            self.assertGreater(len(lines), 1)
+            self.assertGreaterEqual(len(lines), 3)
             primary_line = lines[2]  # lines[0]=header, lines[1]=word header
             self.assertIn("最新", primary_line)
         finally:
