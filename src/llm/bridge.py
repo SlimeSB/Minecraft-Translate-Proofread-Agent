@@ -40,20 +40,94 @@ def _normalize_verdict(v: VerdictDict) -> None:
         v[k] = nv[k]
 
 
-def _is_truncated_json(response: str) -> bool:
-    """检测 JSON 响应是否被截断。"""
-    stripped = response.strip()
-    if not stripped:
-        return False
-    if stripped.count("{") != stripped.count("}"):
-        return True
-    if stripped.count("[") != stripped.count("]"):
-        return True
-    return False
+
+def _extract_top_level_objects(text: str) -> list[str]:
+    """用大括号深度匹配提取顶层 JSON 对象，不受内部未转义引号影响。"""
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objects.append(text[start:i + 1])
+                start = -1
+    return objects
+
+
+def _extract_fields_from_malformed(obj_text: str) -> dict | None:
+    """从单个畸变 JSON 对象中提取字段（key/verdict/suggestion/reason）。
+
+    适用场景：LLM 返回的 reason 字段内含未转义 ASCII 双引号导致 json.loads 失败。
+    key/verdict 用简单正则（不含引号），suggestion 非贪婪匹配，
+    reason 取 "reason": " 到最后一个 " 之前（因为它是最后一个字段）。
+    """
+    import re as _re
+    result: dict[str, str] = {}
+
+    # key — 不含引号的简单值
+    m = _re.search(r'"key":\s*"([^"]*)"', obj_text)
+    if not m:
+        return None
+    result['key'] = m.group(1)
+
+    # verdict — 同样简单
+    m = _re.search(r'"verdict":\s*"([^"]*)"', obj_text)
+    if m:
+        result['verdict'] = m.group(1)
+
+    # suggestion — 稍后可含引号；非贪婪匹配到 , } 或单独 }
+    m = _re.search(r'"suggestion":\s*"(.*?)"\s*[,}]', obj_text)
+    if m:
+        result['suggestion'] = m.group(1)
+
+    # reason — 最可能含未转义引号，且通常是最后一个字段
+    # 取 "reason": " 之后、最后一个 " 之前的内容
+    ridx = obj_text.find('"reason"')
+    if ridx >= 0:
+        colon = obj_text.find(':', ridx)
+        if colon >= 0:
+            open_q = obj_text.find('"', colon + 1)
+            if open_q >= 0:
+                val_start = open_q + 1
+                close_brace = obj_text.rfind('}')
+                if close_brace >= val_start:
+                    close_q = obj_text.rfind('"', val_start, close_brace)
+                    if close_q > val_start:
+                        result['reason'] = obj_text[val_start:close_q]
+                    elif close_q == val_start:
+                        result['reason'] = ''
+
+    return result
+
+
+def _robust_parse_malformed_json(text: str) -> list[dict]:
+    """从畸变 JSON 文本中提取对象：大括号匹配后逐对象回退到字段提取。"""
+    objects = _extract_top_level_objects(text)
+    if not objects:
+        return []
+
+    results: list[dict] = []
+    for obj_text in objects:
+        try:
+            obj = json.loads(obj_text)
+            if isinstance(obj, dict):
+                results.append(obj)
+            continue
+        except json.JSONDecodeError:
+            pass
+        obj = _extract_fields_from_malformed(obj_text)
+        if obj:
+            results.append(obj)
+    return results
 
 
 def parse_llm_json(response: str, *, extract_code_block: bool = False) -> list[dict]:
-    """统一 LLM JSON 响应解析（三层回退：直接→正则提取→逐行）。
+    """统一 LLM JSON 响应解析（四层回退：直接→正则提取→逐行→大括号健壮提取）。
 
     设 extract_code_block=True 时先剥离 markdown 围栏代码块。
     返回 dict 列表；解析失败返回空列表。
@@ -89,6 +163,12 @@ def parse_llm_json(response: str, *, extract_code_block: bool = False) -> list[d
                 results.append(obj)
             except json.JSONDecodeError:
                 continue
+
+    # 第 4 回退：原文有 verdict 关键字但前三层都空了 → 大括号匹配回退
+    if not results and '"verdict":' in text:
+        robust = _robust_parse_malformed_json(text)
+        if robust:
+            return robust
     return results
 
 
@@ -109,19 +189,27 @@ async def _llm_call_with_retry(
     total_batches: int,
     max_retries: int,
 ) -> str:
-    """共享异步 LLM 调用: semaphore 门控、指数退避重试、HTML/XML 响应守卫、截断 JSON 检测、verdict 校验。
+    """共享异步 LLM 调用: semaphore 门控、指数退避重试、JSON 解析检验、verdict 格式校验。
     返回原始响应字符串。最终失败时抛出 Exception。"""
     async with sem:
         for attempt in range(1, max_retries + 1):
             try:
                 loop = asyncio.get_running_loop()
                 response = await loop.run_in_executor(None, llm_call, prompt)
-                if response.strip().startswith("<!") or response.strip().startswith("<html"):
-                    raise RuntimeError(f"非 JSON 响应: {response[:100]}")
                 parsed = parse_review_response(response)
-                if _is_truncated_json(response) and not parsed:
-                    warn(f"  [{label}] 批次 {batch_idx+1} JSON 截断, 重试第 {attempt} 次")
-                    continue
+                # 解析为空但响应非空
+                if not parsed and response.strip():
+                    # 再试一次 json.loads：区分合法空 JSON([]) 和完全不能解析的垃圾
+                    try:
+                        json.loads(response.strip())
+                    except json.JSONDecodeError:
+                        warn(f"  [{label}] 批次 {batch_idx+1} JSON 解析失败, "
+                             f"重试第 {attempt} 次")
+                        if attempt < max_retries:
+                            continue
+                        raise RuntimeError(
+                            f"[{label}] 批次 {batch_idx+1} JSON 无法解析"
+                        )
                 # 校验每条 verdict 字符串可识别
                 for item in parsed:
                     v = item.get("verdict", "")

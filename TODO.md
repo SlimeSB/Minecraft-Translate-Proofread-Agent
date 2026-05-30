@@ -17,6 +17,7 @@
 - [ ] feat: 帕秋莉手册支持
 - [ ] feat: 组合文件和packer-policy支持。
 - [ ] agent启发式对齐器
+- [ ] 精简db
 
 ## 未计划
 
