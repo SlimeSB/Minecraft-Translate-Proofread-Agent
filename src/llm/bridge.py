@@ -18,6 +18,7 @@ from src.models import (
     SOURCE_UNTRANSLATED_REVIEW,
     VerdictDict,
     normalize_verdict,
+    verdict_str_to_int,
 )
 from src.llm.prompts import (
     build_filter_prompt,
@@ -108,7 +109,7 @@ async def _llm_call_with_retry(
     total_batches: int,
     max_retries: int,
 ) -> str:
-    """共享异步 LLM 调用: semaphore 门控、指数退避重试、HTML/XML 响应守卫、截断 JSON 检测。
+    """共享异步 LLM 调用: semaphore 门控、指数退避重试、HTML/XML 响应守卫、截断 JSON 检测、verdict 校验。
     返回原始响应字符串。最终失败时抛出 Exception。"""
     async with sem:
         for attempt in range(1, max_retries + 1):
@@ -121,7 +122,16 @@ async def _llm_call_with_retry(
                 if _is_truncated_json(response) and not parsed:
                     warn(f"  [{label}] 批次 {batch_idx+1} JSON 截断, 重试第 {attempt} 次")
                     continue
+                # 校验每条 verdict 字符串可识别
+                for item in parsed:
+                    v = item.get("verdict", "")
+                    if v:
+                        verdict_str_to_int(v)
                 return response
+            except ValueError as e:
+                if attempt == max_retries:
+                    raise
+                warn(f"  [{label}] 批次 {batch_idx+1} verdict 无法识别 ({e}), 重试第 {attempt} 次")
             except Exception as e:
                 if attempt == max_retries:
                     raise
@@ -235,7 +245,7 @@ class LLMBridge:
         def _error_return(i: int) -> list[VerdictDict]:
             return [{
                 "key": "__llm_error__", "en_current": "", "zh_current": "",
-                "verdict": "🔶 REVIEW", "suggestion": "",
+                "verdict": "REVIEW", "suggestion": "",
                 "reason": f"LLM调用失败 (批次{i+1}): error", "source": SOURCE_LLM_ERROR,
             }]
 

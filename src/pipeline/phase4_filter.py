@@ -29,7 +29,7 @@ def run_phase4(ctx: PipelineContext) -> None:
             "key": r["key"],
             "en_current": r["en"],
             "zh_current": r["zh"],
-            "verdict": verdict_int_to_str(r["verdict"]),
+            "verdict": verdict_int_to_str(r["verdict"], llm=True),
             "reason": _format_diagnoses(r["diagnoses"]),
             "suggestion": r["suggestion"] or "",
         })

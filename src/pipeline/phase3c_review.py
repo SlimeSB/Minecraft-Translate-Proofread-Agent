@@ -4,7 +4,7 @@ import json
 from src.logging import info
 from src.models import (
     EntryDict, PipelineContext, SOURCE_UNTRANSLATED_REVIEW, VerdictDict,
-    update_diagnosis, verdict_str_to_int, verdict_int_to_str,
+    update_diagnosis, verdict_str_to_int,
 )
 from src.llm.prompts import filter_for_llm, build_review_prompt, merge_multipart_entries, is_manual_format, manual_format_label
 from src.llm.bridge import LLMBridge, interactive_entry_review

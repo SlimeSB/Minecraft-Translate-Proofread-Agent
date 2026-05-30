@@ -2,19 +2,72 @@
 import json
 import unittest
 
-from src.models import verdict_int_to_str, _format_diagnoses
+from src.models import verdict_int_to_str, verdict_str_to_int, _format_diagnoses
 
 
 class TestIntVerdictToStr(unittest.TestCase):
 
-    def test_all_values(self):
+    def test_all_values_display(self):
         self.assertEqual(verdict_int_to_str(0), "PASS")
         self.assertEqual(verdict_int_to_str(1), "⚠️ SUGGEST")
         self.assertEqual(verdict_int_to_str(2), "🔶 REVIEW")
         self.assertEqual(verdict_int_to_str(3), "❌ FAIL")
 
-    def test_out_of_range(self):
-        self.assertEqual(verdict_int_to_str(999), "PASS")
+    def test_all_values_llm(self):
+        self.assertEqual(verdict_int_to_str(0, llm=True), "PASS")
+        self.assertEqual(verdict_int_to_str(1, llm=True), "SUGGEST")
+        self.assertEqual(verdict_int_to_str(2, llm=True), "REVIEW")
+        self.assertEqual(verdict_int_to_str(3, llm=True), "FAIL")
+
+    def test_out_of_range_raises(self):
+        with self.assertRaises(ValueError):
+            verdict_int_to_str(999)
+        with self.assertRaises(ValueError):
+            verdict_int_to_str(-1)
+        with self.assertRaises(ValueError):
+            verdict_int_to_str(999, llm=True)
+        with self.assertRaises(ValueError):
+            verdict_int_to_str(-1, llm=True)
+
+
+class TestStrVerdictToInt(unittest.TestCase):
+
+    def test_exact_match_display(self):
+        self.assertEqual(verdict_str_to_int("PASS"), 0)
+        self.assertEqual(verdict_str_to_int("⚠️ SUGGEST"), 1)
+        self.assertEqual(verdict_str_to_int("🔶 REVIEW"), 2)
+        self.assertEqual(verdict_str_to_int("❌ FAIL"), 3)
+
+    def test_exact_match_llm(self):
+        self.assertEqual(verdict_str_to_int("SUGGEST"), 1)
+        self.assertEqual(verdict_str_to_int("REVIEW"), 2)
+        self.assertEqual(verdict_str_to_int("FAIL"), 3)
+
+    def test_strip_whitespace(self):
+        self.assertEqual(verdict_str_to_int("  PASS  "), 0)
+        self.assertEqual(verdict_str_to_int("\t❌ FAIL\n"), 3)
+
+    def test_case_insensitive_keyword(self):
+        self.assertEqual(verdict_str_to_int("fail"), 3)
+        self.assertEqual(verdict_str_to_int("FAIL"), 3)
+        self.assertEqual(verdict_str_to_int("review"), 2)
+        self.assertEqual(verdict_str_to_int("REVIEW"), 2)
+        self.assertEqual(verdict_str_to_int("suggest"), 1)
+        self.assertEqual(verdict_str_to_int("SUGGEST"), 1)
+        self.assertEqual(verdict_str_to_int("pass"), 0)
+        self.assertEqual(verdict_str_to_int("PASS"), 0)
+
+    def test_keyword_with_noise(self):
+        self.assertEqual(verdict_str_to_int("verdict: FAIL"), 3)
+        self.assertEqual(verdict_str_to_int("⚠ FAIL"), 3)
+
+    def test_unrecognized_raises(self):
+        with self.assertRaises(ValueError):
+            verdict_str_to_int("UNKNOWN")
+        with self.assertRaises(ValueError):
+            verdict_str_to_int("")
+        with self.assertRaises(ValueError):
+            verdict_str_to_int("   ")
 
 
 class TestFormatDiagnosesForFilter(unittest.TestCase):

@@ -265,30 +265,80 @@ VERDICT_REVIEW  = "🔶 REVIEW"
 VERDICT_FAIL    = "❌ FAIL"
 
 # ── 整数 verdict（DB 存储格式）──
+# Display（报告/控制台）—— 带 emoji
+# LLM（提示词/LLM 响应）—— 不带 emoji
 
-VERDICT_STR_TO_INT: dict[str, int] = {
+VERDICT_DISPLAY_TO_INT: dict[str, int] = {
     "PASS": 0,
     "⚠️ SUGGEST": 1,
     "🔶 REVIEW": 2,
     "❌ FAIL": 3,
 }
 
-VERDICT_INT_TO_STR: dict[int, str] = {
+VERDICT_INT_TO_DISPLAY: dict[int, str] = {
     0: "PASS",
     1: "⚠️ SUGGEST",
     2: "🔶 REVIEW",
     3: "❌ FAIL",
 }
 
+VERDICT_LLM_TO_INT: dict[str, int] = {
+    "PASS": 0,
+    "SUGGEST": 1,
+    "REVIEW": 2,
+    "FAIL": 3,
+}
+
+VERDICT_INT_TO_LLM: dict[int, str] = {
+    0: "PASS",
+    1: "SUGGEST",
+    2: "REVIEW",
+    3: "FAIL",
+}
+
+# 向后兼容别名
+VERDICT_STR_TO_INT = VERDICT_DISPLAY_TO_INT
+VERDICT_INT_TO_STR = VERDICT_INT_TO_DISPLAY
+
 
 def verdict_str_to_int(s: str) -> int:
-    """字符串 verdict → 整数。非法输入返回 0 (PASS)。"""
-    return VERDICT_STR_TO_INT.get(s, 0)
+    """字符串 verdict → 整数。
+
+    匹配策略：精确匹配（display + LLM 两套）→ 大小写不敏感关键词 fallback。
+    无法识别时抛出 ValueError（防止 LLM 输出畸变被静默当作 PASS）。
+    """
+    s = s.strip()
+    # 1. 精确匹配 — 同时查 display 和 LLM 映射
+    if s in VERDICT_DISPLAY_TO_INT:
+        return VERDICT_DISPLAY_TO_INT[s]
+    if s in VERDICT_LLM_TO_INT:
+        return VERDICT_LLM_TO_INT[s]
+    # 2. 大小写不敏感关键词 fallback
+    lower = s.lower()
+    if "fail" in lower:
+        return 3
+    if "review" in lower:
+        return 2
+    if "suggest" in lower:
+        return 1
+    if "pass" in lower:
+        return 0
+    raise ValueError(
+        f"无法识别的 verdict 字符串: {s!r}，"
+        f"期望 PASS / SUGGEST / REVIEW / FAIL 或其 emoji 变体"
+    )
 
 
-def verdict_int_to_str(i: int) -> str:
-    """整数 verdict → 字符串。非法输入返回 "PASS"。"""
-    return VERDICT_INT_TO_STR.get(i, "PASS")
+def verdict_int_to_str(i: int, *, llm: bool = False) -> str:
+    """整数 verdict → 字符串。
+
+    llm=False（默认）返回带 emoji 的展示字符串；llm=True 返回纯文本供 LLM 消费。
+    非法输入抛出 ValueError。
+    """
+    mapping = VERDICT_INT_TO_LLM if llm else VERDICT_INT_TO_DISPLAY
+    if i in mapping:
+        return mapping[i]
+    raise ValueError(f"无效的 verdict 整数: {i}，有效范围 0-3")
 
 
 def _format_diagnoses(diagnoses_raw: str) -> str:
@@ -428,7 +478,7 @@ class PipelineContext:
             if not diag_str:
                 continue
             m[r["key"]] = {
-                "verdict": verdict_int_to_str(r["verdict"]),
+                "verdict": verdict_int_to_str(r["verdict"], llm=True),
                 "diagnoses_str": diag_str,
             }
         return m
